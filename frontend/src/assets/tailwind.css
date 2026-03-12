@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: "GWM Sans Arabic UI Light";
+  src: url("./fonts/GWM-Sans-Arabic-UI-Light.otf") format("opentype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  html {
+    font-family: "GWM Sans Arabic UI Light", sans-serif;
+  }
+}

@@ -1,2 +1,330 @@
 # picTagView
-pictures import and tag.
+
+本地图片管理系统，基于 **FastAPI + SQLModel + SQLite + Vue 3 + Tailwind CSS**。
+核心功能：选择文件夹一键导入图片、自动按日期归类整理、生成缩略图、去重、支持日期维度浏览。
+
+---
+
+## ✅ 功能概览
+
+| 功能 | 说明 |
+|------|------|
+| **文件夹导入** | 选择任意文件夹（含子目录），按 groupByDate 规则整理到 `media/` |
+| **日期归类** | 直接文件按自身修改时间归类；子目录作为整体单元，以目录内最早文件时间归类 |
+| **缩略图生成** | 自动生成 300×200 (3:2) 缩略图，保存到 `backend/thumbnails/` |
+| **SHA-256 去重** | 哈希匹配完全重复图片，自动跳过；缩略图存在但 media 丢失时自动补全 |
+| **日期视图** | 以年 / 月两级浏览图片，附带动画切换效果 |
+| **媒体库刷新** | 清除失效 DB 记录及孤立缩略图；补全 `media/` 中未入库的文件 |
+
+---
+
+## 🧱 技术栈
+
+### 后端
+| 库 | 用途 |
+|----|------|
+| **FastAPI** | REST API 框架 |
+| **SQLModel** | 数据模型 + SQLAlchemy ORM |
+| **SQLite** | 本地文件数据库（`backend/data/app.db`） |
+| **opencv-python** | 缩略图生成（裁剪 + 缩放，`thumbnail_service.py`） |
+| **numpy** | 图像字节解码缓冲区 |
+| **uvicorn** | ASGI 服务器 |
+
+### 前端
+| 库 | 用途 |
+|----|------|
+| **Vue 3** | 响应式 UI 框架 |
+| **Vue Router** | 页面路由 |
+| **Tailwind CSS v3** | 原子化 CSS（通过 `@apply` 在 `<style scoped lang="postcss">` 中使用） |
+| **PostCSS** | 处理 Tailwind `@apply` 指令 |
+
+---
+
+## 📂 目录结构
+
+```
+picTagView/
+├── backend/
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── routes.py          # 所有 API 端点
+│   │   │   └── schemas.py         # Pydantic 请求/响应模型
+│   │   ├── core/
+│   │   │   └── config.py          # 全局路径配置（MEDIA_DIR, THUMB_DIR 等）
+│   │   ├── db/
+│   │   │   └── session.py         # 数据库连接 / init_db()
+│   │   ├── models/
+│   │   │   └── image_asset.py     # ImageAsset SQLModel 模型
+│   │   ├── services/
+│   │   │   ├── hash_service.py        # SHA-256 哈希计算（单文件工具）
+│   │   │   ├── thumbnail_service.py   # 缩略图生成（OpenCV，3:2 裁剪）
+│   │   │   ├── parallel_processor.py  # 并行处理模块（多线程/多进程）
+│   │   │   └── import_service.py      # 导入 + 刷新核心逻辑
+│   │   └── main.py                # FastAPI 应用入口 / 静态文件路由
+│   ├── data/
+│   │   └── app.db                 # SQLite 数据库文件
+│   ├── thumbnails/                # 缩略图输出目录（自动创建）
+│   ├── requirements.txt
+│   └── Dockerfile
+├── frontend/
+│   ├── src/
+│   │   ├── assets/
+│   │   │   └── tailwind.css       # Tailwind 入口（@tailwind base/components/utilities）
+│   │   ├── components/
+│   │   │   ├── Sidebar.vue        # 侧边栏导航（可折叠）
+│   │   │   ├── ThumbCard.vue      # 通用缩略图卡片组件
+│   │   │   └── LoadingSpinner.vue # 加载中旋转动画组件
+│   │   ├── pages/
+│   │   │   ├── HomePage.vue       # 主页（文件总数统计）
+│   │   │   ├── GalleryPage.vue    # 图库管理（导入 + 刷新）
+│   │   │   └── DateViewPage.vue   # 日期视图（年/月 → 详情，双向动画）
+│   │   ├── router/
+│   │   │   └── index.js           # 路由配置
+│   │   ├── App.vue
+│   │   └── main.js
+│   ├── tailwind.config.js
+│   ├── postcss.config.js
+│   └── package.json
+├── media/                         # 导入后图片的存储目录（自动创建）
+│   └── YYYY-M/                    # 按年-月（不补零）组织的子目录
+│       ├── image.jpg              # 直接文件
+│       └── subdir/                # 整体移入的子目录
+├── comp/
+│   └── groupByDate/
+│       └── groupByDate.py         # 参考脚本：本地文件夹批量整理（独立使用）
+├── build/
+│   └── start_project.bat          # Windows 一键启动脚本
+└── docker-compose.yml
+```
+
+---
+
+## 🔧 核心逻辑详解
+
+### 1. 导入逻辑（groupByDate）
+
+导入时完整实现了与 `comp/groupByDate/groupByDate.py` 相同的规则：
+
+| 文件位置 | 日期来源 | 目标路径 |
+|----------|----------|----------|
+| 直接在选中文件夹根目录下 | 文件自身 `lastModified` | `media/YYYY-M/文件名.ext` |
+| 在一级子目录中（含嵌套） | 该子目录内所有文件 `lastModified` 的**最小值** | `media/YYYY-M/子目录名/原相对路径` |
+
+日期格式为非补零形式：`2025-3`（而非 `2025-03`）。
+
+### 2. 去重逻辑（三种情况）
+
+| 情况 | 条件 | 处理方式 |
+|------|------|----------|
+| A 真正重复 | 哈希匹配 + 缩略图 ✓ + media ✓ | 直接跳过 |
+| B 缩略图存在但 media 丢失 | 哈希匹配 + 缩略图 ✓ + media ✗ | 仅写入 media，复用已有缩略图，更新 DB |
+| C 全新文件 | DB 无该哈希记录 | 生成缩略图 + 写入 media + 新建 DB 记录 |
+
+### 3. 媒体库刷新（`POST /api/admin/refresh`）
+
+**Step 1 — Prune（清理）**：遍历所有 DB 记录，若 `media_path` 对应文件不存在 → 删除缩略图文件 + 删除 DB 记录。
+
+**Step 2 — Repair（修复）**：跳过已完整（media + 缩略图均存在）的文件；对余下文件并行计算 SHA-256 + 生成缩略图，再顺序写入 DB。
+
+---
+
+### 4. 并行处理架构（`parallel_processor.py`）
+
+CPU 密集型工作（SHA-256 哈希 + OpenCV 缩略图生成）被抽取为独立模块，支持两种并行策略：
+
+| 场景 | 函数 | 并发方式 | 原因 |
+|------|------|----------|------|
+| **导入**（`import_files`） | `process_from_bytes` | `ThreadPoolExecutor` | 文件字节已在内存，避免进程间 IPC 序列化开销；OpenCV / hashlib 均释放 GIL |
+| **刷新**（`refresh_library`） | `process_from_paths` | `ProcessPoolExecutor` | Worker 自行从磁盘读文件，无大字节 IPC 传输；多进程绕过 GIL 获得真正 CPU 并行 |
+
+**内存优化策略**
+
+- `import_files` 按批次（`IMPORT_BATCH_SIZE = 20`）读取文件内容，每批处理完毕后立即释放，峰值内存最多保留 20 张图片字节。
+- `refresh_library` 先构建已完整路径集合（`known_healthy`），跳过无需重处理的文件，仅对新增或缩略图丢失的文件触发并行处理。
+- DB 写入始终在主线程/主进程中顺序执行，与 SQLite 单写者模型兼容。
+
+**可调参数**（`parallel_processor.py` 顶部常量）
+
+| 常量 | 默认值 | 说明 |
+|------|--------|------|
+| `DEFAULT_WORKERS` | `min(cpu_count, 8)` | 线程 / 进程数上限 |
+| `IMPORT_BATCH_SIZE` | `20` | 每批并行处理的导入文件数 |
+| `REFRESH_BATCH_SIZE` | `200` | 预留：刷新批次大小（当前整批提交给进程池） |
+
+---
+
+## 🗃️ 数据库模型
+
+```python
+class ImageAsset(SQLModel, table=True):
+    id:            int             # 主键（自增）
+    file_hash:     str             # SHA-256（唯一索引）
+    original_path: str             # 导入时的原始路径/文件名
+    thumb_path:    Optional[str]   # 缩略图绝对路径
+    media_path:    Optional[str]   # media/ 下的文件绝对路径
+    date_group:    Optional[str]   # 日期组，如 "2025-3"
+```
+
+---
+
+## 🌐 API 端点
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET`  | `/`                              | 健康检查，返回 `{"status": "ok"}` |
+| `POST` | `/api/import`                    | 导入图片文件夹（multipart/form-data） |
+| `GET`  | `/api/images/count`              | 返回已导入图片总数 |
+| `POST` | `/api/admin/refresh`             | 媒体库刷新（清理 + 修复） |
+| `GET`  | `/api/dates`                     | 返回所有年/月分组及首张缩略图 |
+| `GET`  | `/api/dates/{date_group}/items`  | 返回指定日期组的一级内容（图片 + 相册） |
+| `GET`  | `/thumbnails/{filename}`         | 静态文件：缩略图 |
+
+### `POST /api/import` 请求格式
+
+```
+Content-Type: multipart/form-data
+
+files[]              — 图片文件（可多个）
+                       filename 应为 file.webkitRelativePath（含目录结构）
+last_modified_json   — JSON 数组，与 files[] 顺序一一对应的 lastModified 时间戳（毫秒）
+```
+
+### `GET /api/dates/{date_group}/items` 响应格式
+
+```json
+{
+  "date_group": "2025-3",
+  "items": [
+    { "type": "image", "name": "photo.jpg", "thumb_url": "/thumbnails/abc.jpg" },
+    { "type": "album", "name": "旅行", "thumb_url": "/thumbnails/def.jpg", "count": 42 }
+  ]
+}
+```
+
+---
+
+## 🖥️ 页面说明
+
+### 主页 `/`
+显示当前已导入图片总数（从 `/api/images/count` 获取）。
+
+### 图库管理 `/gallery`
+- **选择图片文件夹并导入**：使用 `webkitdirectory` 属性一次性选择整个文件夹，前端按 groupByDate 规则分批上传（每个一级子目录为一批）并显示实时进度。
+- **🔄 刷新**：调用 `POST /api/admin/refresh`，清理失效记录、修复缺失缩略图。
+
+### 日期视图 `/calendar`
+- **网格模式**：按年份分组，每个月份显示为缩略图卡片（首张图 + 月份标签 + 图片数）。
+- **详情模式**：点击月份卡片后展开，显示该月所有一级内容：
+  - 直接图片文件
+  - 子目录（标注"相册"徽章 + 图片数量）
+- **动画**：
+  - 前进（打开详情）：网格淡出 → 详情面板从点击位置缩放飞出
+  - 后退（返回网格）：详情面板缩回点击位置 → 网格淡入
+
+---
+
+## 🚀 启动方式
+
+### 方式一：Windows 一键启动（推荐）
+
+```bat
+build\start_project.bat
+```
+
+会同时打开两个终端窗口：
+- **后端**：`http://127.0.0.1:8000`（uvicorn，热重载）
+- **前端**：`http://localhost:8080`（Vue CLI dev server）
+
+**前提**：已在系统 PATH 中安装 Python 3.10+ 和 Node.js 16+。
+
+---
+
+### 方式二：手动启动
+
+```bash
+# 后端
+cd backend
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload
+```
+
+```bash
+# 前端（另开终端）
+cd frontend
+npm install
+npm run serve
+```
+
+---
+
+### 方式三：Docker（仅后端）
+
+```bash
+docker compose up --build
+```
+
+后端容器运行在 `http://127.0.0.1:8000`，`media/` 和 `data/` 目录通过 volume 挂载保持持久化。
+前端仍需在宿主机运行（`npm run serve`）。
+
+---
+
+## 📦 依赖安装
+
+### 后端 `backend/requirements.txt`
+```
+fastapi
+uvicorn[standard]
+sqlmodel
+opencv-python
+numpy
+python-multipart
+```
+
+### 前端 `frontend/package.json`（主要）
+```
+vue ^3.x
+vue-router ^4.x
+tailwindcss ^3.x
+postcss
+autoprefixer
+@vue/cli-service
+```
+
+---
+
+## 🛠️ 开发说明
+
+### 前端样式规范
+所有 Vue 组件统一使用：
+```html
+<style scoped lang="postcss">
+.my-class {
+  @apply flex items-center gap-2 text-slate-600;
+}
+</style>
+```
+纯 CSS 语法仅在 `@apply` 无法表达的情况下使用（如 CSS 自定义属性、`@keyframes`、`clamp()` 等）。
+
+### 共享组件
+| 组件 | 用途 |
+|------|------|
+| `ThumbCard.vue` | 通用图片卡片（图片 / 遮罩 / 内容 slot，支持 `rounded` 和 `overlayOpacity` prop） |
+| `LoadingSpinner.vue` | 旋转加载动画，支持 slot 自定义文字 |
+
+### 添加新页面
+1. 在 `frontend/src/pages/` 创建 `XxxPage.vue`
+2. 在 `frontend/src/router/index.js` 添加路由
+3. 在 `frontend/src/components/Sidebar.vue` 的 `navItems` 添加导航项
+
+### 扩展后端接口
+在 `backend/app/api/routes.py` 中添加新端点；
+数据模型变更在 `backend/app/models/image_asset.py` 修改后删除 `backend/data/app.db` 重新启动即可重建。
+
+---
+
+## ⚠️ 注意事项
+
+- `media/` 和 `backend/thumbnails/` 目录由后端自动创建，**不要手动移动其中的文件**，否则需要使用"刷新"功能重建索引。
+- 使用 `🔄 刷新` 按钮可随时修复不一致状态（文件移动后、手动删除后等）。
+- 数据库文件 `backend/data/app.db` 可直接备份；删除后重启会自动创建空数据库。
+- `comp/groupByDate/groupByDate.py` 是一个独立命令行工具，可对已有本地文件夹执行整理，与 Web 导入功能独立工作。
