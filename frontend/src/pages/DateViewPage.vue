@@ -191,7 +191,9 @@ export default {
 .page { @apply flex flex-col gap-6; }
 
 /* ── Header ──────────────────────────────────────────────────── */
-.page-header { @apply flex items-center gap-4; }
+.page-header {
+  @apply sticky top-0 z-40 flex items-center gap-4 bg-white bg-opacity-95 py-2 backdrop-blur-sm shadow-sm;
+}
 .page-title  { @apply text-2xl font-semibold text-slate-900 m-0; }
 .page-subtitle { @apply text-sm text-slate-500 m-0; }
 .back-btn {
