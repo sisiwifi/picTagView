@@ -54,7 +54,7 @@
   - `process_from_bytes(entries, temp_dir)`：字节到磁盘，使用 `ThreadPoolExecutor`（适合已加载数据、避免进程间 IPC）
 - 关键实现 `_process_from_path` / `_process_from_bytes`：
   - 计算 SHA-256 hash
-  - 基于 `opencv-python`/`numpy` decode 并裁剪/缩放到 `300x200`，保存 `temp_dir/{hash}.jpg`
+  - 基于 `opencv-python`/`numpy` decode 并中心裁剪缩放到 `800×800`，保存 `temp_dir/{hash}.webp`（WebP 格式）
   - 误码处理 `decode_failed`、异常情况返回错误
 
 ### 3.5 `app/models/image_asset.py`
@@ -99,7 +99,8 @@
   - `process_from_bytes`（线程池，适合来自前端上传的流式字节）
   - `process_from_paths`（进程池，适合本地磁盘批量扫描）
 - 缩略图缓存策略
-  - 缩略图路径：`TEMP_DIR/{file_hash}.jpg`
+  - **导入缩略图**（月份封面）：`TEMP_DIR/{file_hash}.webp`，800×800 方形裁剪，1:1 展示
+  - **缓存展示缩略图**（相册内浏览）：`CACHE_DIR/{file_hash}_cache.webp`，400px 短边缩放，保持原始比例
   - 重复上传同 hash 文件时不会重复写缩略图
 - 目录组织：
   - 原图存储：`MEDIA_DIR/<date_group>/[top_subdir/]...`（`<year>-<month>`）

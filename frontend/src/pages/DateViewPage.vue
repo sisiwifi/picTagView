@@ -71,27 +71,41 @@
 
         <div v-else ref="itemGrid" class="photo-grid">
           <div
-            v-for="(item, i) in selectedItems"
-            :key="item.id || i"
-            class="photo-wrap"
-            :data-index="i"
+            v-for="(row, ri) in justifiedRows"
+            :key="ri"
+            class="jl-row"
+            :style="{ height: row.height + 'px' }"
           >
-            <!-- Skeleton while no thumbnail available -->
-            <div v-if="!resolvedUrl(item)" class="photo-skeleton">
-              <span class="skeleton-label">···</span>
-            </div>
-
-            <!-- Natural-ratio image -->
             <div
-              v-else
-              class="photo-card"
-              @click="openImage(item)"
+              v-for="item in row.items"
+              :key="item.id || item._idx"
+              class="photo-wrap"
+              :data-index="item._idx"
+              :style="{ width: item.computedWidth + 'px' }"
             >
-              <img :src="resolvedUrl(item)" class="photo-img" loading="lazy" :alt="item.name || ''" />
-              <div v-if="item.type === 'album'" class="photo-album-overlay">
-                <span class="album-icon">🗂️</span>
-                <span class="album-name">{{ item.name }}</span>
-                <span class="album-count">相册 · {{ item.count }} 张</span>
+              <!-- Skeleton while no thumbnail available -->
+              <div v-if="!resolvedUrl(item)" class="photo-skeleton">
+                <span class="skeleton-label">···</span>
+              </div>
+
+              <!-- Image -->
+              <div
+                v-else
+                class="photo-card"
+                @click="openImage(item)"
+              >
+                <img
+                  :src="resolvedUrl(item)"
+                  class="photo-img"
+                  loading="lazy"
+                  :alt="item.name || ''"
+                  @load="onImgLoad(item, $event)"
+                />
+                <div v-if="item.type === 'album'" class="photo-album-overlay">
+                  <span class="album-icon">🗂️</span>
+                  <span class="album-name">{{ item.name }}</span>
+                  <span class="album-count">相册 · {{ item.count }} 张</span>
+                </div>
               </div>
             </div>
           </div>
@@ -132,6 +146,8 @@ export default {
       observer:      null,
       debounceTimer: null,
       lastCenter:    -1,
+      imgDimensions: {},      // id -> { w, h }  tracked from img.onload
+      containerWidth: 0,      // width of the photo-grid container
     }
   },
 
@@ -142,9 +158,64 @@ export default {
     originStyle() {
       return { '--tx': this.originX, '--ty': this.originY }
     },
+
+    // Justified-layout: groups selectedItems into rows of equal height
+    // where each row fills the container width proportionally.
+    justifiedRows() {
+      const W = this.containerWidth || (typeof window !== 'undefined' ? window.innerWidth - 48 : 800)
+      const GAP = 4
+      const TARGET_H = 440
+      const items = this.selectedItems
+      if (!items.length) return []
+
+      const rows = []
+      let rowStart = 0
+      let rowAR = 0  // cumulative aspect-ratio sum for current row
+
+      for (let i = 0; i < items.length; i++) {
+        const dims = this.imgDimensions[items[i].id] || { w: 4, h: 3 }
+        rowAR += dims.w / dims.h
+        const isLast = i === items.length - 1
+        const rowLen = i - rowStart + 1
+        const neededW = rowAR * TARGET_H + GAP * (rowLen - 1)
+
+        if (neededW >= W || isLast) {
+          const totalGap = GAP * (rowLen - 1)
+          // Last partial row keeps target height; full rows scale to fill width.
+          const actualH = (isLast && neededW < W)
+            ? TARGET_H
+            : Math.round((W - totalGap) / rowAR)
+          const rowItems = []
+          for (let j = rowStart; j <= i; j++) {
+            const it = items[j]
+            const d = this.imgDimensions[it.id] || { w: 4, h: 3 }
+            rowItems.push({ ...it, _idx: j, computedWidth: Math.round((d.w / d.h) * actualH) })
+          }
+          rows.push({ items: rowItems, height: actualH })
+          rowStart = i + 1
+          rowAR = 0
+        }
+      }
+      return rows
+    },
   },
 
-  created()   { this.fetchDates() },
+  watch: {
+    // Re-initialize IntersectionObserver when row structure changes (new DOM nodes)
+    justifiedRows(newVal, oldVal) {
+      if (newVal.length !== oldVal.length) {
+        this.$nextTick(() => {
+          this.teardownObserver()
+          this.setupObserver()
+        })
+      }
+    },
+  },
+
+  created() {
+    this.fetchDates()
+    window.addEventListener('resize', this.onResize)
+  },
   activated() {
     this.view          = 'grid'
     this.detailVisible = false
@@ -156,6 +227,7 @@ export default {
   beforeUnmount() {
     this.teardownObserver()
     this.stopPoll()
+    window.removeEventListener('resize', this.onResize)
   },
 
   methods: {
@@ -213,6 +285,12 @@ export default {
       this.view = 'detail'
 
       this.$nextTick(() => {
+        // Scroll to top so the detail view starts at the first image
+        window.scrollTo({ top: 0, behavior: 'instant' })
+        // Capture container width for justified-layout computation
+        if (this.$refs.itemGrid) {
+          this.containerWidth = this.$refs.itemGrid.offsetWidth
+        }
         this.triggerCacheAt(0)
         this.setupObserver()
       })
@@ -227,9 +305,11 @@ export default {
       this.selectedGroup = ''
       setTimeout(() => { this.view = 'grid' }, 190)
       setTimeout(() => {
-        this.selectedItems = []
-        this.cacheUrls    = {}
-        this.taskId       = null
+        this.selectedItems  = []
+        this.cacheUrls      = {}
+        this.taskId         = null
+        this.imgDimensions  = {}
+        this.containerWidth = 0
       }, 430)
     },
 
@@ -315,6 +395,21 @@ export default {
       if (this.debounceTimer) { clearTimeout(this.debounceTimer); this.debounceTimer = null }
     },
 
+    onImgLoad(item, evt) {
+      const { naturalWidth: w, naturalHeight: h } = evt.target
+      if (!w || !h) return
+      const ex = this.imgDimensions[item.id]
+      if (!ex || ex.w !== w || ex.h !== h) {
+        this.imgDimensions = { ...this.imgDimensions, [item.id]: { w, h } }
+      }
+    },
+
+    onResize() {
+      if (this.$refs.itemGrid) {
+        this.containerWidth = this.$refs.itemGrid.offsetWidth
+      }
+    },
+
     async openImage(item) {
       if (!item.id) return
       try {
@@ -383,20 +478,26 @@ export default {
   letter-spacing: 0.06em;
 }
 
-/* ── Detail photo grid: natural aspect ratio ─────────────────── */
+/* ── Detail photo grid: justified-layout (equal-height rows, natural aspect) ──── */
 .photo-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1rem;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
-@media (min-width: 640px)  { .photo-grid { grid-template-columns: repeat(3, 1fr); } }
-@media (min-width: 768px)  { .photo-grid { grid-template-columns: repeat(4, 1fr); } }
-@media (min-width: 1024px) { .photo-grid { grid-template-columns: repeat(5, 1fr); } }
+.jl-row {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  overflow: hidden;
+}
+.photo-wrap {
+  overflow: hidden;
+  flex-shrink: 0;
+  height: 100%;
+}
 
 .photo-skeleton {
-  @apply w-full rounded-xl overflow-hidden flex items-center justify-center;
-  aspect-ratio: 4 / 3;
+  @apply w-full h-full rounded-xl overflow-hidden flex items-center justify-center;
   background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
   background-size: 200% 100%;
   animation: skeleton-wave 1.4s ease-in-out infinite;
@@ -416,13 +517,16 @@ export default {
 
 .photo-card {
   @apply relative cursor-pointer rounded-xl overflow-hidden shadow-md;
+  width: 100%;
+  height: 100%;
   transition: box-shadow 200ms ease, transform 200ms ease;
 }
 .photo-card:hover { @apply shadow-xl -translate-y-0.5; }
 .photo-img {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+  object-fit: cover;
   transition: transform 300ms ease;
 }
 .photo-card:hover .photo-img { transform: scale(1.03); }
