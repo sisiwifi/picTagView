@@ -25,16 +25,40 @@ export default {
   data() {
     return { fileCount: 0 }
   },
-  created() {
-    fetch(`${API_BASE}/api/images/count`)
-      .then(r => r.json())
-      .then(d => { if (d.count != null) this.fileCount = d.count })
-      .catch(() => {})
+  methods: {
+    refreshFileCount() {
+      fetch(`${API_BASE}/api/images/count`)
+        .then(r => r.json())
+        .then(d => { if (d.count != null) this.fileCount = d.count })
+        .catch(() => {})
+    },
+    onLibraryRefreshed(e) {
+      if (e.detail && e.detail.total_images != null) {
+        this.fileCount = e.detail.total_images
+      }
+    },
   },
+  created() {
+    this.refreshFileCount()
+    window.addEventListener('library-refreshed', this.onLibraryRefreshed)
+  },
+  activated() {
+    this.refreshFileCount()
+  },
+  beforeUnmount() {
+    window.removeEventListener('library-refreshed', this.onLibraryRefreshed)
+  },
+  beforeRouteEnter(to, from, next) {
+    next(vm => vm.refreshFileCount())
+  },
+  beforeRouteUpdate(to, from, next) {
+    this.refreshFileCount()
+    next()
+  }
 }
 </script>
 
-<style scoped lang="postcss">
+<style scoped lang="css">
 .page { @apply flex flex-col gap-8; }
 .page-header { @apply flex flex-col gap-1; }
 .page-title  { @apply text-2xl font-semibold text-slate-900 m-0; }

@@ -9,7 +9,7 @@
 export default { name: 'LoadingSpinner' }
 </script>
 
-<style scoped lang="postcss">
+<style scoped lang="css">
 .spinner-wrap {
   @apply flex items-center gap-2 text-slate-400 text-sm;
 }

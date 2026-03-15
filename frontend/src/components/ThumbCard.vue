@@ -21,7 +21,7 @@ export default {
 }
 </script>
 
-<style scoped lang="postcss">
+<style scoped lang="css">
 .thumb-card {
   @apply relative overflow-hidden cursor-pointer shadow-md;
   transition: box-shadow 200ms ease, transform 200ms ease;

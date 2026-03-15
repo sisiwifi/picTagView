@@ -65,11 +65,11 @@
 
       <!-- Refresh result -->
       <div v-if="refreshResult" class="result-box">
-        <p class="result-box__line result-box__line--heading">刷新完成</p>
-        <p class="result-box__line result-box__line--muted">🗑 已删除失效记录：{{ refreshResult.pruned }} 条</p>
-        <p class="result-box__line result-box__line--muted">🔧 已修复/新增记录：{{ refreshResult.repaired }} 条</p>
-        <p v-if="refreshResult.errors" class="result-box__line result-box__line--error">
-          ⚠ 错误：{{ refreshResult.errors }} 个
+        <p class="result-box__line result-box__line--primary">
+          刷新完成，当前共 {{ refreshResult.total_images }} 张图片
+        </p>
+        <p v-if="refreshResult.pruned" class="result-box__line result-box__line--muted">
+          🗑 已删除失效记录：{{ refreshResult.pruned }} 条
         </p>
       </div>
     </div>
@@ -176,7 +176,7 @@ export default {
 }
 </script>
 
-<style scoped lang="postcss">
+<style scoped lang="css">
 .page { @apply flex flex-col gap-6; }
 .page-header { @apply flex flex-col gap-1; }
 .page-title  { @apply text-2xl font-semibold text-slate-900 m-0; }

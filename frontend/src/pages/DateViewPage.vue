@@ -1,6 +1,6 @@
 <template>
   <section class="page">
-    <!-- ── Header ──────────────────────────────────────────────── -->
+    <!-- Header -->
     <header class="page-header">
       <button
         v-if="view === 'detail' || view === 'returning'"
@@ -19,7 +19,7 @@
       </div>
     </header>
 
-    <!-- ── Grid view ───────────────────────────────────────────── -->
+    <!-- Grid view -->
     <div
       v-show="view === 'grid' || view === 'animating' || view === 'returning'"
       class="grid-wrapper"
@@ -60,7 +60,7 @@
       </template>
     </div>
 
-    <!-- ── Detail view ─────────────────────────────────────────── -->
+    <!-- Detail view -->
     <Transition :name="transitionName">
       <div
         v-if="detailVisible"
@@ -69,22 +69,32 @@
       >
         <LoadingSpinner v-if="loadingItems" />
 
-        <div v-else class="card-grid">
-          <ThumbCard
+        <div v-else ref="itemGrid" class="photo-grid">
+          <div
             v-for="(item, i) in selectedItems"
-            :key="i"
-            :src="api(item.thumb_url)"
-            class="item-card"
-            :overlay-opacity="item.type === 'album' ? 0.50 : 0.15"
-            :rounded="'0.75rem'"
+            :key="item.id || i"
+            class="photo-wrap"
+            :data-index="i"
           >
-            <!-- Album badge -->
-            <template v-if="item.type === 'album'">
-              <span class="album-icon">🗂️</span>
-              <span class="album-name">{{ item.name }}</span>
-              <span class="album-count">相册 · {{ item.count }} 张</span>
-            </template>
-          </ThumbCard>
+            <!-- Skeleton while no thumbnail available -->
+            <div v-if="!resolvedUrl(item)" class="photo-skeleton">
+              <span class="skeleton-label">···</span>
+            </div>
+
+            <!-- Natural-ratio image -->
+            <div
+              v-else
+              class="photo-card"
+              @click="openImage(item)"
+            >
+              <img :src="resolvedUrl(item)" class="photo-img" loading="lazy" :alt="item.name || ''" />
+              <div v-if="item.type === 'album'" class="photo-album-overlay">
+                <span class="album-icon">🗂️</span>
+                <span class="album-name">{{ item.name }}</span>
+                <span class="album-count">相册 · {{ item.count }} 张</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </Transition>
@@ -96,6 +106,9 @@ import ThumbCard      from '../components/ThumbCard.vue'
 import LoadingSpinner from '../components/LoadingSpinner.vue'
 
 const API_BASE = 'http://127.0.0.1:8000'
+const DEBOUNCE_MS = 300
+const POLL_MS = 80
+const RADIUS = 50
 
 export default {
   name: 'DateViewPage',
@@ -103,16 +116,22 @@ export default {
 
   data() {
     return {
-      years:         [],
-      loadingDates:  true,
-      view:          'grid',    // 'grid' | 'animating' | 'detail' | 'returning'
-      navDir:        'forward', // 'forward' | 'back'
-      detailVisible: false,     // v-if source for the detail panel (controls Transition)
-      selectedGroup: '',
-      selectedItems: [],
-      loadingItems:  false,
-      originX: '50%',
-      originY: '50%',
+      years:          [],
+      loadingDates:   true,
+      view:           'grid',
+      navDir:         'forward',
+      detailVisible:  false,
+      selectedGroup:  '',
+      selectedItems:  [],
+      loadingItems:   false,
+      originX:        '50%',
+      originY:        '50%',
+      cacheUrls:     {},
+      pollTimer:     null,
+      taskId:        null,
+      observer:      null,
+      debounceTimer: null,
+      lastCenter:    -1,
     }
   },
 
@@ -134,8 +153,22 @@ export default {
     this.fetchDates()
   },
 
+  beforeUnmount() {
+    this.teardownObserver()
+    this.stopPoll()
+  },
+
   methods: {
-    api(path) { return `${API_BASE}${path}` },
+    api(path) { return path ? `${API_BASE}${path}` : '' },
+
+    resolvedUrl(item) {
+      if (!item) return ''
+      const cached = this.cacheUrls[item.id]
+      if (cached) return `${API_BASE}${cached}`
+      if (item.cache_thumb_url) return `${API_BASE}${item.cache_thumb_url}`
+      if (item.thumb_url)       return `${API_BASE}${item.thumb_url}`
+      return ''
+    },
 
     async fetchDates() {
       this.loadingDates = true
@@ -148,16 +181,19 @@ export default {
     },
 
     async openGroup(mg, ev) {
-      // Record click-centre for transform-origin
       const rect = ev.currentTarget.getBoundingClientRect()
       this.originX = `${Math.round(((rect.left + rect.width  / 2) / window.innerWidth)  * 100)}%`
       this.originY = `${Math.round(((rect.top  + rect.height / 2) / window.innerHeight) * 100)}%`
 
       this.navDir = 'forward'
-      this.view   = 'animating'   // grid fades out (160ms CSS transition)
+      this.view   = 'animating'
       this.selectedGroup = mg.group
       this.loadingItems  = true
       this.selectedItems = []
+      this.cacheUrls    = {}
+      this.lastCenter   = -1
+      this.teardownObserver()
+      this.stopPoll()
 
       const [data] = await Promise.all([
         fetch(`${API_BASE}/api/dates/${mg.group}/items`)
@@ -166,31 +202,132 @@ export default {
       ])
 
       this.selectedItems = data.items || []
+      for (const item of this.selectedItems) {
+        if (item.id && item.cache_thumb_url) {
+          this.cacheUrls = { ...this.cacheUrls, [item.id]: item.cache_thumb_url }
+        }
+      }
+
       this.loadingItems  = false
-      this.detailVisible = true  // ← triggers t-forward-enter (220ms)
+      this.detailVisible = true
       this.view = 'detail'
+
+      this.$nextTick(() => {
+        this.triggerCacheAt(0)
+        this.setupObserver()
+      })
     },
 
     closeDetail() {
+      this.teardownObserver()
+      this.stopPoll()
       this.navDir = 'back'
-      // 'returning': grid becomes visible at opacity-0 while detail plays its leave animation
       this.view = 'returning'
-      this.detailVisible = false   // ← triggers t-back-leave (220ms scale + fade)
+      this.detailVisible = false
       this.selectedGroup = ''
-      // After detail has mostly gone (~190ms), lift the opacity so grid fades in (180ms CSS)
       setTimeout(() => { this.view = 'grid' }, 190)
-      // Clean up detail data after both animations finish
-      setTimeout(() => { this.selectedItems = [] }, 430)
+      setTimeout(() => {
+        this.selectedItems = []
+        this.cacheUrls    = {}
+        this.taskId       = null
+      }, 430)
+    },
+
+    idsAround(centerIdx) {
+      const items = this.selectedItems
+      const start = Math.max(0, centerIdx - RADIUS)
+      const end   = Math.min(items.length - 1, centerIdx + RADIUS)
+      return items
+        .slice(start, end + 1)
+        .filter(it => it.id && !this.cacheUrls[it.id] && !it.cache_thumb_url)
+        .map(it => it.id)
+    },
+
+    async triggerCacheAt(centerIdx) {
+      const ids = this.idsAround(centerIdx)
+      if (!ids.length) return
+      try {
+        const res = await fetch(`${API_BASE}/api/thumbnails/cache`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_ids: ids }),
+        })
+        if (!res.ok) return
+        const { task_id } = await res.json()
+        this.taskId = task_id
+        this.startPoll()
+      } catch { /* ignore */ }
+    },
+
+    startPoll() {
+      this.stopPoll()
+      const poll = async () => {
+        if (!this.taskId) return
+        try {
+          const res = await fetch(`${API_BASE}/api/thumbnails/cache/status/${this.taskId}`)
+          if (!res.ok) return
+          const data = await res.json()
+          const newUrls = {}
+          for (const it of (data.items || [])) {
+            if (it.id && it.cache_thumb_url) newUrls[it.id] = it.cache_thumb_url
+          }
+          if (Object.keys(newUrls).length > 0) {
+            this.cacheUrls = { ...this.cacheUrls, ...newUrls }
+          }
+          if (data.status === 'running') {
+            this.pollTimer = setTimeout(poll, POLL_MS)
+          }
+        } catch { /* ignore */ }
+      }
+      this.pollTimer = setTimeout(poll, POLL_MS)
+    },
+
+    stopPoll() {
+      if (this.pollTimer) { clearTimeout(this.pollTimer); this.pollTimer = null }
+    },
+
+    setupObserver() {
+      if (!this.$refs.itemGrid) return
+      this.observer = new IntersectionObserver(
+        (entries) => {
+          const visible = entries
+            .filter(e => e.isIntersecting)
+            .map(e => parseInt(e.target.dataset.index, 10))
+          if (!visible.length) return
+          const topIdx = Math.min(...visible)
+          clearTimeout(this.debounceTimer)
+          this.debounceTimer = setTimeout(() => {
+            if (topIdx !== this.lastCenter) {
+              this.lastCenter = topIdx
+              this.triggerCacheAt(topIdx)
+            }
+          }, DEBOUNCE_MS)
+        },
+        { root: null, rootMargin: '0px', threshold: 0.1 },
+      )
+      for (const el of this.$refs.itemGrid.querySelectorAll('[data-index]')) {
+        this.observer.observe(el)
+      }
+    },
+
+    teardownObserver() {
+      if (this.observer) { this.observer.disconnect(); this.observer = null }
+      if (this.debounceTimer) { clearTimeout(this.debounceTimer); this.debounceTimer = null }
+    },
+
+    async openImage(item) {
+      if (!item.id) return
+      try {
+        await fetch(`${API_BASE}/api/images/${item.id}/open`)
+      } catch { /* silently ignore */ }
     },
   },
 }
 </script>
 
-<style scoped lang="postcss">
-/* ── Page layout ──────────────────────────────────────────────── */
+<style scoped lang="css">
 .page { @apply flex flex-col gap-6; }
 
-/* ── Header ──────────────────────────────────────────────────── */
 .page-header {
   @apply sticky top-0 z-40 flex items-center gap-4 bg-white bg-opacity-95 py-2 backdrop-blur-sm shadow-sm;
 }
@@ -202,21 +339,18 @@ export default {
 }
 .back-btn:hover { @apply bg-slate-100 text-slate-800; }
 
-/* ── Grid wrapper ────────────────────────────────────────────── */
 .grid-wrapper {
   @apply flex flex-col gap-10;
-  transition: opacity 180ms ease;   /* used for both forward-out and back-in */
+  transition: opacity 180ms ease;
 }
 .grid-wrapper--fading { @apply opacity-0 pointer-events-none; }
 
-/* ── Empty hint ──────────────────────────────────────────────── */
 .empty-hint {
   @apply border-2 border-dashed border-slate-300 bg-slate-50 rounded-xl
          py-16 text-center text-slate-400 text-sm;
 }
 .empty-hint__icon { @apply text-5xl block mb-3; }
 
-/* ── Year section ────────────────────────────────────────────── */
 .year-section { @apply flex flex-col gap-4; }
 .year-heading  { @apply flex items-baseline gap-3; }
 .year-heading__num {
@@ -229,14 +363,12 @@ export default {
   background: linear-gradient(to right, #cbd5e1, transparent);
 }
 
-/* ── Card grid ───────────────────────────────────────────────── */
 .card-grid { @apply grid grid-cols-2 gap-5; }
 @media (min-width: 640px)  { .card-grid { @apply grid-cols-3; } }
 @media (min-width: 768px)  { .card-grid { @apply grid-cols-4; } }
 @media (min-width: 1024px) { .card-grid { @apply grid-cols-5; } }
 
-/* ── Month card content ──────────────────────────────────────── */
-.month-card { @apply h-44; }
+.month-card { aspect-ratio: 1 / 1; }
 .month-label {
   @apply text-white font-bold leading-none select-none;
   font-family: 'Georgia', 'Times New Roman', serif;
@@ -251,8 +383,54 @@ export default {
   letter-spacing: 0.06em;
 }
 
-/* ── Item card content ───────────────────────────────────────── */
-.item-card { aspect-ratio: 3/2; }
+/* ── Detail photo grid: natural aspect ratio ─────────────────── */
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+@media (min-width: 640px)  { .photo-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 768px)  { .photo-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 1024px) { .photo-grid { grid-template-columns: repeat(5, 1fr); } }
+
+.photo-skeleton {
+  @apply w-full rounded-xl overflow-hidden flex items-center justify-center;
+  aspect-ratio: 4 / 3;
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-wave 1.4s ease-in-out infinite;
+}
+.skeleton-label {
+  @apply text-slate-400 text-xs font-mono tracking-widest select-none;
+  animation: skeleton-fade 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-wave {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@keyframes skeleton-fade {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 0.8; }
+}
+
+.photo-card {
+  @apply relative cursor-pointer rounded-xl overflow-hidden shadow-md;
+  transition: box-shadow 200ms ease, transform 200ms ease;
+}
+.photo-card:hover { @apply shadow-xl -translate-y-0.5; }
+.photo-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  transition: transform 300ms ease;
+}
+.photo-card:hover .photo-img { transform: scale(1.03); }
+.photo-album-overlay {
+  @apply absolute inset-0 flex flex-col items-center justify-center;
+  background: rgba(0, 0, 0, 0.50);
+}
+
 .album-icon  { @apply text-2xl mb-1; }
 .album-name  {
   @apply text-white text-xs font-semibold text-center select-none;
@@ -268,41 +446,20 @@ export default {
   font-size: 0.72rem;
 }
 
-/* ══════════════════════════════════════════════════════════════
-   PANEL TRANSITIONS
-   CSS custom properties (--tx / --ty) and transform-origin
-   cannot use @apply, so these stay as plain CSS.
-
-   Animation timing overview
-   ─────────────────────────
-   Forward (open):
-     grid fades OUT  →  160ms CSS opacity
-     detail enters   →  220ms scale-up from card position
-   Back (close):
-     detail leaves   →  220ms scale-down to card position  (symmetric!)
-     grid fades IN   →  180ms CSS opacity (starts at ~190ms, slight overlap)
-══════════════════════════════════════════════════════════════ */
-
-/* ── Forward: detail opens ──────────────────────────────────── */
 .t-forward-enter-active {
   transition: opacity 220ms ease, transform 220ms cubic-bezier(0.20, 0, 0.30, 1);
   transform-origin: var(--tx, 50%) var(--ty, 50%);
 }
 .t-forward-enter-from { opacity: 0; transform: scale(0.92) translateY(14px); }
 .t-forward-enter-to   { opacity: 1; transform: scale(1)    translateY(0); }
-
 .t-forward-leave-active { transition: opacity 160ms ease; }
 .t-forward-leave-from   { opacity: 1; }
 .t-forward-leave-to     { opacity: 0; }
 
-/* ── Back: detail closes — symmetric with forward enter ─────── */
 .t-back-leave-active {
   transition: opacity 220ms ease, transform 220ms cubic-bezier(0.40, 0, 0.80, 1);
   transform-origin: var(--tx, 50%) var(--ty, 50%);
 }
 .t-back-leave-from { opacity: 1; transform: scale(1)    translateY(0); }
 .t-back-leave-to   { opacity: 0; transform: scale(0.92) translateY(14px); }
-
-/* grid fades in via the CSS transition on .grid-wrapper (180ms);
-   no t-back-enter needed since the grid uses v-show + CSS class */
 </style>

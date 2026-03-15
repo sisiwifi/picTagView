@@ -26,12 +26,30 @@ class DateViewResponse(BaseModel):
 
 
 class DateItem(BaseModel):
-    type: str              # "image" or "album"
-    name: str              # bare filename or sub-directory name
-    thumb_url: str         # /thumbnails/<hash>.jpg
-    count: Optional[int] = None  # total images inside an album
+    type: str               # "image" or "album"
+    name: str               # bare filename or sub-directory name
+    thumb_url: str          # /thumbnails/<hash>.webp (may be empty string)
+    count: Optional[int] = None          # total images inside an album
+    id: Optional[int] = None             # ImageAsset.id
+    cache_thumb_url: Optional[str] = None  # /cache/<hash>_cache.webp when generated
 
 
 class DateItemsResponse(BaseModel):
     date_group: str
     items: List[DateItem]
+
+
+# ── Cache generation ──────────────────────────────────────────────────────────
+
+class CacheRequest(BaseModel):
+    image_ids: List[int]
+
+
+class CacheStatusItem(BaseModel):
+    id: int
+    cache_thumb_url: Optional[str] = None
+
+
+class CacheStatusResponse(BaseModel):
+    status: str                  # "running" | "done" | "error"
+    items: List[CacheStatusItem] = []

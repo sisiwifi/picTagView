@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router as api_router
-from app.core.config import MEDIA_DIR, TEMP_DIR
+from app.core.config import CACHE_DIR, MEDIA_DIR, TEMP_DIR
 from app.db.session import init_db
 
 
@@ -18,8 +18,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Serve thumbnail images at /thumbnails/<hash>.jpg
+    # Serve thumbnail images at /thumbnails/<hash>.webp
     app.mount("/thumbnails", StaticFiles(directory=str(TEMP_DIR)), name="thumbnails")
+
+    # Serve cache thumbnails at /cache/<hash>_cache.webp
+    app.mount("/cache", StaticFiles(directory=str(CACHE_DIR)), name="cache")
 
     # Serve original media files at /media/<date_group>/<filename>
     app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")

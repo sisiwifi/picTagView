@@ -7,11 +7,11 @@ import numpy as np
 from app.core.config import TEMP_DIR
 
 
-TARGET_SIZE: Tuple[int, int] = (300, 200)
+TARGET_SIZE: Tuple[int, int] = (800, 800)
 
 
 def create_thumbnail_from_bytes(content: bytes, file_hash: str) -> Path:
-    thumb_name = f"{file_hash}.jpg"
+    thumb_name = f"{file_hash}.webp"
     thumb_path = TEMP_DIR / thumb_name
 
     if thumb_path.exists():
@@ -22,21 +22,20 @@ def create_thumbnail_from_bytes(content: bytes, file_hash: str) -> Path:
     if image is None:
         raise ValueError("Failed to decode image data")
 
-    target_width, target_height = TARGET_SIZE
     height, width = image.shape[:2]
-    target_ratio = target_width / target_height
-    current_ratio = width / height
 
-    if current_ratio > target_ratio:
-        new_width = int(height * target_ratio)
-        x_offset = (width - new_width) // 2
-        cropped = image[:, x_offset : x_offset + new_width]
+    # 1:1 square crop
+    if width > height:
+        x_offset = (width - height) // 2
+        cropped = image[:, x_offset : x_offset + height]
+    elif height > width:
+        y_offset = (height - width) // 2
+        cropped = image[y_offset : y_offset + width, :]
     else:
-        new_height = int(width / target_ratio)
-        y_offset = (height - new_height) // 2
-        cropped = image[y_offset : y_offset + new_height, :]
+        cropped = image
 
-    resized = cv2.resize(cropped, (target_width, target_height), interpolation=cv2.INTER_AREA)
-    cv2.imwrite(str(thumb_path), resized, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+    target_w, target_h = TARGET_SIZE
+    resized = cv2.resize(cropped, (target_w, target_h), interpolation=cv2.INTER_AREA)
+    cv2.imwrite(str(thumb_path), resized, [int(cv2.IMWRITE_WEBP_QUALITY), 85])
 
     return thumb_path

@@ -76,9 +76,9 @@ export default {
 }
 </script>
 
-<style scoped lang="postcss">
+<style scoped lang="css">
 .sidebar {
-  @apply flex flex-col border-r border-slate-200 bg-white transition-all duration-300;
+  @apply sticky top-0 h-screen overflow-y-auto flex flex-col border-r border-slate-200 bg-white transition-all duration-300;
 }
 
 .sidebar--collapsed {
