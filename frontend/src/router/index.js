@@ -46,7 +46,12 @@ const router = createRouter({
 let _refreshTimer = null
 router.afterEach(() => {
   if (_refreshTimer) clearTimeout(_refreshTimer)
+
+  // Import may continue in a kept-alive page; avoid concurrent refresh jobs.
+  if (window.__ptvImporting) return
+
   _refreshTimer = setTimeout(() => {
+    if (window.__ptvImporting) return
     fetch(`${API_BASE}/api/admin/refresh`, { method: 'POST' })
       .then(r => r.json())
       .then(data => {

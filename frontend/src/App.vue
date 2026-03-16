@@ -3,7 +3,11 @@
     <div class="flex min-h-screen">
       <AppSidebar />
       <main class="flex-1 p-10">
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <keep-alive include="GalleryPage">
+            <component :is="Component" />
+          </keep-alive>
+        </router-view>
       </main>
     </div>
   </div>

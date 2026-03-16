@@ -80,6 +80,8 @@
 const API_BASE = 'http://127.0.0.1:8000'
 
 export default {
+  name: 'GalleryPage',
+
   data() {
     return {
       status:        '',
@@ -137,6 +139,7 @@ export default {
       ]
 
       this.importing    = true
+      window.__ptvImporting = true
       this.summary      = null
       this.status       = `正在导入 ${rootName}…`
       this.totalBatches = batches.length
@@ -171,6 +174,7 @@ export default {
         this.status = `错误：${err.message}`
       } finally {
         this.importing   = false
+        window.__ptvImporting = false
         this.currentItem = ''
         event.target.value = ''
       }
