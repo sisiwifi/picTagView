@@ -57,19 +57,14 @@
         {{ doneBatches }} / {{ totalBatches }} 批次完成
       </p>
 
-      <!-- Import summary -->
-      <div v-if="summary && !importing" class="result-box">
-        <p class="result-box__line result-box__line--primary">导入完成：{{ summary.imported.length }} 张</p>
-        <p class="result-box__line result-box__line--muted">重复跳过：{{ summary.skipped.length }} 张</p>
-      </div>
-
-      <!-- Refresh result -->
-      <div v-if="refreshResult" class="result-box">
-        <p class="result-box__line result-box__line--primary">
-          刷新完成，当前共 {{ refreshResult.total_images }} 张图片
-        </p>
-        <p v-if="refreshResult.pruned" class="result-box__line result-box__line--muted">
-          🗑 已删除失效记录：{{ refreshResult.pruned }} 条
+      <!-- Unified notice -->
+      <div v-if="noticeVisible" :class="['result-box', `result-box--${noticeType}`]">
+        <div class="result-box__header">
+          <p class="result-box__line result-box__line--heading">{{ noticeTitle }}</p>
+          <button class="result-box__close" type="button" @click="closeNotice">×</button>
+        </div>
+        <p v-for="(line, idx) in noticeLines" :key="idx" class="result-box__line result-box__line--muted">
+          {{ line }}
         </p>
       </div>
     </div>
@@ -85,28 +80,54 @@ export default {
   data() {
     return {
       status:        '',
-      summary:       null,
       importing:     false,
       currentItem:   '',
       totalBatches:  0,
       doneBatches:   0,
       refreshing:    false,
-      refreshResult: null,
+      noticeVisible: false,
+      noticeType:    'info',
+      noticeTitle:   '',
+      noticeLines:   [],
     }
   },
 
   methods: {
+    showNotice({ type = 'info', title = '', lines = [] }) {
+      this.noticeType = type
+      this.noticeTitle = title
+      this.noticeLines = lines
+      this.noticeVisible = true
+    },
+
+    closeNotice() {
+      this.noticeVisible = false
+    },
+
+    clearNotice() {
+      this.noticeVisible = false
+      this.noticeType = 'info'
+      this.noticeTitle = ''
+      this.noticeLines = []
+    },
+
     async runRefresh() {
       this.refreshing    = true
-      this.refreshResult = null
+      this.clearNotice()
       this.status        = '正在刷新媒体库…'
       try {
         const res = await fetch(`${API_BASE}/api/admin/refresh`, { method: 'POST' })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        this.refreshResult = await res.json()
+        const data = await res.json()
+        this.showNotice({
+          type: 'success',
+          title: `刷新完成，当前共 ${data.total_images} 张图片`,
+          lines: data.pruned ? [`🗑 已删除失效记录：${data.pruned} 条`] : [],
+        })
         this.status = ''
       } catch (err) {
-        this.status = `刷新失败：${err.message}`
+        this.showNotice({ type: 'error', title: '刷新失败', lines: [`${err.message}`] })
+        this.status = ''
       } finally {
         this.refreshing = false
       }
@@ -140,7 +161,7 @@ export default {
 
       this.importing    = true
       window.__ptvImporting = true
-      this.summary      = null
+      this.clearNotice()
       this.status       = `正在导入 ${rootName}…`
       this.totalBatches = batches.length
       this.doneBatches  = 0
@@ -168,10 +189,15 @@ export default {
           allSkipped.push(...data.skipped)
           this.doneBatches++
         }
-        this.summary = { imported: allImported, skipped: allSkipped }
+        this.showNotice({
+          type: 'success',
+          title: `导入完成：${allImported.length} 张`,
+          lines: [`重复跳过：${allSkipped.length} 张`],
+        })
         this.status  = '导入完成。'
       } catch (err) {
-        this.status = `错误：${err.message}`
+        this.showNotice({ type: 'error', title: '导入失败', lines: [`${err.message}`] })
+        this.status = ''
       } finally {
         this.importing   = false
         window.__ptvImporting = false
@@ -244,11 +270,33 @@ export default {
   @apply border border-slate-200 bg-slate-50 rounded-lg p-3
          flex flex-col gap-0.5;
 }
+.result-box__header {
+  @apply flex items-center justify-between gap-2;
+}
+.result-box__close {
+  @apply border-0 bg-transparent text-slate-400 text-base leading-none cursor-pointer px-1;
+}
+.result-box__close:hover {
+  @apply text-slate-600;
+}
 .result-box__line          { @apply text-sm m-0; }
 .result-box__line--heading { @apply font-semibold text-slate-700; }
 .result-box__line--primary { @apply text-slate-700; }
 .result-box__line--muted   { @apply text-slate-500; }
 .result-box__line--error   { @apply text-red-600; }
+
+.result-box--success {
+  @apply bg-slate-50 border-slate-200;
+}
+.result-box--error {
+  @apply bg-red-50 border-red-200;
+}
+.result-box--error .result-box__line--heading {
+  @apply text-red-700;
+}
+.result-box--error .result-box__line--muted {
+  @apply text-red-600;
+}
 
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>
