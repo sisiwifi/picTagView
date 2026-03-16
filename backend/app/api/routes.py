@@ -95,15 +95,24 @@ def root() -> dict:
 async def import_images(
     files: List[UploadFile] = File(...),
     last_modified_json: Optional[str] = Form(None),
+    created_time_json: Optional[str] = Form(None),
 ) -> ImportResponse:
     last_modified_times: Optional[List[Optional[int]]] = None
+    created_times: Optional[List[Optional[int]]] = None
+
     if last_modified_json:
         try:
             last_modified_times = json.loads(last_modified_json)
         except Exception:
             last_modified_times = None
 
-    result = await import_files(files, last_modified_times)
+    if created_time_json:
+        try:
+            created_times = json.loads(created_time_json)
+        except Exception:
+            created_times = None
+
+    result = await import_files(files, last_modified_times, created_times)
     return ImportResponse(**result)
 
 

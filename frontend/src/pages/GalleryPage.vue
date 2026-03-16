@@ -149,11 +149,14 @@ export default {
           this.currentItem = batch.label
           const fd = new FormData()
           const ts = []
+          const createdTs = []
           for (const f of batch.files) {
             fd.append('files', f, f.webkitRelativePath || f.name)
             ts.push(f.lastModified)
+            createdTs.push(null)
           }
           fd.append('last_modified_json', JSON.stringify(ts))
+          fd.append('created_time_json', JSON.stringify(createdTs))
 
           const res = await fetch(`${API_BASE}/api/import`, { method: 'POST', body: fd })
           if (!res.ok) throw new Error('导入失败，请检查后端服务')

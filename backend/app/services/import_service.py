@@ -1,5 +1,7 @@
 import datetime
 import os
+import ctypes
+from ctypes import wintypes
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -64,11 +66,73 @@ def _unique_dest(dest_dir: Path, filename: str) -> Path:
         i += 1
 
 
+def _min_source_ts_ms(
+    created_ts_ms: Optional[int],
+    modified_ts_ms: Optional[int],
+) -> Optional[int]:
+    values = [
+        ts for ts in (created_ts_ms, modified_ts_ms)
+        if isinstance(ts, int) and ts > 0
+    ]
+    return min(values) if values else None
+
+
+def _set_windows_creation_time(path: Path, ts_seconds: float) -> None:
+    file_write_attributes = 0x0100
+    open_existing = 3
+    file_share_read = 0x1
+    file_share_write = 0x2
+    file_share_delete = 0x4
+    invalid_handle_value = ctypes.c_void_p(-1).value
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.CreateFileW(
+        str(path),
+        file_write_attributes,
+        file_share_read | file_share_write | file_share_delete,
+        None,
+        open_existing,
+        0,
+        None,
+    )
+    if handle == invalid_handle_value:
+        raise ctypes.WinError()
+
+    try:
+        filetime_value = int((ts_seconds + 11644473600) * 10_000_000)
+        creation_time = wintypes.FILETIME(
+            filetime_value & 0xFFFFFFFF,
+            (filetime_value >> 32) & 0xFFFFFFFF,
+        )
+        if not kernel32.SetFileTime(handle, ctypes.byref(creation_time), None, None):
+            raise ctypes.WinError()
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _apply_file_times(path: Path, source_time_ms: Optional[int]) -> None:
+    if source_time_ms is None:
+        return
+
+    ts_seconds = source_time_ms / 1000.0
+    try:
+        os.utime(path, (ts_seconds, ts_seconds))
+    except Exception:
+        pass
+
+    if os.name == "nt":
+        try:
+            _set_windows_creation_time(path, ts_seconds)
+        except Exception:
+            pass
+
+
 def _save_to_media(
     content: bytes,
     file_subpath: str,
     date_group: str,
     top_subdir: Optional[str],
+    source_time_ms: Optional[int] = None,
 ) -> Path:
     if top_subdir:
         dest_dir = MEDIA_DIR / date_group / top_subdir / Path(file_subpath).parent
@@ -78,12 +142,14 @@ def _save_to_media(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = _unique_dest(dest_dir, Path(file_subpath).name)
     dest.write_bytes(content)
+    _apply_file_times(dest, source_time_ms)
     return dest
 
 
 async def import_files(
     files: List[UploadFile],
     last_modified_times: Optional[List[Optional[int]]] = None,
+    created_times: Optional[List[Optional[int]]] = None,
 ) -> Dict[str, List[str]]:
     """
     groupByDate-aware import with parallel hash and thumbnail generation.
@@ -106,6 +172,11 @@ async def import_files(
             if last_modified_times and idx < len(last_modified_times)
             else None
         )
+        created_ts_ms: Optional[int] = (
+            created_times[idx]
+            if created_times and idx < len(created_times)
+            else None
+        )
         is_direct, top_subdir, file_subpath = _parse_relative_path(raw_filename)
         if not _is_image_ext(Path(file_subpath).name):
             skipped.append(raw_filename or "unknown")
@@ -115,6 +186,8 @@ async def import_files(
             "upload": upload,
             "original": raw_filename,
             "ts_ms": ts_ms,
+            "created_ts_ms": created_ts_ms,
+            "source_time_ms": _min_source_ts_ms(created_ts_ms, ts_ms),
             "is_direct": is_direct,
             "top_subdir": top_subdir,
             "file_subpath": file_subpath,
@@ -231,7 +304,11 @@ async def import_files(
 
                     if not media_ok:
                         media_path = _save_to_media(
-                            content, meta["file_subpath"], date_group, meta["top_subdir"]
+                            content,
+                            meta["file_subpath"],
+                            date_group,
+                            meta["top_subdir"],
+                            meta["source_time_ms"],
                         )
                         existing.media_path = str(media_path)
                         existing.date_group = date_group
@@ -251,7 +328,11 @@ async def import_files(
 
                 # New record
                 media_path = _save_to_media(
-                    content, meta["file_subpath"], date_group, meta["top_subdir"]
+                    content,
+                    meta["file_subpath"],
+                    date_group,
+                    meta["top_subdir"],
+                    meta["source_time_ms"],
                 )
                 session.add(
                     ImageAsset(
