@@ -53,3 +53,7 @@ class CacheStatusItem(BaseModel):
 class CacheStatusResponse(BaseModel):
     status: str                  # "running" | "done" | "error"
     items: List[CacheStatusItem] = []
+
+
+class ViewerPreferenceRequest(BaseModel):
+    viewer_id: Optional[str] = None
