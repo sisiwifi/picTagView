@@ -21,3 +21,8 @@ pnpm-debug.log*
 *.njsproj
 *.sln
 *.sw?
+# Ignore python caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyc
