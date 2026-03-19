@@ -14,7 +14,21 @@ def init_db() -> None:
 def _migrate_db() -> None:
     """Add new columns to existing tables if they don't exist yet."""
     with engine.connect() as conn:
-        for column, col_type in [("media_path", "TEXT"), ("date_group", "TEXT")]:
+        for column, col_type in [
+            ("media_path", "TEXT"),
+            ("date_group", "TEXT"),
+            ("full_filename", "TEXT"),
+            ("quick_hash", "TEXT"),
+            ("thumbs", "TEXT"),
+            ("file_created_at", "DATETIME"),
+            ("imported_at", "DATETIME"),
+            ("width", "INTEGER"),
+            ("height", "INTEGER"),
+            ("file_size", "INTEGER"),
+            ("mime_type", "TEXT"),
+            ("category", "TEXT"),
+            ("tags", "TEXT"),
+        ]:
             try:
                 conn.execute(
                     text(f"ALTER TABLE imageasset ADD COLUMN {column} {col_type}")
@@ -62,8 +76,21 @@ def _migrate_db() -> None:
                     "CREATE INDEX IF NOT EXISTS ix_imageasset_date_group "
                     "ON imageasset(date_group)"
                 ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_imageasset_quick_hash "
+                    "ON imageasset(quick_hash)"
+                ))
                 conn.execute(text("PRAGMA foreign_keys=ON"))
                 conn.commit()
+        except Exception:
+            pass
+
+        try:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_imageasset_quick_hash "
+                "ON imageasset(quick_hash)"
+            ))
+            conn.commit()
         except Exception:
             pass
 

@@ -26,7 +26,7 @@ from app.api.schemas import (
     ViewerPreferenceRequest,
     YearGroup,
 )
-from app.core.config import CACHE_DIR, DATA_DIR, MEDIA_DIR, VIEWER_ICON_DIR
+from app.core.config import CACHE_DIR, DATA_DIR, MEDIA_DIR, PROJECT_ROOT, TEMP_DIR, VIEWER_ICON_DIR
 from app.db.session import get_session
 from app.models.image_asset import ImageAsset
 from app.services.cache_thumb_service import generate_cache_thumbs_progressively
@@ -54,9 +54,30 @@ def _prune_tasks() -> None:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _thumb_url(asset: ImageAsset) -> str:
+    for thumb in asset.thumbs or []:
+        if not isinstance(thumb, dict):
+            continue
+        p = thumb.get("path")
+        if not isinstance(p, str) or not p:
+            continue
+        resolved = _resolve_stored_path(p)
+        if resolved and resolved.exists():
+            return f"/thumbnails/{resolved.name}"
+
     if asset.thumb_path:
-        return f"/thumbnails/{Path(asset.thumb_path).name}"
+        resolved = _resolve_stored_path(asset.thumb_path)
+        if resolved and resolved.exists():
+            return f"/thumbnails/{resolved.name}"
     return ""
+
+
+def _resolve_stored_path(stored_path: Optional[str]) -> Optional[Path]:
+    if not stored_path:
+        return None
+    p = Path(stored_path)
+    if p.is_absolute():
+        return p
+    return (PROJECT_ROOT / p).resolve()
 
 
 def _cache_thumb_url(asset: ImageAsset) -> Optional[str]:
@@ -545,10 +566,10 @@ def dates_view() -> DateViewResponse:
 
         # Find any asset with a valid thumbnail to represent this month
         rep = next(
-            (a for a in group_assets if a.thumb_path and Path(a.thumb_path).exists()),
+            (a for a in group_assets if _thumb_url(a)),
             None,
         )
-        thumb_url = f"/thumbnails/{Path(rep.thumb_path).name}" if (rep and rep.thumb_path) else ""
+        thumb_url = _thumb_url(rep) if rep else ""
 
         year_map[year].append(
             MonthGroup(
@@ -576,7 +597,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
     if not assets:
         raise HTTPException(status_code=404, detail=f"No assets for {date_group}")
 
-    media_base = MEDIA_DIR / date_group
+    media_base = (MEDIA_DIR / date_group).resolve()
 
     direct_items: list[DateItem] = []
     album_rep: dict[str, ImageAsset] = {}
@@ -585,7 +606,9 @@ def date_group_items(date_group: str) -> DateItemsResponse:
     for asset in assets:
         if not asset.media_path:
             continue
-        media_path = Path(asset.media_path)
+        media_path = _resolve_stored_path(asset.media_path)
+        if not media_path:
+            continue
         try:
             rel = media_path.relative_to(media_base)
         except ValueError:
@@ -636,7 +659,9 @@ def open_image(image_id: int) -> dict:
         asset = session.get(ImageAsset, image_id)
     if not asset or not asset.media_path:
         raise HTTPException(status_code=404, detail="Image not found")
-    path = Path(asset.media_path)
+    path = _resolve_stored_path(asset.media_path)
+    if not path:
+        raise HTTPException(status_code=404, detail="File path is invalid")
     if not path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
 
@@ -731,25 +756,40 @@ def set_viewer_preference(body: ViewerPreferenceRequest) -> dict:
 
 @router.delete("/api/cache")
 def clear_cache() -> dict:
-    """Delete all files in CACHE_DIR."""
-    deleted = 0
-    for f in CACHE_DIR.iterdir():
-        if f.is_file():
-            try:
-                f.unlink()
-                deleted += 1
-            except Exception:
-                pass
-    return {"deleted": deleted}
+    """Delete all files in backend/temp (TEMP_DIR) and backend/data/cache (CACHE_DIR)."""
+    temp_deleted = 0
+    cache_deleted = 0
+
+    if TEMP_DIR.exists() and TEMP_DIR.is_dir():
+        for f in TEMP_DIR.iterdir():
+            if f.is_file():
+                try:
+                    f.unlink()
+                    temp_deleted += 1
+                except Exception:
+                    pass
+
+    if CACHE_DIR.exists() and CACHE_DIR.is_dir():
+        for f in CACHE_DIR.iterdir():
+            if f.is_file():
+                try:
+                    f.unlink()
+                    cache_deleted += 1
+                except Exception:
+                    pass
+
+    return {"temp_deleted": temp_deleted, "cache_deleted": cache_deleted}
 
 
 async def _run_cache_task(task_id: str, assets: list) -> None:
     """Background coroutine: generate cache thumbs and push results progressively."""
     loop = asyncio.get_running_loop()
     try:
-        valid_assets = [
-            a for a in assets if a.media_path and Path(a.media_path).exists()
-        ]
+        valid_assets = []
+        for a in assets:
+            media_path = _resolve_stored_path(a.media_path)
+            if media_path and media_path.exists():
+                valid_assets.append((a, media_path))
 
         def on_each(key: str, cache_path: Optional[str], _err: Optional[str]) -> None:
             _task_store[task_id]["items"].append({
@@ -759,7 +799,7 @@ async def _run_cache_task(task_id: str, assets: list) -> None:
 
         def run_progressive() -> None:
             generate_cache_thumbs_progressively(
-                [(str(a.id), str(a.media_path)) for a in valid_assets],
+                [(str(a.id), str(media_path)) for a, media_path in valid_assets],
                 CACHE_DIR,
                 on_each,
             )
@@ -802,4 +842,6 @@ def cache_status(task_id: str) -> CacheStatusResponse:
         status=task["status"],
         items=[CacheStatusItem(**item) for item in task.get("items", [])],
     )
+
+
 

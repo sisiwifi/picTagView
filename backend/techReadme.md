@@ -35,18 +35,18 @@
 - `import_files(files, last_modified_times)`：
   - 解析上传路径（兼容 `webkitRelativePath`）
   - 过滤非图片，由扩展名判断
-  - 维护目录级 `date_group`，按子目录最早时间分组
+  - 维护目录级 `date_group`，按子目录最早时间分组（格式 `YYYY-MM`）
   - 批次读取文件内容（`IMPORT_BATCH_SIZE=20`）
-  - 线程池并行 `process_from_bytes` 生成 `file_hash` 与 `thumb_path`
-  - 去重（`file_hash` 唯一）与修复缺失图像/缩略图
-  - 写入 `ImageAsset`（包含 `original_path`、`file_hash`、`thumb_path`、`media_path`、`date_group`）
+  - 线程池并行 `process_from_bytes` 只为“每月封面所需图片”生成 temp 缩略图
+  - 其他图片仅计算哈希，不在导入时批量生成 temp 缩略图
+  - 文件时间规则：取创建时间与修改时间最小值，回刷到导入文件，并记录到元数据
+  - 写入 `ImageAsset`（`quick_hash`、尺寸、mime、tags/thumbs 等扩展字段）
 
 - `refresh_library()`：
-  - 清理 DB 中 orphan 记录（媒体文件丢失，删缩略图、删记录）
-  - 扫描全量 `MEDIA_DIR` 真实文件
-  - 并行 `process_from_paths` 重新生成 hash/thumb
-  - 修复/新增数据库记录
-  - 返回 `pruned/repaired/errors`
+  - 清理 DB 中 orphan 记录（媒体文件丢失则删记录与关联缩略图元数据）
+  - 清理 orphan cache（无对应媒体记录的 `*_cache.webp`）
+  - 仅检查并补齐每个 `date_group` 代表图所需的 400×400 temp 缩略图
+  - 维护 `thumbs` 字段与必要元数据占位
 
 ### 3.4 `app/services/parallel_processor.py`
 - 图片处理核心，提供两种 API：
@@ -54,17 +54,23 @@
   - `process_from_bytes(entries, temp_dir)`：字节到磁盘，使用 `ThreadPoolExecutor`（适合已加载数据、避免进程间 IPC）
 - 关键实现 `_process_from_path` / `_process_from_bytes`：
   - 计算 SHA-256 hash
-  - 基于 `opencv-python`/`numpy` decode 并中心裁剪缩放到 `800×800`，保存 `temp_dir/{hash}.webp`（WebP 格式）
+  - 基于 `opencv-python`/`numpy` decode 并中心裁剪缩放到 `400×400`，保存 `temp_dir/{hash}.webp`（WebP 格式）
   - 误码处理 `decode_failed`、异常情况返回错误
 
 ### 3.5 `app/models/image_asset.py`
 - 数据模型 `ImageAsset`：
   - `id` int 主键
   - `original_path` 索引
+  - `full_filename`（完整文件名）
   - `file_hash` 索引唯一
+  - `quick_hash` 索引（xxhash64）
   - `thumb_path`
+  - `thumbs`（JSON 数组）
   - `media_path` 可空
-  - `date_group` 可空索引（`yyyy-m`）
+  - `date_group` 可空索引（`YYYY-MM`）
+  - `file_created_at` / `imported_at`
+  - `width` / `height` / `file_size` / `mime_type`
+  - `category` / `tags`
   - `created_at`
 
 ### 3.6 `app/db/session.py`
@@ -99,11 +105,11 @@
   - `process_from_bytes`（线程池，适合来自前端上传的流式字节）
   - `process_from_paths`（进程池，适合本地磁盘批量扫描）
 - 缩略图缓存策略
-  - **导入缩略图**（月份封面）：`TEMP_DIR/{file_hash}.webp`，800×800 方形裁剪，1:1 展示
-  - **缓存展示缩略图**（相册内浏览）：`CACHE_DIR/{file_hash}_cache.webp`，400px 短边缩放，保持原始比例
+  - **导入缩略图**（月份封面）：仅对每月代表图生成 `TEMP_DIR/{file_hash}.webp`，400×400 方形裁剪
+  - **缓存展示缩略图**（相册内浏览）：按需生成 `CACHE_DIR/{file_hash}_cache.webp`，最短边 600，保持原始比例
   - 重复上传同 hash 文件时不会重复写缩略图
 - 目录组织：
-  - 原图存储：`MEDIA_DIR/<date_group>/[top_subdir/]...`（`<year>-<month>`）
+  - 原图存储：`MEDIA_DIR/<date_group>/[top_subdir/]...`（`YYYY-MM`）
   - 生成 `date_group` 规则：
     - 直传文件按 `last_modified` 生成
     - 有子目录按 `subdir` 最早时间生成
@@ -131,9 +137,9 @@
    - 检查文件扩展名是否在 `IMAGE_EXTS` 中（`.jpg .jpeg .png .webp .gif .tiff .bmp`）
    - 查 `backend` 日志，有无 `decode_failed` 或 OpenCV 异常
 2. 缩略图缺失
-   - 确认 `TEMP_DIR` 写权限
-   - 检查 `process_from_bytes` / `process_from_paths` 是否成功返回 `thumb_path`
-   - `refresh` API 自动修复丢失缩略图（同 `imageasset` hash 记录）
+  - 日期视图封面图来自 `TEMP_DIR`（400×400）；相册内图优先来自 `CACHE_DIR`
+  - 检查 `media_path` 是否为有效相对路径（由项目根解析）
+  - `refresh` API 仅补齐“每月代表图”的 temp 缩略图，不会全量重建 temp
 3. `media_path` 对应文件不存在
    - 触发 `POST /api/admin/refresh` 清理孤儿并补全新文件为 `repaired`
    - 手动检查 `MEDIA_DIR` 文件名及权限
@@ -146,7 +152,8 @@
 ## 8. 重要路径和命名规则
 - 媒体目录：`MEDIA_DIR` = 例如 `backend/media`（可配置）
 - 临时缩略图：`TEMP_DIR` = 例如 `backend/temp`
+- 相册缓存缩略图：`CACHE_DIR` = 例如 `backend/data/cache`
 - 数据库路径：`DB_PATH` = 例如 `backend/db.sqlite`
-- `date_group` 规则：`YYYY-M`（如 `2024-7`），用于前端按年/月分组
+- `date_group` 规则：`YYYY-MM`（如 `2024-07`），用于前端按年/月分组
 
 ---

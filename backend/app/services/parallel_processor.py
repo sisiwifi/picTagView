@@ -4,8 +4,8 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-_THUMB_W = 800
-_THUMB_H = 800
+_THUMB_W = 400
+_THUMB_H = 400
 _THUMB_Q = 85
 
 DEFAULT_WORKERS: int = min(os.cpu_count() or 1, 8)
