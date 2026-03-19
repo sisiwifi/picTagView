@@ -35,7 +35,9 @@
         <div class="setting-info">
           <span class="setting-label">清除缓存</span>
           <span v-if="cacheResult" class="setting-desc">
-            已删除 {{ cacheResult.deleted }} 个文件
+            已删除 {{ cacheResult.deleted }} 个缓存文件
+            <span v-if="cacheResult.temp_deleted">（临时缩略图已删除 {{ cacheResult.temp_deleted }} 个）</span>
+            <span v-if="cacheResult.error" class="text-red-500"> — 错误：{{ cacheResult.error }}</span>
           </span>
           <span v-else class="setting-desc">删除 data/cache/ 内所有缩略图文件</span>
         </div>
@@ -189,9 +191,23 @@ export default {
       try {
         const res = await fetch(`${API_BASE}/api/cache`, { method: 'DELETE' })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        this.cacheResult = await res.json()
+        const body = await res.json().catch(() => null)
+
+        let deleted = 0
+        let temp_deleted = 0
+        let error = null
+
+        if (typeof body === 'number') {
+          deleted = body
+        } else if (body && typeof body === 'object') {
+          deleted = body.deleted ?? body.deleted_count ?? body.count ?? 0
+          temp_deleted = body.temp_deleted ?? body.tempDeleted ?? 0
+          error = body.error ?? null
+        }
+
+        this.cacheResult = { deleted, temp_deleted, error }
       } catch (err) {
-        this.cacheResult = { deleted: 0, error: err.message }
+        this.cacheResult = { deleted: 0, temp_deleted: 0, error: err.message }
       } finally {
         this.clearingCache = false
       }
