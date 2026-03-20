@@ -754,31 +754,92 @@ def set_viewer_preference(body: ViewerPreferenceRequest) -> dict:
 
 # ── Cache management ──────────────────────────────────────────────────────────
 
+import stat
+import shutil
+
+def _force_remove_contents(dir_path: Path) -> tuple[int, list[str]]:
+    deleted = 0
+    errs = []
+    if not (dir_path.exists() and dir_path.is_dir()):
+        return 0, errs
+
+    # Pre-list all items to avoid issues with directory iteration during deletion on Windows
+    try:
+        items = list(dir_path.iterdir())
+    except Exception as e:
+        errs.append(f"list error: {e}")
+        return 0, errs
+
+    for item in items:
+        if item.is_file() or item.is_symlink():
+            try:
+                item.unlink(missing_ok=True)
+                deleted += 1
+            except PermissionError:
+                try:
+                    os.chmod(item, stat.S_IWRITE)
+                    item.unlink(missing_ok=True)
+                    deleted += 1
+                except Exception:
+                    errs.append(f"locked file: {item.name}")
+            except Exception as e:
+                errs.append(f"file error: {item.name}")
+        elif item.is_dir():
+            try:
+                count = sum(1 for p in item.rglob('*') if p.is_file())
+                def onerror(func, path, exc_info):
+                    try:
+                        os.chmod(path, stat.S_IWRITE)
+                        func(path)
+                    except Exception:
+                        pass
+                shutil.rmtree(item, onerror=onerror)
+                deleted += count
+            except Exception as e:
+                errs.append(f"dir error: {item.name}")
+    return deleted, errs
+
 @router.delete("/api/cache")
 def clear_cache() -> dict:
-    """Delete all files in backend/temp (TEMP_DIR) and backend/data/cache (CACHE_DIR)."""
-    temp_deleted = 0
-    cache_deleted = 0
+    """Delete all files in TEMP_DIR and CACHE_DIR; then strip stale DB thumb references."""
+    temp_deleted, temp_errs = _force_remove_contents(TEMP_DIR)
+    cache_deleted, cache_errs = _force_remove_contents(CACHE_DIR)
+    
+    errors: list[str] = temp_errs + cache_errs
 
-    if TEMP_DIR.exists() and TEMP_DIR.is_dir():
-        for f in TEMP_DIR.iterdir():
-            if f.is_file():
-                try:
-                    f.unlink()
-                    temp_deleted += 1
-                except Exception:
-                    pass
+    # Strip stale thumb references from the database so that the next
+    # /api/admin/refresh correctly regenerates thumbnails.
+    if temp_deleted or cache_deleted:
+        try:
+            with get_session() as session:
+                for asset in session.exec(select(ImageAsset)).all():
+                    changed = False
+                    if asset.thumb_path:
+                        p = _resolve_stored_path(asset.thumb_path)
+                        if p and not p.exists():
+                            asset.thumb_path = None
+                            changed = True
+                    if asset.thumbs:
+                        valid: list[dict] = []
+                        for t in asset.thumbs:
+                            if not isinstance(t, dict):
+                                continue
+                            p = _resolve_stored_path(t.get("path"))
+                            if p and p.exists():
+                                valid.append(t)
+                        if len(valid) != len(asset.thumbs):
+                            asset.thumbs = valid
+                            changed = True
+                    if changed:
+                        session.add(asset)
+                session.commit()
+        except Exception as e:
+            errors.append(f"db_cleanup: {e}")
 
-    if CACHE_DIR.exists() and CACHE_DIR.is_dir():
-        for f in CACHE_DIR.iterdir():
-            if f.is_file():
-                try:
-                    f.unlink()
-                    cache_deleted += 1
-                except Exception:
-                    pass
-
-    return {"temp_deleted": temp_deleted, "cache_deleted": cache_deleted}
+    result: dict = {"temp_deleted": temp_deleted, "cache_deleted": cache_deleted}
+    if errors:
+        result["error"] = "; ".join(errors[:5])
+    return result
 
 
 async def _run_cache_task(task_id: str, assets: list) -> None:

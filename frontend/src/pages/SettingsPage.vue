@@ -28,18 +28,18 @@
     <div class="settings-card">
       <h3 class="card-title">缓存管理</h3>
       <p class="card-desc">
-        缓存文件夹存储已生成的原比例缩略图（400px WebP），用于相册内图片预览。
-        清除后下次进入相册时会自动重新生成。
+        清除 <code>data/cache/</code>（相册预览缩略图，短边 600px WebP）与
+        <code>temp/</code>（月份封面缩略图，400×400 WebP）内的所有已生成文件。
+        清除后下次浏览时将自动重新生成。
       </p>
       <div class="setting-row">
         <div class="setting-info">
           <span class="setting-label">清除缓存</span>
           <span v-if="cacheResult" class="setting-desc">
-            已删除 {{ cacheResult.deleted }} 个缓存文件
-            <span v-if="cacheResult.temp_deleted">（临时缩略图已删除 {{ cacheResult.temp_deleted }} 个）</span>
+            已删除 {{ cacheResult.deleted }} 个缓存文件（临时缩略图已删除 {{ cacheResult.temp_deleted }} 个）
             <span v-if="cacheResult.error" class="text-red-500"> — 错误：{{ cacheResult.error }}</span>
           </span>
-          <span v-else class="setting-desc">删除 data/cache/ 内所有缩略图文件</span>
+          <span v-else class="setting-desc">同时清除 data/cache/ 与 temp/ 内所有缩略图文件</span>
         </div>
         <button
           class="btn btn--danger"
@@ -200,12 +200,24 @@ export default {
         if (typeof body === 'number') {
           deleted = body
         } else if (body && typeof body === 'object') {
-          deleted = body.deleted ?? body.deleted_count ?? body.count ?? 0
+          // prefer cache_deleted returned by backend, fall back to other common names
+          deleted = body.cache_deleted ?? body.cacheDeleted ?? body.deleted ?? body.deleted_count ?? body.count ?? 0
           temp_deleted = body.temp_deleted ?? body.tempDeleted ?? 0
           error = body.error ?? null
         }
 
-        this.cacheResult = { deleted, temp_deleted, error }
+        this.cacheResult = {
+          // normalized
+          deleted,
+          temp_deleted,
+          error,
+          // backward-compatible aliases
+          cache_deleted: deleted,
+          cacheDeleted: deleted,
+          deleted_count: deleted,
+          count: deleted,
+          tempDeleted: temp_deleted,
+        }
       } catch (err) {
         this.cacheResult = { deleted: 0, temp_deleted: 0, error: err.message }
       } finally {
