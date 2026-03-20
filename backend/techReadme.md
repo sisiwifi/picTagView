@@ -59,19 +59,58 @@
 
 ### 3.5 `app/models/image_asset.py`
 - 数据模型 `ImageAsset`：
-  - `id` int 主键
-  - `original_path` 索引
-  - `full_filename`（完整文件名）
-  - `file_hash` 索引唯一
-  - `quick_hash` 索引（xxhash64）
-  - `thumb_path`
-  - `thumbs`（JSON 数组）
-  - `media_path` 可空
-  - `date_group` 可空索引（`YYYY-MM`）
-  - `file_created_at` / `imported_at`
-  - `width` / `height` / `file_size` / `mime_type`
-  - `category` / `tags`
-  - `created_at`
+### 3.5 `app/models/image_asset.py`
+- 数据模型 `ImageAsset`：
+  - `id` (int): 主键
+  - `original_path` (str): 导入时的原始相对/上传路径，带索引
+  - `full_filename` (str | null): 文件名
+  - `file_hash` (str): SHA-256 散列，唯一索引，用于去重
+  - `quick_hash` (str | null): 快速哈希（xxhash64 或回退），用于快速比对
+  - `thumb_path` (str | null): 代表性缩略图的存储相对路径（通常指向 `TEMP_DIR` 下的 webp 文件）
+  - `thumbs` (JSON array): 详细的缩略图条目数组，每项包含 `type`/`path`/`width`/`height`/`mime_type`/`generated_at`
+  - `media_path` (str | null): 存放在 `MEDIA_DIR` 下的原图相对路径
+  - `date_group` (str | null): 年-月分组，格式 `YYYY-MM`，用于前端日期视图索引
+  - `file_created_at` (datetime | null): 文件原始创建时间（如可用）
+  - `imported_at` (datetime): 导入时间
+  - `width` / `height` / `file_size` / `mime_type`: 媒体元信息
+  - `category` (str) / `tags` (JSON array): 可选的分类与标签
+  - `created_at` (datetime): 记录创建时间
+
+示例: 以下为从数据库抽取的一个 `ImageAsset` 记录示例，展示了字段实际存储形态：
+
+```json
+{
+  "id": 1,
+  "original_path": "nonporn/-1010611320.jpg",
+  "file_hash": "c3c006a821fe9087d1506cadb12c03c2e8bb5b65aba8ef9ca2251643798e97d3",
+  "thumb_path": "backend/temp/c3c006a821fe9087d1506cadb12c03c2e8bb5b65aba8ef9ca2251643798e97d3.webp",
+  "media_path": "media/2023-01/-1010611320.jpg",
+  "date_group": "2023-01",
+  "created_at": "2026-03-19 23:11:45.913008",
+  "full_filename": "-1010611320.jpg",
+  "quick_hash": "c3c006a821fe9087",
+  "thumbs": [
+    {
+      "type": "webp",
+      "path": "backend/temp/c3c006a821fe9087d1506cadb12c03c2e8bb5b65aba8ef9ca2251643798e97d3.webp",
+      "width": 400,
+      "height": 400,
+      "mime_type": "image/webp",
+      "generated_at": "2026-03-20T17:20:25.930994"
+    }
+  ],
+  "file_created_at": "2023-01-30 23:06:00.000000",
+  "imported_at": "2026-03-19 23:11:45.912777",
+  "width": 690,
+  "height": 1024,
+  "file_size": 102211,
+  "mime_type": "image/jpeg",
+  "category": "",
+  "tags": []
+}
+```
+
+说明：`thumbs` 字段通常以 JSON 存储在 SQLite 中（`SQLModel` 使用 `JSON` 列），`thumb_path` 与 `thumbs[*].path` 可为相对路径或工程内路径，外部访问时会由路由解析为 `/thumbnails/...`。
 
 ### 3.6 `app/db/session.py`
 - `engine`：`sqlite:///{DB_PATH}`

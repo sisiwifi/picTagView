@@ -322,17 +322,18 @@ async def import_files(
             meta["ts_ms"] if meta["is_direct"] else subdir_min_ts.get(meta["top_subdir"])
         )
 
-    # Which date_groups already have a thumbnail in the DB?
+    # Which date_groups already have a valid thumbnail in the DB?
     all_groups = {meta["date_group_computed"] for meta in metadata}
     with get_session() as session:
-        groups_with_thumb: set = set(
-            row
-            for row in session.exec(
-                select(ImageAsset.date_group)
-                .where(col(ImageAsset.date_group).in_(list(all_groups)))
-                .where(col(ImageAsset.thumb_path).isnot(None))
-            ).all()
-        )
+        groups_with_thumb: set = set()
+        candidates = session.exec(
+            select(ImageAsset)
+            .where(col(ImageAsset.date_group).in_(list(all_groups)))
+            .where(col(ImageAsset.thumbs).isnot(None))
+        ).all()
+        for _a in candidates:
+            if _has_required_thumb(_a.thumbs):
+                groups_with_thumb.add(_a.date_group)
 
     # Find the earliest file per NEW date_group
     new_group_first_idx: Dict[str, int] = {}
@@ -414,12 +415,7 @@ async def import_files(
                 ).first()
 
                 if existing:
-                    existing_thumb_path = _resolve_stored_path(existing.thumb_path)
-                    thumb_ok = _has_required_thumb(existing.thumbs) or (
-                        bool(existing.thumb_path)
-                        and bool(existing_thumb_path)
-                        and existing_thumb_path.exists()
-                    )
+                    thumb_ok = _has_required_thumb(existing.thumbs)
                     media_resolved = _resolve_stored_path(existing.media_path)
                     media_ok = bool(media_resolved and media_resolved.exists())
 
@@ -437,8 +433,7 @@ async def import_files(
                         existing.date_group = date_group
                         needs_update = True
 
-                    if not thumb_ok and meta["needs_thumb"] and rel_thumb_path and new_thumb:
-                        existing.thumb_path = rel_thumb_path
+                    if not thumb_ok and meta["needs_thumb"] and new_thumb:
                         existing.thumbs = _upsert_thumb(existing.thumbs, new_thumb)
                         needs_update = True
 
@@ -495,7 +490,6 @@ async def import_files(
                         full_filename=Path(meta["file_subpath"]).name,
                         file_hash=file_hash,
                         quick_hash=quick_hash,
-                        thumb_path=rel_thumb_path,  # None when needs_thumb=False
                         thumbs=[new_thumb] if new_thumb else [],
                         media_path=_to_project_relative(media_path),
                         date_group=date_group,
@@ -571,14 +565,6 @@ def refresh_library() -> Dict[str, int]:
                         except Exception:
                             pass
 
-                if asset.thumb_path:
-                    p = _resolve_stored_path(asset.thumb_path)
-                    if p and p.exists():
-                        try:
-                            p.unlink()
-                        except Exception:
-                            pass
-
                 session.delete(asset)
                 pruned += 1
         session.commit()
@@ -642,9 +628,19 @@ def refresh_library() -> Dict[str, int]:
             _file_hash, thumb_path_str, _error = proc.get(
                 str(asset.id), (None, None, "not processed")
             )
+            # Prune stale thumbs entries whose files no longer exist
+            if db_asset.thumbs:
+                live: list[dict] = []
+                for t in db_asset.thumbs:
+                    if not isinstance(t, dict):
+                        continue
+                    p = _resolve_stored_path(t.get("path"))
+                    if p and p.exists():
+                        live.append(t)
+                db_asset.thumbs = live
+
             if thumb_path_str:
                 rel_thumb = _to_project_relative(Path(thumb_path_str))
-                db_asset.thumb_path = rel_thumb
                 db_asset.thumbs = _upsert_thumb(db_asset.thumbs, _required_thumb_entry(rel_thumb))
                 regenerated += 1
 

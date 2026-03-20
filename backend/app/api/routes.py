@@ -30,7 +30,13 @@ from app.core.config import CACHE_DIR, DATA_DIR, MEDIA_DIR, PROJECT_ROOT, TEMP_D
 from app.db.session import get_session
 from app.models.image_asset import ImageAsset
 from app.services.cache_thumb_service import generate_cache_thumbs_progressively
-from app.services.import_service import import_files, refresh_library
+from app.services.import_service import (
+    _required_thumb_entry,
+    _to_project_relative,
+    _upsert_thumb,
+    import_files,
+    refresh_library,
+)
 
 router = APIRouter()
 
@@ -61,11 +67,6 @@ def _thumb_url(asset: ImageAsset) -> str:
         if not isinstance(p, str) or not p:
             continue
         resolved = _resolve_stored_path(p)
-        if resolved and resolved.exists():
-            return f"/thumbnails/{resolved.name}"
-
-    if asset.thumb_path:
-        resolved = _resolve_stored_path(asset.thumb_path)
         if resolved and resolved.exists():
             return f"/thumbnails/{resolved.name}"
     return ""
@@ -807,30 +808,23 @@ def clear_cache() -> dict:
     
     errors: list[str] = temp_errs + cache_errs
 
-    # Strip stale thumb references from the database so that the next
+    # Strip stale thumbs entries from the database so that the next
     # /api/admin/refresh correctly regenerates thumbnails.
     if temp_deleted or cache_deleted:
         try:
             with get_session() as session:
                 for asset in session.exec(select(ImageAsset)).all():
-                    changed = False
-                    if asset.thumb_path:
-                        p = _resolve_stored_path(asset.thumb_path)
-                        if p and not p.exists():
-                            asset.thumb_path = None
-                            changed = True
-                    if asset.thumbs:
-                        valid: list[dict] = []
-                        for t in asset.thumbs:
-                            if not isinstance(t, dict):
-                                continue
-                            p = _resolve_stored_path(t.get("path"))
-                            if p and p.exists():
-                                valid.append(t)
-                        if len(valid) != len(asset.thumbs):
-                            asset.thumbs = valid
-                            changed = True
-                    if changed:
+                    if not asset.thumbs:
+                        continue
+                    live: list[dict] = []
+                    for t in asset.thumbs:
+                        if not isinstance(t, dict):
+                            continue
+                        p = _resolve_stored_path(t.get("path"))
+                        if p and p.exists():
+                            live.append(t)
+                    if len(live) != len(asset.thumbs):
+                        asset.thumbs = live
                         session.add(asset)
                 session.commit()
         except Exception as e:
@@ -852,11 +846,33 @@ async def _run_cache_task(task_id: str, assets: list) -> None:
             if media_path and media_path.exists():
                 valid_assets.append((a, media_path))
 
-        def on_each(key: str, cache_path: Optional[str], _err: Optional[str]) -> None:
+        asset_map = {str(a.id): a for a, _ in valid_assets}
+
+        def on_each(
+            key: str,
+            cache_path: Optional[str],
+            _err: Optional[str],
+            thumb_w: Optional[int],
+            thumb_h: Optional[int],
+        ) -> None:
             _task_store[task_id]["items"].append({
                 "id": int(key),
                 "cache_thumb_url": f"/cache/{Path(cache_path).name}" if cache_path else None,
             })
+            if cache_path and not _err:
+                try:
+                    rel = _to_project_relative(Path(cache_path))
+                    entry = _required_thumb_entry(rel, width=thumb_w or 0, height=thumb_h or 0)
+                    orig = asset_map.get(key)
+                    if orig is not None:
+                        with get_session() as _sess:
+                            db_asset = _sess.get(ImageAsset, orig.id)
+                            if db_asset is not None:
+                                db_asset.thumbs = _upsert_thumb(db_asset.thumbs, entry)
+                                _sess.add(db_asset)
+                                _sess.commit()
+                except Exception:
+                    pass
 
         def run_progressive() -> None:
             generate_cache_thumbs_progressively(
