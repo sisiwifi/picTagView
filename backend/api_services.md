@@ -37,20 +37,22 @@
 
 ## 2. API 接口 (Routes)
 
-所有的 REST API 由 FastAPI 提供，路由集中注册于 `app/api/routes.py`。
+所有的 REST API 由 FastAPI 提供，路由集中注册于 `backend/app/api/routes.py`（大多数路由）；具体实现逻辑有时会委托到 `backend/app/services/` 下的服务函数（例如 `import_service.py`, `parallel_processor.py`, `cache_thumb_service.py`）。
 本地基础路径默认为：`http://127.0.0.1:8000`。
 
 ### 2.1 基础与基础运维 API
 
 #### `GET /`
+- 实现位置：`backend/app/api/routes.py`
 - **用途**：健康检查。
 - **返回**：`{"status": "ok"}`。
 
 #### `GET /api/images/count`
+- 实现位置：`backend/app/api/routes.py` （函数 `images_count()`）
 - **用途**：快速获取数据库中所有图片的计数。
 - **返回**：`{"count": <int>}`。
 
-#### `POST /api/import`
+- 实现位置：`backend/app/api/routes.py`（调用 `app/services/import_service.import_files`）
 - **用途**：导入前端上传的高清照片原始文件。支持 FormData 解析前端传回来的文件流和文件相关的时间。
 - **参数 (FormData)**：
   - `files`：多文件上传 (`UploadFile`)
@@ -59,6 +61,7 @@
 - **返回**：`{"imported": ["file1.jpg", ...], "skipped": [...]}`。
 
 #### `POST /api/admin/refresh`
+- 实现位置：`backend/app/api/routes.py`（路由直接调用 `import_service.refresh_library()`）
 - **用途**：触发文件清理与图库元数据、缩略图同步扫描修复。
 - **返回**：`{"pruned": <int>, "total_images": <int>, "cache_deleted": <int>, "regenerated": <int>}`。
 
@@ -67,6 +70,7 @@
 ### 2.2 相册视图 API
 
 #### `GET /api/dates`
+- 实现位置：`backend/app/api/routes.py`（函数 `dates_view()`）
 - **用途**：获取全量按年-月份分组（`date_group`）聚类的相册大纲列表，以及当前月份首选展示的封面图片 URL。
 - **返回**：
   ```json
@@ -89,6 +93,7 @@
   ```
 
 #### `GET /api/dates/{date_group}/items`
+- 实现位置：`backend/app/api/routes.py`（函数 `date_group_items()`）
 - **用途**：获取某个特定月份组（如 `2025-03`）里面的具体照片或者子相册（目录）。
 - **参数 (Path)**：`date_group`，如 `2025-03`。
 - **返回**：包含 `date_group` 和 `items`。`items` 类型分为 `image`（直接在根组下）或 `album`（有子目录）。
@@ -98,14 +103,17 @@
 ### 2.3 查看原图与操作系统集成 API
 
 #### `GET /api/images/{image_id}/open`
+- 实现位置：`backend/app/api/routes.py`（函数 `open_image()`）
 - **用途**：触发在服务端当前运行设备的操作系统内，使用系统或指定的默认图片浏览器打开此张图片的原图。
 - **返回**：`{"status": "ok", "mode": "preferred"|"system", "viewer_id": "..."}`。
 
 #### `GET /api/system/viewer-info`
+- 实现位置：`backend/app/api/routes.py`（函数 `viewer_info()`）
 - **用途**：获取当前操作系统的全局默认看图软件和 App 内指定看图软件的信息。
 - **返回**：`{"viewer": "...", "preferred_viewer_id": null, "system_viewer": "..."}`。
 
 #### `GET /api/system/image-viewers`
+- 实现位置：`backend/app/api/routes.py`（函数 `image_viewers()`）
 - **用途**：扫描 Windows 注册表，返回操作系统内所有已安装且能打开主流图片的程序。
 - **返回**：包含应用列表（含注册表 ProgID、名称、类型、提取并代理好的程序图标 URL）、偏好选择情况。
 
@@ -121,15 +129,18 @@
 ### 2.4 缩略图缓存管理 API
 
 #### `DELETE /api/cache`
+- 实现位置：`backend/app/api/routes.py`（函数 `delete_cache` / 删除逻辑位于 routes.py）
 - **用途**：清除 `temp/` 及 `data/cache/` 这两处的缩略图存放位置所有已缓存文件，并移除数据库内丢失记录的字段清理，强制重新触发刷新。
 - **返回**：`{"temp_deleted": <int>, "cache_deleted": <int>, "error": null}`。
 
 #### `POST /api/thumbnails/cache`
+- 实现位置：`backend/app/api/routes.py`（路由 + 后台任务协调；实际生成由 `app/services/cache_thumb_service.py` 实现并在 routes.py 中被调用）
 - **用途**：通知后端异步为所提供的特定全量图片 ID 生成 600px 尺寸长列表模式的缓存缩略图。
 - **请求体 (JSON)**：`{"image_ids": [1, 2, 3, ...]}`。
 - **返回**：`{"task_id": "<uuid>"}` 返回用于轮询的任务 ID。
 
 #### `GET /api/thumbnails/cache/status/{task_id}`
+- 实现位置：`backend/app/api/routes.py`（状态轮询路由，返回 `_task_store` 中的运行状态）
 - **用途**：通过给定的 task_id 轮询当前批量大图转缓存缩略图进度的进度及新生成的资源 URL 列表。
 - **返回**：
   ```json

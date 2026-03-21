@@ -148,6 +148,7 @@ export default {
       lastCenter:    -1,
       imgDimensions: {},      // id -> { w, h }  tracked from img.onload
       containerWidth: 0,      // width of the photo-grid container
+      refreshingThumbs: false,
     }
   },
 
@@ -248,6 +249,11 @@ export default {
         const r = await fetch(`${API_BASE}/api/dates`)
         const d = await r.json()
         this.years = d.years || []
+        // Detect missing month-cover thumbnails and refresh immediately if needed
+        const allMonths = (d.years || []).flatMap(y => y.months || [])
+        if (allMonths.some(m => !m.thumb_url)) {
+          this._refreshAndUpdateDates()
+        }
       } catch { this.years = [] }
       finally  { this.loadingDates = false }
     },
@@ -294,6 +300,8 @@ export default {
         this.triggerCacheAt(0)
         this.setupObserver()
       })
+      // Detect missing item thumbnails and trigger an immediate background refresh
+      this._checkAndRefreshItems()
     },
 
     closeDetail() {
@@ -408,6 +416,55 @@ export default {
       if (this.$refs.itemGrid) {
         this.containerWidth = this.$refs.itemGrid.offsetWidth
       }
+    },
+
+    // Re-fetch dates after a background refresh so month-cover thumbnails
+    // appear without requiring the user to manually reload.
+    async _refreshAndUpdateDates() {
+      if (this.refreshingThumbs) return
+      this.refreshingThumbs = true
+      try {
+        const refreshRes = await fetch(`${API_BASE}/api/admin/refresh`, { method: 'POST' })
+        if (refreshRes.ok) {
+          const refreshData = await refreshRes.json()
+          window.dispatchEvent(new CustomEvent('library-refreshed', { detail: refreshData }))
+        }
+        const r = await fetch(`${API_BASE}/api/dates`)
+        if (r.ok) {
+          const d = await r.json()
+          this.years = d.years || []
+        }
+      } catch { /* ignore */ }
+      finally { this.refreshingThumbs = false }
+    },
+
+    // Check if any visible items are missing thumbnails. If so, trigger an
+    // immediate refresh and re-fetch to update the detail view automatically.
+    async _checkAndRefreshItems() {
+      if (this.refreshingThumbs) return
+      const hasMissing = this.selectedItems.some(
+        item => !item.thumb_url && !item.cache_thumb_url
+      )
+      if (!hasMissing) return
+      this.refreshingThumbs = true
+      try {
+        const refreshRes = await fetch(`${API_BASE}/api/admin/refresh`, { method: 'POST' })
+        if (refreshRes.ok) {
+          const refreshData = await refreshRes.json()
+          window.dispatchEvent(new CustomEvent('library-refreshed', { detail: refreshData }))
+        }
+        if (!this.detailVisible || !this.selectedGroup) return
+        const r = await fetch(`${API_BASE}/api/dates/${this.selectedGroup}/items`)
+        if (!r.ok) return
+        const data = await r.json()
+        this.selectedItems = data.items || []
+        for (const item of this.selectedItems) {
+          if (item.id && item.cache_thumb_url) {
+            this.cacheUrls = { ...this.cacheUrls, [item.id]: item.cache_thumb_url }
+          }
+        }
+      } catch { /* ignore */ }
+      finally { this.refreshingThumbs = false }
     },
 
     async openImage(item) {

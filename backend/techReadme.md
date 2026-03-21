@@ -39,6 +39,11 @@
   - 批次读取文件内容（`IMPORT_BATCH_SIZE=20`）
   - 线程池并行 `process_from_bytes` 只为“每月封面所需图片”生成 temp 缩略图
   - 其他图片仅计算哈希，不在导入时批量生成 temp 缩略图
+  - 导入不中断行为：前端在开始导入时会设置全局标记 `window.__ptvImporting = true`（见 `frontend/src/pages/GalleryPage.vue`），导入结束时恢复为 `false`。
+  - 前端刷新策略变更（路由切换相关）：项目已移除“路由切换自动触发全库刷新”的行为，`frontend/src/router/index.js` 不再在每次路由变更时发起后台 `POST /api/admin/refresh`。当前前端刷新策略为：
+    - 仅在 Gallery 页面由用户点击的“刷新”按钮触发完整的 `POST /api/admin/refresh`（保留为手动触发的全库修复/补齐）。
+    - 切换到首页（`/`）时仅请求 `GET /api/images/count`，用于刷新并显示库总数的统计信息。
+    - 在 Gallery 与 DateView（日历）页面，前端会对缩略图加载错误（例如 `404`）做出响应：当页面检测到应从 `TEMP_DIR` 读取的缩略图缺失且对应媒体文件存在时，会立即（无延迟）调用 `POST /api/admin/refresh` 以让后端补齐缺失的 temp 缩略图；刷新完成后前端会重新拉取相关数据并使用缓存击穿（例如追加时间戳）来重新加载刚生成的缩略图并更新显示。该策略避免了路由切换时与导入并发造成的冲突，同时将自动修复控制在真正发生缺失时触发。
   - 文件时间规则：取创建时间与修改时间最小值，回刷到导入文件，并记录到元数据
   - 写入 `ImageAsset`（`quick_hash`、尺寸、mime、tags/thumbs 等扩展字段）
 
@@ -66,8 +71,7 @@
   - `full_filename` (str | null): 文件名
   - `file_hash` (str): SHA-256 散列，唯一索引，用于去重
   - `quick_hash` (str | null): 快速哈希（xxhash64 或回退），用于快速比对
-  - `thumb_path` (str | null): 代表性缩略图的存储相对路径（通常指向 `TEMP_DIR` 下的 webp 文件）
-  - `thumbs` (JSON array): 详细的缩略图条目数组，每项包含 `type`/`thumb_path`/`width`/`height`/`mime_type`/`generated_at`
+  - `thumbs` (JSON array): 详细的缩略图条目数组，每项包含 `type`/`path`/`width`/`height`/`mime_type`/`generated_at`
   - `media_path` (str | null): 存放在 `MEDIA_DIR` 下的原图相对路径
   - `date_group` (str | null): 年-月分组，格式 `YYYY-MM`，用于前端日期视图索引
   - `file_created_at` (datetime | null): 文件原始创建时间（如可用）
@@ -85,7 +89,6 @@
 "full_filename": "img001.jpg",
 "file_hash": "c3c006a821fe9087d1506cadb12c03c2e8bb5b65aba8ef9ca2251643798e97d3",
 "quick_hash": "c3c006a821fe9087",
-"thumb_path": "backend/temp/c3c006a821fe9087d1506cadb12c03c2e8bb5b65aba8ef9ca2251643798e97d3.webp",
 "thumbs": [
 {
 "type": "webp",

@@ -89,7 +89,16 @@ export default {
       noticeType:    'info',
       noticeTitle:   '',
       noticeLines:   [],
+      checkingThumbs: false,
     }
+  },
+
+  created() {
+    this._checkMissingThumbs()
+  },
+
+  activated() {
+    this._checkMissingThumbs()
   },
 
   methods: {
@@ -204,6 +213,26 @@ export default {
         this.currentItem = ''
         event.target.value = ''
       }
+    },
+
+    // On page load/activation: silently check for missing month-cover thumbnails.
+    // If any are found, trigger an immediate refresh so the calendar view stays
+    // up-to-date when the user navigates there.
+    async _checkMissingThumbs() {
+      if (this.checkingThumbs || this.importing) return
+      this.checkingThumbs = true
+      try {
+        const r = await fetch(`${API_BASE}/api/dates`)
+        if (!r.ok) return
+        const d = await r.json()
+        const allMonths = (d.years || []).flatMap(y => y.months || [])
+        if (!allMonths.some(m => !m.thumb_url)) return
+        const res = await fetch(`${API_BASE}/api/admin/refresh`, { method: 'POST' })
+        if (!res.ok) return
+        const data = await res.json()
+        window.dispatchEvent(new CustomEvent('library-refreshed', { detail: data }))
+      } catch { /* ignore */ }
+      finally { this.checkingThumbs = false }
     },
   },
 }
