@@ -67,7 +67,7 @@
   - `file_hash` (str): SHA-256 散列，唯一索引，用于去重
   - `quick_hash` (str | null): 快速哈希（xxhash64 或回退），用于快速比对
   - `thumb_path` (str | null): 代表性缩略图的存储相对路径（通常指向 `TEMP_DIR` 下的 webp 文件）
-  - `thumbs` (JSON array): 详细的缩略图条目数组，每项包含 `type`/`path`/`width`/`height`/`mime_type`/`generated_at`
+  - `thumbs` (JSON array): 详细的缩略图条目数组，每项包含 `type`/`thumb_path`/`width`/`height`/`mime_type`/`generated_at`
   - `media_path` (str | null): 存放在 `MEDIA_DIR` 下的原图相对路径
   - `date_group` (str | null): 年-月分组，格式 `YYYY-MM`，用于前端日期视图索引
   - `file_created_at` (datetime | null): 文件原始创建时间（如可用）
@@ -80,33 +80,41 @@
 
 ```json
 {
-  "id": 1,
-  "original_path": "nonporn/-1010611320.jpg",
-  "file_hash": "c3c006a821fe9087d1506cadb12c03c2e8bb5b65aba8ef9ca2251643798e97d3",
-  "thumb_path": "backend/temp/c3c006a821fe9087d1506cadb12c03c2e8bb5b65aba8ef9ca2251643798e97d3.webp",
-  "media_path": "media/2023-01/-1010611320.jpg",
-  "date_group": "2023-01",
-  "created_at": "2026-03-19 23:11:45.913008",
-  "full_filename": "-1010611320.jpg",
-  "quick_hash": "c3c006a821fe9087",
-  "thumbs": [
-    {
-      "type": "webp",
-      "path": "backend/temp/c3c006a821fe9087d1506cadb12c03c2e8bb5b65aba8ef9ca2251643798e97d3.webp",
-      "width": 400,
-      "height": 400,
-      "mime_type": "image/webp",
-      "generated_at": "2026-03-20T17:20:25.930994"
-    }
-  ],
-  "file_created_at": "2023-01-30 23:06:00.000000",
-  "imported_at": "2026-03-19 23:11:45.912777",
-  "width": 690,
-  "height": 1024,
-  "file_size": 102211,
-  "mime_type": "image/jpeg",
-  "category": "",
-  "tags": []
+"id": 123,
+"original_path": "photos/vacation/img001.jpg",
+"full_filename": "img001.jpg",
+"file_hash": "c3c006a821fe9087d1506cadb12c03c2e8bb5b65aba8ef9ca2251643798e97d3",
+"quick_hash": "c3c006a821fe9087",
+"thumb_path": "backend/temp/c3c006a821fe9087d1506cadb12c03c2e8bb5b65aba8ef9ca2251643798e97d3.webp",
+"thumbs": [
+{
+"type": "webp",
+"path": "backend/temp/c3c006a821fe9087d1506cadb12c03c2e8bb5b65aba8ef9ca2251643798e97d3.webp",
+"width": 400,
+"height": 400,
+"mime_type": "image/webp",
+"generated_at": "2026-03-20T10:00:00.000000"
+},
+{
+"type": "webp",
+"path": "backend/data/cache/c3c006a821fe9087d1506cadb12c03c2e8bb5b65aba8ef9ca2251643798e97d3_cache.webp",
+"width": 600,
+"height": 450,
+"mime_type": "image/webp",
+"generated_at": "2026-03-20T10:05:00.000000"
+}
+],
+"media_path": "media/2025-03/img001.jpg",
+"date_group": "2025-03",
+"file_created_at": "2025-03-15 12:34:00.000000",
+"imported_at": "2026-03-20T09:59:00.000000",
+"created_at": "2026-03-20 09:59:00.000000",
+"width": 4000,
+"height": 3000,
+"file_size": 3421123,
+"mime_type": "image/jpeg",
+"category": "",
+"tags": []
 }
 ```
 
