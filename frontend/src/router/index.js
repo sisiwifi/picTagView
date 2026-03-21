@@ -44,7 +44,18 @@ const router = createRouter({
 // This keeps the DB in sync with the filesystem (prunes deleted files + orphaned cache)
 // without blocking navigation.
 let _refreshTimer = null
-router.afterEach(() => {
+router.afterEach((to) => {
+  // Skip automatic refresh when navigating to Settings page.
+  // This prevents user actions in Settings (like clearing caches) from
+  // immediately triggering a background refresh that may recreate files.
+  if (to && (to.name === 'settings' || (to.path && to.path.startsWith('/settings')))) {
+    if (_refreshTimer) {
+      clearTimeout(_refreshTimer)
+      _refreshTimer = null
+    }
+    return
+  }
+
   if (_refreshTimer) clearTimeout(_refreshTimer)
 
   // Import may continue in a kept-alive page; avoid concurrent refresh jobs.
