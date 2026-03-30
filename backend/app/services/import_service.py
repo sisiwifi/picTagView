@@ -1,5 +1,6 @@
 import datetime
 import hashlib
+import json
 import mimetypes
 import os
 import ctypes
@@ -12,6 +13,7 @@ from sqlmodel import col, select
 
 from app.core.config import CACHE_DIR, MEDIA_DIR, PROJECT_ROOT, TEMP_DIR
 from app.db.session import get_session, init_db
+from app.models.album import Album
 from app.models.image_asset import ImageAsset
 from app.services.parallel_processor import (
     IMPORT_BATCH_SIZE,
@@ -22,6 +24,61 @@ from app.services.parallel_processor import (
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".tiff", ".tif", ".png", ".webp", ".gif", ".bmp"}
+
+# ── Hash index cache ─────────────────────────────────────────────────────────
+_HASH_INDEX_PATH = MEDIA_DIR / ".hash_index.json"
+_hash_index: Optional[Dict[str, int]] = None
+# ── Album chain cache (per-import) ────────────────────────────────
+_album_chain_cache: Dict[str, List[str]] = {}
+
+def _load_hash_index() -> None:
+    global _hash_index
+    if _hash_index is not None:
+        return
+    if _HASH_INDEX_PATH.exists():
+        try:
+            _hash_index = json.loads(_HASH_INDEX_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            _hash_index = {}
+    else:
+        _hash_index = {}
+
+
+def _save_hash_index() -> None:
+    if _hash_index is None:
+        return
+    try:
+        _HASH_INDEX_PATH.write_text(json.dumps(_hash_index), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _add_to_hash_index(file_hash: str, image_id: int) -> None:
+    global _hash_index
+    if _hash_index is None:
+        _hash_index = {}
+    _hash_index[file_hash] = image_id
+
+
+def _lookup_hash_index(file_hash: str) -> Optional[int]:
+    if _hash_index is None:
+        return None
+    return _hash_index.get(file_hash)
+
+
+def _clear_hash_index_memory() -> None:
+    global _hash_index
+    _hash_index = None
+
+
+def rebuild_hash_index() -> None:
+    global _hash_index
+    _hash_index = {}
+    with get_session() as session:
+        for asset in session.exec(select(ImageAsset)).all():
+            if asset.file_hash and asset.id is not None:
+                _hash_index[asset.file_hash] = asset.id
+    _save_hash_index()
 
 
 def _is_image_ext(name: str) -> bool:
@@ -139,23 +196,23 @@ def _has_required_thumb(thumbs: Optional[list[dict]]) -> bool:
     return False
 
 
-def _parse_relative_path(relative_path: str) -> Tuple[bool, Optional[str], str]:
+def _parse_relative_path(relative_path: str) -> Tuple[List[str], str]:
     """
-    Parse webkitRelativePath into (is_direct, top_subdir, file_subpath).
+    Parse webkitRelativePath into (subdir_chain, filename).
 
-    "rootdir/image.jpg"               → (True,  None,     "image.jpg")
-    "rootdir/subdir/image.jpg"        → (False, "subdir", "image.jpg")
-    "rootdir/subdir/nested/image.jpg" → (False, "subdir", "nested/image.jpg")
+    "rootdir/image.jpg"               → ([], "image.jpg")
+    "rootdir/subdir/image.jpg"        → (["subdir"], "image.jpg")
+    "rootdir/subdir/nested/image.jpg" → (["subdir", "nested"], "image.jpg")
     """
     normalized = relative_path.replace("\\", "/")
     parts = [p for p in normalized.split("/") if p]
 
     if len(parts) <= 1:
-        return True, None, parts[0] if parts else relative_path
+        return [], parts[0] if parts else relative_path
     elif len(parts) == 2:
-        return True, None, parts[1]
+        return [], parts[1]
     else:
-        return False, parts[1], "/".join(parts[2:])
+        return list(parts[1:-1]), parts[-1]
 
 
 def _unique_dest(dest_dir: Path, filename: str) -> Path:
@@ -234,21 +291,119 @@ def _apply_file_times(path: Path, source_time_ms: Optional[int]) -> None:
 
 def _save_to_media(
     content: bytes,
-    file_subpath: str,
+    filename: str,
     date_group: str,
-    top_subdir: Optional[str],
+    subdir_chain: List[str],
     source_time_ms: Optional[int] = None,
 ) -> Path:
-    if top_subdir:
-        dest_dir = MEDIA_DIR / date_group / top_subdir / Path(file_subpath).parent
-    else:
-        dest_dir = MEDIA_DIR / date_group
+    dest_dir = MEDIA_DIR / date_group
+    for sub in subdir_chain:
+        dest_dir = dest_dir / sub
 
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = _unique_dest(dest_dir, Path(file_subpath).name)
+    dest = _unique_dest(dest_dir, filename)
     dest.write_bytes(content)
     _apply_file_times(dest, source_time_ms)
     return dest
+
+
+# ── Album helpers ─────────────────────────────────────────────────────────────
+
+def _ensure_album_chain(session, subdir_chain: List[str], date_group: str) -> List[str]:
+    """
+    Create or find the Album chain for subdirectory path.
+    Returns list of public_ids forming the full path from root to leaf.
+    """
+    if not subdir_chain:
+        return []
+
+    public_ids: List[str] = []
+    parent_id: Optional[int] = None
+    path_parts = [date_group]
+
+    for i, subdir_name in enumerate(subdir_chain):
+        path_parts.append(subdir_name)
+        album_path = "/".join(path_parts)
+        is_last = i == len(subdir_chain) - 1
+
+        existing = session.exec(
+            select(Album).where(Album.path == album_path)
+        ).first()
+
+        if existing:
+            if not is_last and existing.is_leaf:
+                existing.is_leaf = False
+                session.add(existing)
+            public_ids.append(existing.public_id)
+            parent_id = existing.id
+        else:
+            album = Album(
+                public_id="",
+                title=subdir_name,
+                path=album_path,
+                is_leaf=is_last,
+                parent_id=parent_id,
+                date_group=date_group,
+            )
+            session.add(album)
+            session.flush()
+            album.public_id = f"album_{album.id}"
+            session.add(album)
+            public_ids.append(album.public_id)
+            parent_id = album.id
+
+    return public_ids
+
+
+def _ensure_album_chain_cached(session, subdir_chain: List[str], date_group: str) -> List[str]:
+    """Cached wrapper: avoids repeated DB queries for the same album path."""
+    cache_key = date_group + "/" + "/".join(subdir_chain)
+    cached = _album_chain_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    result = _ensure_album_chain(session, subdir_chain, date_group)
+    _album_chain_cache[cache_key] = result
+    return result
+
+
+def _update_album_photo_counts(session, public_ids: List[str]) -> None:
+    """Increment photo_count for leaf album and subtree_photo_count for all ancestors."""
+    if not public_ids:
+        return
+    for i, pid in enumerate(public_ids):
+        album = session.exec(select(Album).where(Album.public_id == pid)).first()
+        if not album:
+            continue
+        album.subtree_photo_count = (album.subtree_photo_count or 0) + 1
+        if i == len(public_ids) - 1:
+            album.photo_count = (album.photo_count or 0) + 1
+        session.add(album)
+
+
+def _set_album_cover_if_needed(session, public_ids: List[str], asset: ImageAsset) -> None:
+    """Set album cover to alphabetically first filename (for each album in chain)."""
+    if not public_ids:
+        return
+    new_filename = asset.full_filename or ""
+    for pid in public_ids:
+        album = session.exec(select(Album).where(Album.public_id == pid)).first()
+        if not album:
+            continue
+        current_cover = album.cover or {}
+        current_filename = current_cover.get("filename", "")
+        if not current_filename or new_filename < current_filename:
+            thumb_path = ""
+            for t in (asset.thumbs or []):
+                if isinstance(t, dict) and t.get("path"):
+                    thumb_path = t["path"]
+                    break
+            album.cover = {
+                "photo_id": asset.id,
+                "thumb_path": thumb_path,
+                "filename": new_filename,
+                "updated_at": datetime.datetime.now().isoformat(),
+            }
+            session.add(album)
 
 
 async def import_files(
@@ -265,6 +420,8 @@ async def import_files(
     Phase 3 – Process in batches: parallel CPU work → sequential DB writes.
     """
     init_db()
+    _load_hash_index()
+    _album_chain_cache.clear()
     imported: List[str] = []
     skipped: List[str] = []
 
@@ -282,8 +439,8 @@ async def import_files(
             if created_times and idx < len(created_times)
             else None
         )
-        is_direct, top_subdir, file_subpath = _parse_relative_path(raw_filename)
-        if not _is_image_ext(Path(file_subpath).name):
+        subdir_chain, filename = _parse_relative_path(raw_filename)
+        if not _is_image_ext(filename):
             skipped.append(raw_filename or "unknown")
             continue
 
@@ -293,33 +450,34 @@ async def import_files(
             "ts_ms": ts_ms,
             "created_ts_ms": created_ts_ms,
             "source_time_ms": _min_source_ts_ms(created_ts_ms, ts_ms),
-            "is_direct": is_direct,
-            "top_subdir": top_subdir,
-            "file_subpath": file_subpath,
+            "subdir_chain": subdir_chain,
+            "filename": filename,
         })
 
     # ── Phase 2: Per-subdir minimum timestamp ─────────────────────────────
     subdir_min_ts: Dict[str, int] = {}
     for meta in metadata:
-        if not meta["is_direct"] and meta["top_subdir"]:
-            subdir = meta["top_subdir"]
+        if meta["subdir_chain"]:
+            top_subdir = meta["subdir_chain"][0]
             ts = meta["ts_ms"] if meta["ts_ms"] is not None else int(
                 datetime.datetime.now().timestamp() * 1000
             )
-            if subdir not in subdir_min_ts or ts < subdir_min_ts[subdir]:
-                subdir_min_ts[subdir] = ts
+            if top_subdir not in subdir_min_ts or ts < subdir_min_ts[top_subdir]:
+                subdir_min_ts[top_subdir] = ts
 
     # ── Phase 2.5: Determine which files need thumbnails ──────────────────
     now_ms = int(datetime.datetime.now().timestamp() * 1000)
     for meta in metadata:
+        is_direct = not meta["subdir_chain"]
+        top_subdir = meta["subdir_chain"][0] if meta["subdir_chain"] else None
         effective_ts = (
             meta["ts_ms"]
-            if meta["is_direct"]
-            else subdir_min_ts.get(meta["top_subdir"])
+            if is_direct
+            else subdir_min_ts.get(top_subdir)
         )
         meta["effective_ts"] = effective_ts if effective_ts is not None else now_ms
         meta["date_group_computed"] = _date_group_from_ts(
-            meta["ts_ms"] if meta["is_direct"] else subdir_min_ts.get(meta["top_subdir"])
+            meta["ts_ms"] if is_direct else subdir_min_ts.get(top_subdir)
         )
 
     # Which date_groups already have a valid thumbnail in the DB?
@@ -385,12 +543,14 @@ async def import_files(
         # Sequential: DB lookup, dedup, file save, DB write
         with get_session() as session:
             for i, (meta, content) in enumerate(batch_ready):
-                file_hash, thumb_path_str, error = proc.get(str(i), (None, None, "no result"))
+                result = proc.get(str(i), (None, None, "no result", None, None, None))
+                file_hash, thumb_path_str, _error = result[0], result[1], result[2]
+                quick_hash = result[3]
+                px_w = result[4]
+                px_h = result[5]
                 orig = meta["original"]
-                quick_hash = _quick_hash_from_bytes(content)
-                px_w, px_h = _image_dimensions_from_bytes(content)
                 file_size = len(content)
-                mime_type = _mime_from_name(meta["file_subpath"])
+                mime_type = _mime_from_name(meta["filename"])
                 file_created_at = None
                 if isinstance(meta.get("source_time_ms"), int) and meta["source_time_ms"] > 0:
                     file_created_at = datetime.datetime.fromtimestamp(meta["source_time_ms"] / 1000.0)
@@ -399,6 +559,10 @@ async def import_files(
                     skipped.append(orig)
                     continue
 
+                subdir_chain = meta["subdir_chain"]
+                is_direct = not subdir_chain
+                top_subdir = subdir_chain[0] if subdir_chain else None
+
                 rel_thumb_path = (
                     _to_project_relative(Path(thumb_path_str)) if thumb_path_str else None
                 )
@@ -406,110 +570,147 @@ async def import_files(
 
                 date_group = (
                     _date_group_from_ts(meta["ts_ms"])
-                    if meta["is_direct"]
-                    else _date_group_from_ts(subdir_min_ts.get(meta["top_subdir"]))
+                    if is_direct
+                    else _date_group_from_ts(subdir_min_ts.get(top_subdir))
                 )
 
-                existing = session.exec(
-                    select(ImageAsset).where(ImageAsset.file_hash == file_hash)
-                ).first()
+                # ── Dedup: check hash cache first, then DB ────────────────
+                cached_id = _lookup_hash_index(file_hash)
+                existing = None
+                if cached_id is not None:
+                    existing = session.get(ImageAsset, cached_id)
+                if existing is None:
+                    existing = session.exec(
+                        select(ImageAsset).where(ImageAsset.file_hash == file_hash)
+                    ).first()
 
                 if existing:
-                    thumb_ok = _has_required_thumb(existing.thumbs)
-                    media_resolved = _resolve_stored_path(existing.media_path[0] if existing.media_path else None)
-                    media_ok = bool(media_resolved and media_resolved.exists())
-
-                    needs_update = False
-
-                    if not media_ok:
+                    # Duplicate found
+                    if subdir_chain:
+                        # Album import: save file, add album membership
+                        album_public_ids = _ensure_album_chain_cached(session, subdir_chain, date_group)
                         media_path = _save_to_media(
-                            content,
-                            meta["file_subpath"],
-                            date_group,
-                            meta["top_subdir"],
-                            meta["source_time_ms"],
+                            content, meta["filename"], date_group,
+                            subdir_chain, meta["source_time_ms"],
                         )
-                        existing.media_path = [_to_project_relative(media_path)]
-                        existing.date_group = date_group
-                        needs_update = True
+                        new_media_rel = _to_project_relative(media_path)
 
-                    if not thumb_ok and meta["needs_thumb"] and new_thumb:
-                        existing.thumbs = _upsert_thumb(existing.thumbs, new_thumb)
-                        needs_update = True
+                        existing_media = existing.media_path or []
+                        existing_media.append(new_media_rel)
+                        existing.media_path = existing_media
 
-                    if not existing.quick_hash:
-                        existing.quick_hash = quick_hash
-                        needs_update = True
-                    if not existing.file_created_at and file_created_at is not None:
-                        existing.file_created_at = file_created_at
-                        needs_update = True
-                    if not existing.width and px_w is not None:
-                        existing.width = px_w
-                        needs_update = True
-                    if not existing.height and px_h is not None:
-                        existing.height = px_h
-                        needs_update = True
-                    if not existing.file_size:
-                        existing.file_size = file_size
-                        needs_update = True
-                    if not existing.mime_type:
-                        existing.mime_type = mime_type
-                        needs_update = True
-                    if not existing.full_filename:
-                        existing.full_filename = Path(meta["file_subpath"]).name
-                        needs_update = True
-                    if existing.tags is None:
-                        existing.tags = []
-                        needs_update = True
-                    if existing.category is None:
-                        existing.category = ""
-                        needs_update = True
-                    if existing.imported_at is None:
-                        existing.imported_at = datetime.datetime.now()
-                        needs_update = True
+                        existing_album = existing.album or []
+                        existing_album.append(album_public_ids)
+                        existing.album = existing_album
 
-                    if needs_update:
+                        if new_thumb:
+                            existing.thumbs = _upsert_thumb(existing.thumbs, new_thumb)
+
                         session.add(existing)
-                        session.commit()
+
+                        _update_album_photo_counts(session, album_public_ids)
+                        _set_album_cover_if_needed(session, album_public_ids, existing)
+                        _add_to_hash_index(file_hash, existing.id)
                         imported.append(orig)
                     else:
-                        skipped.append(orig)
+                        # Direct duplicate: repair if media missing, else skip
+                        thumb_ok = _has_required_thumb(existing.thumbs)
+                        media_resolved = _resolve_stored_path(
+                            existing.media_path[0] if existing.media_path else None
+                        )
+                        media_ok = bool(media_resolved and media_resolved.exists())
+
+                        needs_update = False
+                        if not media_ok:
+                            media_path = _save_to_media(
+                                content, meta["filename"], date_group,
+                                subdir_chain, meta["source_time_ms"],
+                            )
+                            existing.media_path = [_to_project_relative(media_path)]
+                            existing.date_group = date_group
+                            needs_update = True
+                        if not thumb_ok and meta["needs_thumb"] and new_thumb:
+                            existing.thumbs = _upsert_thumb(existing.thumbs, new_thumb)
+                            needs_update = True
+                        if not existing.quick_hash:
+                            existing.quick_hash = quick_hash
+                            needs_update = True
+                        if not existing.file_created_at and file_created_at is not None:
+                            existing.file_created_at = file_created_at
+                            needs_update = True
+                        if not existing.width and px_w is not None:
+                            existing.width = px_w
+                            needs_update = True
+                        if not existing.height and px_h is not None:
+                            existing.height = px_h
+                            needs_update = True
+                        if not existing.file_size:
+                            existing.file_size = file_size
+                            needs_update = True
+                        if not existing.mime_type:
+                            existing.mime_type = mime_type
+                            needs_update = True
+                        if not existing.full_filename:
+                            existing.full_filename = Path(meta["filename"]).name
+                            needs_update = True
+                        if existing.tags is None:
+                            existing.tags = []
+                            needs_update = True
+                        if existing.category is None:
+                            existing.category = ""
+                            needs_update = True
+                        if existing.imported_at is None:
+                            existing.imported_at = datetime.datetime.now()
+                            needs_update = True
+
+                        if needs_update:
+                            session.add(existing)
+                            _add_to_hash_index(file_hash, existing.id)
+                            imported.append(orig)
+                        else:
+                            skipped.append(orig)
                     continue
 
-                # New record
+                # ── New record ─────────────────────────────────────────────
+                album_public_ids = _ensure_album_chain_cached(session, subdir_chain, date_group) if subdir_chain else []
                 media_path = _save_to_media(
-                    content,
-                    meta["file_subpath"],
-                    date_group,
-                    meta["top_subdir"],
-                    meta["source_time_ms"],
+                    content, meta["filename"], date_group,
+                    subdir_chain, meta["source_time_ms"],
                 )
-                session.add(
-                    ImageAsset(
-                        original_path=orig,
-                        full_filename=Path(meta["file_subpath"]).name,
-                        file_hash=file_hash,
-                        quick_hash=quick_hash,
-                        thumbs=[new_thumb] if new_thumb else [],
-                        media_path=[_to_project_relative(media_path)],
-                        date_group=date_group,
-                        file_created_at=file_created_at,
-                        imported_at=datetime.datetime.now(),
-                        width=px_w,
-                        height=px_h,
-                        file_size=file_size,
-                        mime_type=mime_type,
-                        category="",
-                        tags=[],
-                        album=[],
-                        collection=[],
-                    )
+                asset = ImageAsset(
+                    original_path=orig,
+                    full_filename=Path(meta["filename"]).name,
+                    file_hash=file_hash,
+                    quick_hash=quick_hash,
+                    thumbs=[new_thumb] if new_thumb else [],
+                    media_path=[_to_project_relative(media_path)],
+                    date_group=date_group,
+                    file_created_at=file_created_at,
+                    imported_at=datetime.datetime.now(),
+                    width=px_w,
+                    height=px_h,
+                    file_size=file_size,
+                    mime_type=mime_type,
+                    category="",
+                    tags=[],
+                    album=[album_public_ids] if album_public_ids else [],
+                    collection=[],
                 )
-                session.commit()
+                session.add(asset)
+                session.flush()  # get asset.id for hash index
+
+                if album_public_ids:
+                    _update_album_photo_counts(session, album_public_ids)
+                    _set_album_cover_if_needed(session, album_public_ids, asset)
+
+                _add_to_hash_index(file_hash, asset.id)
                 imported.append(orig)
+
+            session.commit()  # batch commit
 
         del batch_ready  # release batch content from memory
 
+    _save_hash_index()
     return {"imported": imported, "skipped": skipped}
 
 
@@ -611,11 +812,27 @@ def refresh_library() -> Dict[str, int]:
             if not db_asset:
                 continue
 
+            result = proc.get(str(asset.id))
+            if result:
+                _file_hash, thumb_path_str, _error = result[0], result[1], result[2]
+                proc_qh = result[3]
+                proc_w = result[4]
+                proc_h = result[5]
+            else:
+                _file_hash, thumb_path_str, _error = None, None, "not processed"
+                proc_qh, proc_w, proc_h = None, None, None
+
             if not db_asset.quick_hash:
-                content = media_path.read_bytes()
-                db_asset.quick_hash = _quick_hash_from_bytes(content)
+                if proc_qh:
+                    db_asset.quick_hash = proc_qh
+                else:
+                    content = media_path.read_bytes()
+                    db_asset.quick_hash = _quick_hash_from_bytes(content)
             if not db_asset.width or not db_asset.height:
-                db_asset.width, db_asset.height = _image_dimensions_from_file(media_path)
+                if proc_w is not None and proc_h is not None:
+                    db_asset.width, db_asset.height = proc_w, proc_h
+                else:
+                    db_asset.width, db_asset.height = _image_dimensions_from_file(media_path)
             if not db_asset.file_size:
                 db_asset.file_size = media_path.stat().st_size
             if not db_asset.mime_type:
@@ -626,10 +843,6 @@ def refresh_library() -> Dict[str, int]:
                 db_asset.tags = []
             if db_asset.category is None:
                 db_asset.category = ""
-
-            _file_hash, thumb_path_str, _error = proc.get(
-                str(asset.id), (None, None, "not processed")
-            )
             # Prune stale thumbs entries whose files no longer exist
             if db_asset.thumbs:
                 live: list[dict] = []
@@ -649,9 +862,78 @@ def refresh_library() -> Dict[str, int]:
             session.add(db_asset)
         session.commit()
 
+    rebuild_hash_index()
+    recalculate_album_counts()
+
     return {
         "pruned": pruned,
         "total_images": total_images,
         "cache_deleted": cache_deleted,
         "regenerated": regenerated,
     }
+
+
+def recalculate_album_counts() -> None:
+    """Recalculate photo_count, subtree_photo_count, and covers for all albums."""
+    with get_session() as session:
+        albums = session.exec(select(Album).order_by(col(Album.id))).all()
+        album_map = {a.public_id: a for a in albums}
+
+        # Reset all counts
+        for a in albums:
+            a.photo_count = 0
+            a.subtree_photo_count = 0
+
+        # Track best cover candidate per album (asset with valid thumb,
+        # alphabetically first filename; fallback to any asset if none have thumbs)
+        cover_candidates: Dict[str, ImageAsset] = {}
+        cover_has_thumb: Dict[str, bool] = {}
+
+        # Count images per leaf album
+        all_assets = session.exec(select(ImageAsset)).all()
+        for asset in all_assets:
+            for path in (asset.album or []):
+                if not isinstance(path, list) or not path:
+                    continue
+                for pid in path:
+                    if pid in album_map:
+                        album_map[pid].subtree_photo_count += 1
+                    # Track cover candidate: prefer assets with valid thumbnails
+                    fname = asset.full_filename or ""
+                    has_thumb = _has_required_thumb(asset.thumbs)
+                    current_has = cover_has_thumb.get(pid, False)
+                    current_fname = (cover_candidates[pid].full_filename or "") if pid in cover_candidates else ""
+                    # Replace if: new has thumb but current doesn't, or
+                    # both have/lack thumb and new is alphabetically first
+                    if pid not in cover_candidates or (
+                        (has_thumb and not current_has) or
+                        (has_thumb == current_has and fname < current_fname)
+                    ):
+                        cover_candidates[pid] = asset
+                        cover_has_thumb[pid] = has_thumb
+                leaf_pid = path[-1]
+                if leaf_pid in album_map:
+                    album_map[leaf_pid].photo_count += 1
+
+        # Update covers
+        for pid, candidate in cover_candidates.items():
+            if pid not in album_map:
+                continue
+            album = album_map[pid]
+            thumb_path = ""
+            for t in (candidate.thumbs or []):
+                if isinstance(t, dict) and t.get("path"):
+                    resolved = _resolve_stored_path(t["path"])
+                    if resolved and resolved.exists():
+                        thumb_path = t["path"]
+                        break
+            album.cover = {
+                "photo_id": candidate.id,
+                "thumb_path": thumb_path,
+                "filename": candidate.full_filename or "",
+                "updated_at": datetime.datetime.now().isoformat(),
+            }
+
+        for a in albums:
+            session.add(a)
+        session.commit()

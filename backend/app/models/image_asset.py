@@ -19,13 +19,16 @@ class ImageAsset(SQLModel, table=True):
     date_group: Optional[str] = Field(default=None, index=True)
     file_created_at: Optional[datetime] = Field(default=None, index=True)
     imported_at: datetime = Field(default_factory=datetime.now, index=True)
-    deleted_at: Optional[datetime] = Field(default=None)  # 软删除时间，null 为未删除
+    # 软删除：JSON 数组，按 media_path 位置对应；null 表示所有位置均未删除
+    # 示例: [null, "2024-07-01T00:00:00"] 表示位置0未删除，位置1已删除
+    deleted_at: Optional[list] = Field(default=None, sa_column=Column(JSON(none_as_null=True)))
     width: Optional[int] = Field(default=None)
     height: Optional[int] = Field(default=None)
     file_size: Optional[int] = Field(default=None)
     mime_type: Optional[str] = Field(default=None)
     category: Optional[str] = Field(default=None)
     tags: Optional[list[str]] = Field(default_factory=list, sa_column=Column(JSON))
-    album: Optional[list] = Field(default_factory=list, sa_column=Column(JSON))  # 所属相册
+    # 所属相册：[[public_id_1, public_id_2], [...]] 每个内层数组是从根到叶的完整路径
+    album: Optional[list[list[str]]] = Field(default_factory=list, sa_column=Column(JSON))
     collection: Optional[list] = Field(default_factory=list, sa_column=Column(JSON))  # 所属收藏集
     created_at: datetime = Field(default_factory=datetime.now)

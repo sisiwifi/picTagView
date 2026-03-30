@@ -163,8 +163,16 @@ export default {
         }
       }
 
+      // Group direct files into chunks of 50 to reduce HTTP overhead
+      const CHUNK = 50
+      const directBatches = []
+      for (let i = 0; i < directFiles.length; i += CHUNK) {
+        const chunk = directFiles.slice(i, i + CHUNK)
+        const label = chunk.length === 1 ? chunk[0].name : `${chunk.length} 张图片`
+        directBatches.push({ label, files: chunk })
+      }
       const batches = [
-        ...directFiles.map(f => ({ label: f.name, files: [f] })),
+        ...directBatches,
         ...Object.entries(subdirMap).map(([sub, fs]) => ({ label: `${sub}/`, files: fs })),
       ]
 

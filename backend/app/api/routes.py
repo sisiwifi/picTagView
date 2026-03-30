@@ -15,6 +15,9 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from sqlmodel import col, select
 
 from app.api.schemas import (
+    AlbumDetailResponse,
+    AlbumInfo,
+    AlbumItem,
     CacheRequest,
     CacheStatusItem,
     CacheStatusResponse,
@@ -28,6 +31,7 @@ from app.api.schemas import (
 )
 from app.core.config import CACHE_DIR, DATA_DIR, MEDIA_DIR, PROJECT_ROOT, TEMP_DIR, VIEWER_ICON_DIR
 from app.db.session import get_session
+from app.models.album import Album
 from app.models.image_asset import ImageAsset
 from app.services.cache_thumb_service import generate_cache_thumbs_progressively
 from app.services.import_service import (
@@ -544,6 +548,7 @@ def refresh() -> dict:
 @router.get("/api/dates", response_model=DateViewResponse)
 def dates_view() -> DateViewResponse:
     with get_session() as session:
+        # Direct images (no album membership)
         assets = session.exec(
             select(ImageAsset)
             .where(ImageAsset.date_group != None)  # noqa: E711
@@ -551,36 +556,65 @@ def dates_view() -> DateViewResponse:
             .order_by(col(ImageAsset.id))
         ).all()
 
-    group_map: dict[str, list[ImageAsset]] = defaultdict(list)
-    for asset in assets:
-        if asset.date_group:
-            group_map[asset.date_group].append(asset)
+        direct_map: dict[str, list[ImageAsset]] = defaultdict(list)
+        for asset in assets:
+            if asset.album:
+                continue
+            if asset.date_group:
+                direct_map[asset.date_group].append(asset)
 
-    def sort_key(g: str):
-        parts = g.split("-")
-        return (int(parts[0]), int(parts[1]))
+        # Top-level albums
+        top_albums = session.exec(
+            select(Album)
+            .where(Album.parent_id == None)  # noqa: E711
+            .where(Album.deleted_at == None)  # noqa: E711
+            .where(Album.date_group != None)  # noqa: E711
+        ).all()
 
-    sorted_groups = sorted(group_map.keys(), key=sort_key)
+    album_map: dict[str, list[Album]] = defaultdict(list)
+    for album in top_albums:
+        if album.date_group:
+            album_map[album.date_group].append(album)
+
+    all_groups = sorted(
+        set(direct_map.keys()) | set(album_map.keys()),
+        key=lambda g: (int(g.split("-")[0]), int(g.split("-")[1])),
+    )
 
     year_map: dict[int, list[MonthGroup]] = defaultdict(list)
-    for group in sorted_groups:
+    for group in all_groups:
         parts = group.split("-")
         year, month = int(parts[0]), int(parts[1])
-        group_assets = group_map[group]
 
-        # Find any asset with a valid thumbnail to represent this month
-        rep = next(
-            (a for a in group_assets if _thumb_url(a)),
-            None,
-        )
-        thumb_url = _thumb_url(rep) if rep else ""
+        direct_assets = direct_map.get(group, [])
+        group_albums = album_map.get(group, [])
+
+        # Count: direct images + total photos in albums
+        count = len(direct_assets) + sum(a.subtree_photo_count or 0 for a in group_albums)
+        if count == 0:
+            continue
+
+        # Thumbnail: prefer direct image, fallback to album cover
+        thumb_url = ""
+        rep = next((a for a in direct_assets if _thumb_url(a)), None)
+        if rep:
+            thumb_url = _thumb_url(rep)
+        else:
+            for album in group_albums:
+                if album.cover and isinstance(album.cover, dict):
+                    tp = album.cover.get("thumb_path", "")
+                    if tp:
+                        resolved = _resolve_stored_path(tp)
+                        if resolved and resolved.exists():
+                            thumb_url = f"/thumbnails/{resolved.name}"
+                            break
 
         year_map[year].append(
             MonthGroup(
                 group=group,
                 year=year,
                 month=month,
-                count=len(group_assets),
+                count=count,
                 thumb_url=thumb_url,
             )
         )
@@ -599,59 +633,139 @@ def date_group_items(date_group: str) -> DateItemsResponse:
             .order_by(col(ImageAsset.id))
         ).all()
 
-    if not assets:
-        raise HTTPException(status_code=404, detail=f"No assets for {date_group}")
-
-    media_base = (MEDIA_DIR / date_group).resolve()
-
-    direct_items: list[DateItem] = []
-    album_rep: dict[str, ImageAsset] = {}
-    album_count: dict[str, int] = {}
-
-    for asset in assets:
-        if not asset.media_path:
-            continue
-        media_path = _resolve_stored_path(asset.media_path[0] if asset.media_path else None)
-        if not media_path:
-            continue
-        try:
-            rel = media_path.relative_to(media_base)
-        except ValueError:
-            continue
-
-        parts = rel.parts
-        if len(parts) == 1:
+        # Direct images: those with no album membership
+        direct_items: list[DateItem] = []
+        for asset in assets:
+            if asset.album:
+                continue
+            if not asset.media_path:
+                continue
             direct_items.append(
                 DateItem(
                     type="image",
-                    name=parts[0],
+                    name=asset.full_filename or "",
                     thumb_url=_thumb_url(asset),
                     id=asset.id,
                     cache_thumb_url=_cache_thumb_url(asset),
                 )
             )
-        else:
-            top_subdir = parts[0]
-            if top_subdir not in album_rep:
-                album_rep[top_subdir] = asset
-                album_count[top_subdir] = 0
-            album_count[top_subdir] += 1
 
-    album_items: list[DateItem] = [
-        DateItem(
-            type="album",
-            name=subdir,
-            thumb_url=_thumb_url(asset),
-            count=album_count[subdir],
-            id=asset.id,
-            cache_thumb_url=_cache_thumb_url(asset),
-        )
-        for subdir, asset in album_rep.items()
-    ]
+        # Top-level albums from Album table
+        top_albums = session.exec(
+            select(Album)
+            .where(Album.date_group == date_group)
+            .where(Album.parent_id == None)  # noqa: E711
+            .where(Album.deleted_at == None)  # noqa: E711
+            .order_by(col(Album.title))
+        ).all()
+
+        album_items: list[DateItem] = []
+        for album in top_albums:
+            thumb_url = ""
+            if album.cover and isinstance(album.cover, dict):
+                tp = album.cover.get("thumb_path", "")
+                if tp:
+                    resolved = _resolve_stored_path(tp)
+                    if resolved and resolved.exists():
+                        thumb_url = f"/thumbnails/{resolved.name}"
+            album_items.append(
+                DateItem(
+                    type="album",
+                    name=album.title,
+                    thumb_url=thumb_url,
+                    count=album.subtree_photo_count,
+                    public_id=album.public_id,
+                )
+            )
+
+    if not direct_items and not album_items:
+        raise HTTPException(status_code=404, detail=f"No assets for {date_group}")
 
     return DateItemsResponse(
         date_group=date_group,
         items=direct_items + album_items,
+    )
+
+
+# ── Album views ───────────────────────────────────────────────────────────────
+
+@router.get("/api/albums/{album_id}", response_model=AlbumDetailResponse)
+def album_detail(album_id: str) -> AlbumDetailResponse:
+    with get_session() as session:
+        album = session.exec(
+            select(Album)
+            .where(Album.public_id == album_id)
+            .where(Album.deleted_at == None)  # noqa: E711
+        ).first()
+        if not album:
+            raise HTTPException(status_code=404, detail="Album not found")
+
+        # Parent public_id for back-navigation
+        parent_public_id = None
+        if album.parent_id is not None:
+            parent = session.get(Album, album.parent_id)
+            if parent:
+                parent_public_id = parent.public_id
+
+        # Sub-albums
+        sub_albums = session.exec(
+            select(Album)
+            .where(Album.parent_id == album.id)
+            .where(Album.deleted_at == None)  # noqa: E711
+            .order_by(col(Album.title))
+        ).all()
+
+        sub_items: list[AlbumItem] = []
+        for sa in sub_albums:
+            thumb_url = ""
+            if sa.cover and isinstance(sa.cover, dict):
+                tp = sa.cover.get("thumb_path", "")
+                if tp:
+                    resolved = _resolve_stored_path(tp)
+                    if resolved and resolved.exists():
+                        thumb_url = f"/thumbnails/{resolved.name}"
+            sub_items.append(AlbumItem(
+                type="album",
+                name=sa.title,
+                thumb_url=thumb_url,
+                count=sa.subtree_photo_count,
+                public_id=sa.public_id,
+            ))
+
+        # Direct images in this album
+        # Query all non-deleted images, then filter by album membership.
+        # Using JSON column containment isn't efficient in SQLite, so we
+        # query broadly and filter in Python.
+        all_assets = session.exec(
+            select(ImageAsset)
+            .where(ImageAsset.deleted_at == None)  # noqa: E711
+            .order_by(col(ImageAsset.id))
+        ).all()
+
+        image_items: list[AlbumItem] = []
+        for asset in all_assets:
+            for path in (asset.album or []):
+                if isinstance(path, list) and path and path[-1] == album_id:
+                    image_items.append(AlbumItem(
+                        type="image",
+                        name=asset.full_filename or "",
+                        thumb_url=_thumb_url(asset),
+                        id=asset.id,
+                        cache_thumb_url=_cache_thumb_url(asset),
+                    ))
+                    break
+
+    return AlbumDetailResponse(
+        album=AlbumInfo(
+            public_id=album.public_id,
+            title=album.title,
+            description=album.description,
+            date_group=album.date_group,
+            photo_count=album.photo_count,
+            subtree_photo_count=album.subtree_photo_count,
+            parent_public_id=parent_public_id,
+        ),
+        items=sub_items + image_items,
     )
 
 

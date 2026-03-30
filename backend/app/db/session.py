@@ -7,10 +7,18 @@ from app.core.config import DB_PATH
 
 engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 
+_db_initialized = False
+
 
 def init_db() -> None:
-    SQLModel.metadata.create_all(engine)
-    _migrate_db()
+    global _db_initialized
+    if not _db_initialized:
+        from app.models.album import Album  # noqa: F401 – ensure Album table is created
+        SQLModel.metadata.create_all(engine)
+        _migrate_db()
+        _db_initialized = True
+    # 每次启动都清理 deleted_at 中的 JSON 'null' 文本
+    _cleanup_deleted_at()
 
 
 def _migrate_db() -> None:
@@ -112,6 +120,82 @@ def _migrate_db() -> None:
             conn.commit()
         except Exception:
             pass
+
+        # ── Album table migration ──────────────────────────────────────────
+        for column, col_type in [
+            ("public_id", "TEXT"),
+            ("title", "TEXT"),
+            ("description", "TEXT"),
+            ("path", "TEXT"),
+            ("category", "TEXT"),
+            ("is_leaf", "INTEGER"),
+            ("parent_id", "INTEGER"),
+            ("cover", "TEXT"),
+            ("photo_count", "INTEGER"),
+            ("subtree_photo_count", "INTEGER"),
+            ("sort_mode", "TEXT"),
+            ("settings", "TEXT"),
+            ("stats", "TEXT"),
+            ("date_group", "TEXT"),
+            ("created_at", "DATETIME"),
+            ("updated_at", "DATETIME"),
+            ("deleted_at", "DATETIME"),
+        ]:
+            try:
+                conn.execute(
+                    text(f"ALTER TABLE album ADD COLUMN {column} {col_type}")
+                )
+                conn.commit()
+            except Exception:
+                pass
+
+        # ── Migrate deleted_at from datetime string to JSON ────────────────
+        try:
+            rows = conn.execute(
+                text(
+                    "SELECT id, deleted_at FROM imageasset "
+                    "WHERE deleted_at IS NOT NULL AND deleted_at != '' "
+                    "AND deleted_at NOT LIKE '[%'"
+                )
+            ).fetchall()
+            for row_id, dt_val in rows:
+                conn.execute(
+                    text("UPDATE imageasset SET deleted_at = :v WHERE id = :id"),
+                    {"v": json.dumps([dt_val]), "id": row_id},
+                )
+            conn.commit()
+        except Exception:
+            pass
+
+        # ── Clean up bogus deleted_at values ───────────────────────────────
+        # Now handled by _cleanup_deleted_at() which runs on every init_db()
+        pass
+
+
+_cleanup_done = False
+
+
+def _cleanup_deleted_at() -> None:
+    """Reset bogus deleted_at values (JSON 'null' text) to SQL NULL.
+
+    Runs once per process lifetime — after the source fix
+    (JSON(none_as_null=True)), new records won't produce the bad value.
+    """
+    global _cleanup_done
+    if _cleanup_done:
+        return
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    "UPDATE imageasset SET deleted_at = NULL "
+                    "WHERE deleted_at IN ('[\"null\"]', '[null]', '\"null\"', 'null', '[]')"
+                )
+            )
+            conn.commit()
+    except Exception:
+        pass
+    _cleanup_done = True
 
 
 def get_session() -> Session:

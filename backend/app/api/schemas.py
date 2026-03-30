@@ -32,6 +32,7 @@ class DateItem(BaseModel):
     count: Optional[int] = None          # total images inside an album
     id: Optional[int] = None             # ImageAsset.id
     cache_thumb_url: Optional[str] = None  # /cache/<hash>_cache.webp when generated
+    public_id: Optional[str] = None      # Album.public_id for album items
 
 
 class DateItemsResponse(BaseModel):
@@ -57,3 +58,30 @@ class CacheStatusResponse(BaseModel):
 
 class ViewerPreferenceRequest(BaseModel):
     viewer_id: Optional[str] = None
+
+
+# ── Album views ───────────────────────────────────────────────────────────────
+
+class AlbumItem(BaseModel):
+    type: str                            # "image" or "album"
+    name: str
+    thumb_url: str = ""
+    count: Optional[int] = None
+    id: Optional[int] = None             # ImageAsset.id (for images)
+    cache_thumb_url: Optional[str] = None
+    public_id: Optional[str] = None      # Album.public_id (for sub-albums)
+
+
+class AlbumInfo(BaseModel):
+    public_id: str
+    title: str
+    description: Optional[str] = None
+    date_group: Optional[str] = None
+    photo_count: int = 0
+    subtree_photo_count: int = 0
+    parent_public_id: Optional[str] = None
+
+
+class AlbumDetailResponse(BaseModel):
+    album: AlbumInfo
+    items: List[AlbumItem]

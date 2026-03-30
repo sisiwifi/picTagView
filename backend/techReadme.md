@@ -28,14 +28,19 @@
   - `GET /api/images/count`：总图像数量
   - `POST /api/admin/refresh`：修复/重建库，调用 `import_service.refresh_library`
   - `GET /api/dates`：按年份/月份汇总（基于 `ImageAsset.date_group`）
-  - `GET /api/dates/{date_group}/items`：获取某月内容（直图+子相册表示）
+  - `GET /api/dates/{date_group}/items`：获取某月内容（直图 + 子相册），相册数据来自 Album 表
+  - `GET /api/albums/{album_id}`：获取指定相册的详情（子相册 + 直属图片），`album_id` 为 `public_id`
 
 ### 3.3 `app/services/import_service.py`
 - 核心导入与库修复逻辑
 - `import_files(files, last_modified_times)`：
-  - 解析上传路径（兼容 `webkitRelativePath`）
+  - 解析上传路径（兼容 `webkitRelativePath`），`_parse_relative_path` 返回 `(subdir_chain, filename)`
   - 过滤非图片，由扩展名判断
   - 维护目录级 `date_group`，按子目录最早时间分组（格式 `YYYY-MM`）
+  - 导入前加载哈希索引缓存 `.hash_index.json`，用于 O(1) 去重查找
+  - 子目录链 → 自动创建 Album 树（`_ensure_album_chain`），所有嵌套层级继承顶层 `date_group`
+  - 去重策略：相同哈希在相册内 → 保留并添加 album 关系；直传重复 → 跳过
+  - 导入结束后保存哈希索引并释放内存
   - 批次读取文件内容（`IMPORT_BATCH_SIZE=20`）
   - 线程池并行 `process_from_bytes` 只为“每月封面所需图片”生成 temp 缩略图
   - 其他图片仅计算哈希，不在导入时批量生成 temp 缩略图
@@ -70,16 +75,44 @@
   - `file_hash` (str): SHA-256 散列，唯一索引，用于去重
   - `quick_hash` (str | null): 快速哈希（xxhash64 或回退），用于快速比对
   - `thumbs` (JSON array): 详细的缩略图条目数组，每项包含 `type`/`path`/`width`/`height`/`mime_type`/`generated_at`
-  - `media_path` (JSON array of str): 存放在 `MEDIA_DIR` 下的原图相对路径列表；通常只含一项，设计为数组以支持未来多版本/多副本场景
+  - `media_path` (JSON array of str): 存放在 `MEDIA_DIR` 下的原图相对路径列表；一张图可在多个相册中存储多个副本
   - `date_group` (str | null): 年-月分组，格式 `YYYY-MM`，用于前端日期视图索引
   - `file_created_at` (datetime | null): 文件原始创建时间（如可用）
   - `imported_at` (datetime): 导入时间
-  - `deleted_at` (datetime | null): 软删除时间；`null` 表示未删除，非 `null` 时前端所有接口均不返回该记录
+  - `deleted_at` (JSON array | null): 按位置软删除数组，与 `media_path` 位置一一对应；`null` 表示所有位置均未删除，`[null, "2024-07-01T00:00:00"]` 表示位置 0 未删除、位置 1 已删除
   - `width` / `height` / `file_size` / `mime_type`: 媒体元信息
   - `category` (str) / `tags` (JSON array): 可选的分类与标签
-  - `album` (JSON array): 所属相册信息，数据结构待定，默认空数组
+  - `album` (JSON array of arrays): 所属相册路径，每个内层数组是从根相册到叶相册的 `public_id` 完整路径，如 `[["album_1", "album_3"], ["album_5"]]`
   - `collection` (JSON array): 所属收藏集信息，数据结构待定，默认空数组
   - `created_at` (datetime): 记录创建时间
+
+### 3.5b `app/models/album.py`
+- 数据模型 `Album`（树形相册结构）：
+  - `id` (int): 主键自增
+  - `public_id` (str): 外部暴露标识，格式 `album_{id}`，唯一索引
+  - `title` (str): 相册名称（可重复，取自子目录名）
+  - `description` (str | null): 描述
+  - `path` (str): 媒体目录下的完整路径，格式 `{date_group}/{subdir1}/{subdir2}`，用于唯一定位
+  - `category` (str | null): 分类
+  - `is_leaf` (bool): 是否为叶节点相册（无子相册）
+  - `parent_id` (int | null): 父相册 ID（顶层相册为 null）
+  - `cover` (JSON dict | null): 封面信息 `{photo_id, thumb_path, filename, updated_at}`，按文件名字母序选取最早文件
+  - `photo_count` (int): 直属照片数
+  - `subtree_photo_count` (int): 含所有子相册的总照片数
+  - `sort_mode` (str): 排序模式 `alpha`（默认）/ `date` / `manual`
+  - `settings` / `stats` (JSON dict): 扩展设置与统计
+  - `date_group` (str | null): 所有嵌套层级继承顶层的 `date_group`
+  - `created_at` / `updated_at` / `deleted_at`: 时间戳
+
+### 3.5c 哈希索引缓存（`.hash_index.json`）
+- 文件位置：`MEDIA_DIR/.hash_index.json`
+- 格式：`{"file_hash": image_id, ...}` 的 JSON 对象
+- 用途：导入时快速去重查询，避免逐条 DB 查询
+- 生命周期：
+  - 导入开始时加载到内存
+  - 导入过程中新增/更新条目
+  - 导入结束后序列化回磁盘并释放内存
+  - `refresh_library()` 结束时完整重建
 
 示例: 以下为从数据库抽取的一个 `ImageAsset` 记录示例，展示了字段实际存储形态：
 
@@ -120,7 +153,7 @@
 "mime_type": "image/jpeg",
 "category": "",
 "tags": [],
-"album": [],
+"album": [["album_1", "album_3"]],
 "collection": []
 }
 ```

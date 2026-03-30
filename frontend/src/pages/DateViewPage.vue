@@ -101,10 +101,10 @@
                   :alt="item.name || ''"
                   @load="onImgLoad(item, $event)"
                 />
-                <div v-if="item.type === 'album'" class="photo-album-overlay">
-                  <span class="album-icon">🗂️</span>
-                  <span class="album-name">{{ item.name }}</span>
-                  <span class="album-count">相册 · {{ item.count }} 张</span>
+                <div v-if="item.type === 'album'" class="album-badge">
+                  <span class="badge-icon">📁</span>
+                  <span class="badge-name">{{ item.name }}</span>
+                  <span class="badge-count">{{ item.count }} 张</span>
                 </div>
               </div>
             </div>
@@ -468,6 +468,10 @@ export default {
     },
 
     async openImage(item) {
+      if (item.type === 'album' && item.public_id) {
+        this.$router.push({ name: 'album', params: { id: item.public_id } })
+        return
+      }
       if (!item.id) return
       try {
         await fetch(`${API_BASE}/api/images/${item.id}/open`)
@@ -587,24 +591,25 @@ export default {
   transition: transform 300ms ease;
 }
 .photo-card:hover .photo-img { transform: scale(1.03); }
-.photo-album-overlay {
-  @apply absolute inset-0 flex flex-col items-center justify-center;
-  background: rgba(0, 0, 0, 0.50);
-}
 
-.album-icon  { @apply text-2xl mb-1; }
-.album-name  {
-  @apply text-white text-xs font-semibold text-center select-none;
-  max-width: 90%;
+.album-badge {
+  @apply absolute top-2 right-2 flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg;
+  background: rgba(255, 255, 255, 0.90);
+  box-shadow: 0 1px 4px rgba(0,0,0,.15);
+  pointer-events: none;
+}
+.badge-icon  { font-size: 1rem; }
+.badge-name  {
+  @apply text-slate-800 text-xs font-semibold text-center select-none;
+  max-width: 6rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-shadow: 0 1px 6px rgba(0,0,0,.8);
 }
-.album-count {
-  @apply mt-1 select-none;
-  color: rgba(255,255,255,.60);
-  font-size: 0.72rem;
+.badge-count {
+  @apply select-none;
+  color: rgba(100, 116, 139, 0.8);
+  font-size: 0.65rem;
 }
 
 .t-forward-enter-active {
