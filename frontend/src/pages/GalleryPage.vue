@@ -52,9 +52,9 @@
         <span class="live-indicator__name">{{ currentItem }}</span>
       </div>
 
-      <!-- Batch progress -->
-      <p v-if="importing && totalBatches > 0" class="progress-text">
-        {{ doneBatches }} / {{ totalBatches }} 批次完成
+      <!-- Per-file progress -->
+      <p v-if="importing && totalFiles > 0" class="progress-text">
+        {{ doneFiles }} / {{ totalFiles }} 张
       </p>
 
       <!-- Unified notice -->
@@ -82,8 +82,8 @@ export default {
       status:        '',
       importing:     false,
       currentItem:   '',
-      totalBatches:  0,
-      doneBatches:   0,
+      totalFiles:    0,
+      doneFiles:     0,
       refreshing:    false,
       noticeVisible: false,
       noticeType:    'info',
@@ -168,26 +168,34 @@ export default {
       const directBatches = []
       for (let i = 0; i < directFiles.length; i += CHUNK) {
         const chunk = directFiles.slice(i, i + CHUNK)
-        const label = chunk.length === 1 ? chunk[0].name : `${chunk.length} 张图片`
-        directBatches.push({ label, files: chunk })
+        directBatches.push({ files: chunk })
       }
       const batches = [
         ...directBatches,
-        ...Object.entries(subdirMap).map(([sub, fs]) => ({ label: `${sub}/`, files: fs })),
+        ...Object.entries(subdirMap).map(([sub, fs]) => ({ subdir: sub, files: fs })),
       ]
+
+      const totalFileCount = files.filter(f => {
+        const name = f.name || ''
+        return /\.(jpe?g|png|webp|gif|bmp|tiff?)$/i.test(name)
+      }).length
 
       this.importing    = true
       window.__ptvImporting = true
       this.clearNotice()
       this.status       = `正在导入 ${rootName}…`
-      this.totalBatches = batches.length
-      this.doneBatches  = 0
+      this.totalFiles   = totalFileCount
+      this.doneFiles    = 0
 
       const allImported = []
       const allSkipped  = []
       try {
         for (const batch of batches) {
-          this.currentItem = batch.label
+          // Show first filename in batch (or subdir name) as the live label
+          const firstFile = batch.files[0]
+          this.currentItem = batch.subdir
+            ? `${batch.subdir}/`
+            : (firstFile ? firstFile.name : '')
           const fd = new FormData()
           const ts = []
           const createdTs = []
@@ -204,7 +212,7 @@ export default {
           const data = await res.json()
           allImported.push(...data.imported)
           allSkipped.push(...data.skipped)
-          this.doneBatches++
+          this.doneFiles = Math.min(this.doneFiles + batch.files.length, this.totalFiles)
         }
         this.showNotice({
           type: 'success',
@@ -219,6 +227,8 @@ export default {
         this.importing   = false
         window.__ptvImporting = false
         this.currentItem = ''
+        this.totalFiles  = 0
+        this.doneFiles   = 0
         event.target.value = ''
       }
     },

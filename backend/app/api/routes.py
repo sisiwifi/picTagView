@@ -30,9 +30,30 @@ from app.api.schemas import (
     YearGroup,
 )
 from app.core.config import CACHE_DIR, DATA_DIR, MEDIA_DIR, PROJECT_ROOT, TEMP_DIR, VIEWER_ICON_DIR
+from sqlalchemy import or_
+
 from app.db.session import get_session
 from app.models.album import Album
 from app.models.image_asset import ImageAsset
+
+# Bogus values written by old SQLAlchemy JSON serialization (None → 'null' text)
+_NULL_JSON_VALUES = ('null', '"null"', '[null]', '["null"]', '[]')
+
+
+def _ia_not_deleted():
+    """ImageAsset filter: not soft-deleted (handles both SQL NULL and JSON 'null' artefacts)."""
+    return or_(
+        ImageAsset.deleted_at == None,  # noqa: E711
+        ImageAsset.deleted_at.in_(_NULL_JSON_VALUES),
+    )
+
+
+def _album_not_deleted():
+    """Album filter: not soft-deleted."""
+    return or_(
+        Album.deleted_at == None,  # noqa: E711
+        Album.deleted_at.in_(_NULL_JSON_VALUES),
+    )
 from app.services.cache_thumb_service import generate_cache_thumbs_progressively
 from app.services.import_service import (
     _required_thumb_entry,
@@ -533,7 +554,7 @@ async def import_images(
 def images_count() -> dict:
     with get_session() as session:
         count = session.exec(
-            select(ImageAsset).where(ImageAsset.deleted_at == None)  # noqa: E711
+            select(ImageAsset).where(_ia_not_deleted())
         ).all().__len__()
     return {"count": count}
 
@@ -552,7 +573,7 @@ def dates_view() -> DateViewResponse:
         assets = session.exec(
             select(ImageAsset)
             .where(ImageAsset.date_group != None)  # noqa: E711
-            .where(ImageAsset.deleted_at == None)  # noqa: E711
+            .where(_ia_not_deleted())
             .order_by(col(ImageAsset.id))
         ).all()
 
@@ -567,7 +588,7 @@ def dates_view() -> DateViewResponse:
         top_albums = session.exec(
             select(Album)
             .where(Album.parent_id == None)  # noqa: E711
-            .where(Album.deleted_at == None)  # noqa: E711
+            .where(_album_not_deleted())
             .where(Album.date_group != None)  # noqa: E711
         ).all()
 
@@ -629,7 +650,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
         assets = session.exec(
             select(ImageAsset)
             .where(ImageAsset.date_group == date_group)
-            .where(ImageAsset.deleted_at == None)  # noqa: E711
+            .where(_ia_not_deleted())
             .order_by(col(ImageAsset.id))
         ).all()
 
@@ -655,7 +676,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
             select(Album)
             .where(Album.date_group == date_group)
             .where(Album.parent_id == None)  # noqa: E711
-            .where(Album.deleted_at == None)  # noqa: E711
+            .where(_album_not_deleted())
             .order_by(col(Album.title))
         ).all()
 
@@ -695,7 +716,7 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
         album = session.exec(
             select(Album)
             .where(Album.public_id == album_id)
-            .where(Album.deleted_at == None)  # noqa: E711
+            .where(_album_not_deleted())
         ).first()
         if not album:
             raise HTTPException(status_code=404, detail="Album not found")
@@ -711,7 +732,7 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
         sub_albums = session.exec(
             select(Album)
             .where(Album.parent_id == album.id)
-            .where(Album.deleted_at == None)  # noqa: E711
+            .where(_album_not_deleted())
             .order_by(col(Album.title))
         ).all()
 
@@ -738,7 +759,7 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
         # query broadly and filter in Python.
         all_assets = session.exec(
             select(ImageAsset)
-            .where(ImageAsset.deleted_at == None)  # noqa: E711
+            .where(_ia_not_deleted())
             .order_by(col(ImageAsset.id))
         ).all()
 

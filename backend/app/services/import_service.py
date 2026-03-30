@@ -28,36 +28,53 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".tiff", ".tif", ".png", ".webp", ".gif", ".bmp"}
 # ── Hash index cache ─────────────────────────────────────────────────────────
 _HASH_INDEX_PATH = MEDIA_DIR / ".hash_index.json"
 _hash_index: Optional[Dict[str, int]] = None
+_quick_hash_index: Optional[Dict[str, str]] = None  # quick_hash -> file_hash
 # ── Album chain cache (per-import) ────────────────────────────────
 _album_chain_cache: Dict[str, List[str]] = {}
 
 def _load_hash_index() -> None:
-    global _hash_index
+    global _hash_index, _quick_hash_index
     if _hash_index is not None:
         return
     if _HASH_INDEX_PATH.exists():
         try:
-            _hash_index = json.loads(_HASH_INDEX_PATH.read_text(encoding="utf-8"))
+            raw = json.loads(_HASH_INDEX_PATH.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and "hash_to_id" in raw:
+                _hash_index = raw["hash_to_id"]
+                _quick_hash_index = raw.get("quick_to_hash", {})
+            else:
+                _hash_index = raw if isinstance(raw, dict) else {}
+                _quick_hash_index = {}
         except Exception:
             _hash_index = {}
+            _quick_hash_index = {}
     else:
         _hash_index = {}
+        _quick_hash_index = {}
 
 
 def _save_hash_index() -> None:
     if _hash_index is None:
         return
     try:
-        _HASH_INDEX_PATH.write_text(json.dumps(_hash_index), encoding="utf-8")
+        data = {
+            "hash_to_id": _hash_index,
+            "quick_to_hash": _quick_hash_index or {},
+        }
+        _HASH_INDEX_PATH.write_text(json.dumps(data), encoding="utf-8")
     except Exception:
         pass
 
 
-def _add_to_hash_index(file_hash: str, image_id: int) -> None:
-    global _hash_index
+def _add_to_hash_index(file_hash: str, image_id: int, quick_hash: Optional[str] = None) -> None:
+    global _hash_index, _quick_hash_index
     if _hash_index is None:
         _hash_index = {}
     _hash_index[file_hash] = image_id
+    if quick_hash:
+        if _quick_hash_index is None:
+            _quick_hash_index = {}
+        _quick_hash_index[quick_hash] = file_hash
 
 
 def _lookup_hash_index(file_hash: str) -> Optional[int]:
@@ -66,18 +83,29 @@ def _lookup_hash_index(file_hash: str) -> Optional[int]:
     return _hash_index.get(file_hash)
 
 
+def _lookup_quick_hash(quick_hash: str) -> Optional[str]:
+    """Return file_hash if quick_hash is known, else None."""
+    if _quick_hash_index is None:
+        return None
+    return _quick_hash_index.get(quick_hash)
+
+
 def _clear_hash_index_memory() -> None:
-    global _hash_index
+    global _hash_index, _quick_hash_index
     _hash_index = None
+    _quick_hash_index = None
 
 
 def rebuild_hash_index() -> None:
-    global _hash_index
+    global _hash_index, _quick_hash_index
     _hash_index = {}
+    _quick_hash_index = {}
     with get_session() as session:
         for asset in session.exec(select(ImageAsset)).all():
             if asset.file_hash and asset.id is not None:
                 _hash_index[asset.file_hash] = asset.id
+                if asset.quick_hash:
+                    _quick_hash_index[asset.quick_hash] = asset.file_hash
     _save_hash_index()
 
 
@@ -524,21 +552,32 @@ async def import_files(
         if not batch_ready:
             continue
 
-        # Split by thumbnail requirement
+        # ── Pre-dedup: xxhash inline (~1ms/file) to skip known duplicates ─
+        pre_resolved: Dict[int, Tuple] = {}
+        for i, (meta, content) in enumerate(batch_ready):
+            qh = _quick_hash_from_bytes(content)
+            meta["_quick_hash"] = qh
+            known_fh = _lookup_quick_hash(qh)
+            if known_fh is not None and _lookup_hash_index(known_fh) is not None:
+                pre_resolved[i] = (known_fh, None, None, qh, None, None)
+
+        # Split remaining (non-pre-resolved) by thumbnail requirement
         thumb_entries = [
             (str(i), content)
             for i, (meta, content) in enumerate(batch_ready)
-            if meta["needs_thumb"]
+            if i not in pre_resolved and meta["needs_thumb"]
         ]
         hash_entries = [
             (str(i), content)
             for i, (meta, content) in enumerate(batch_ready)
-            if not meta["needs_thumb"]
+            if i not in pre_resolved and not meta["needs_thumb"]
         ]
 
         proc_thumb = process_from_bytes(thumb_entries, TEMP_DIR) if thumb_entries else {}
         proc_hash = process_hash_only_from_bytes(hash_entries) if hash_entries else {}
         proc = {**proc_thumb, **proc_hash}
+        for i, v in pre_resolved.items():
+            proc[str(i)] = v
 
         # Sequential: DB lookup, dedup, file save, DB write
         with get_session() as session:
@@ -610,7 +649,7 @@ async def import_files(
 
                         _update_album_photo_counts(session, album_public_ids)
                         _set_album_cover_if_needed(session, album_public_ids, existing)
-                        _add_to_hash_index(file_hash, existing.id)
+                        _add_to_hash_index(file_hash, existing.id, quick_hash)
                         imported.append(orig)
                     else:
                         # Direct duplicate: repair if media missing, else skip
@@ -665,13 +704,17 @@ async def import_files(
 
                         if needs_update:
                             session.add(existing)
-                            _add_to_hash_index(file_hash, existing.id)
+                            _add_to_hash_index(file_hash, existing.id, quick_hash)
                             imported.append(orig)
                         else:
                             skipped.append(orig)
                     continue
 
                 # ── New record ─────────────────────────────────────────────
+                # Lazy dimension computation: only for new records that lack dimensions
+                if px_w is None or px_h is None:
+                    px_w, px_h = _image_dimensions_from_bytes(content)
+
                 album_public_ids = _ensure_album_chain_cached(session, subdir_chain, date_group) if subdir_chain else []
                 media_path = _save_to_media(
                     content, meta["filename"], date_group,
@@ -703,7 +746,7 @@ async def import_files(
                     _update_album_photo_counts(session, album_public_ids)
                     _set_album_cover_if_needed(session, album_public_ids, asset)
 
-                _add_to_hash_index(file_hash, asset.id)
+                _add_to_hash_index(file_hash, asset.id, quick_hash)
                 imported.append(orig)
 
             session.commit()  # batch commit

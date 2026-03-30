@@ -14,7 +14,7 @@ _THUMB_H = 400
 _THUMB_Q = 85
 
 DEFAULT_WORKERS: int = min(os.cpu_count() or 1, 8)
-IMPORT_BATCH_SIZE: int = 20
+IMPORT_BATCH_SIZE: int = 50
 REFRESH_BATCH_SIZE: int = 200
 
 
@@ -128,23 +128,16 @@ def _compute_hash_only(
     args: Tuple[str, bytes],
 ) -> Tuple[str, Optional[str], Optional[str], Optional[str], Optional[int], Optional[int]]:
     """
-    Worker (ThreadPoolExecutor): SHA-256 + quick hash + image dimensions (no thumbnail).
+    Worker (ThreadPoolExecutor): SHA-256 + quick hash only (no image decode).
+    Dimensions are computed lazily by the caller for new records only.
     args = (key, content)
     returns (key, file_hash, error_str, quick_hash, width, height)
     """
     key, content = args
-    import cv2
-    import numpy as np
-
     try:
         file_hash = hashlib.sha256(content).hexdigest()
         qh = _quick_hash(content)
-        img_w, img_h = None, None
-        arr = np.frombuffer(content, dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if img is not None:
-            img_h, img_w = img.shape[:2]
-        return key, file_hash, None, qh, img_w, img_h
+        return key, file_hash, None, qh, None, None
     except Exception as exc:
         return key, None, str(exc), None, None, None
 

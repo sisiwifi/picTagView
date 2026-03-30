@@ -172,18 +172,12 @@ def _migrate_db() -> None:
         pass
 
 
-_cleanup_done = False
-
-
 def _cleanup_deleted_at() -> None:
     """Reset bogus deleted_at values (JSON 'null' text) to SQL NULL.
 
-    Runs once per process lifetime — after the source fix
-    (JSON(none_as_null=True)), new records won't produce the bad value.
+    Runs on every init_db() call; the UPDATE is a no-op when no rows match,
+    so the cost is negligible once the database is clean.
     """
-    global _cleanup_done
-    if _cleanup_done:
-        return
     try:
         with engine.connect() as conn:
             conn.execute(
@@ -195,7 +189,6 @@ def _cleanup_deleted_at() -> None:
             conn.commit()
     except Exception:
         pass
-    _cleanup_done = True
 
 
 def get_session() -> Session:
