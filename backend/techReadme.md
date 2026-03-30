@@ -64,20 +64,21 @@
 
 ### 3.5 `app/models/image_asset.py`
 - 数据模型 `ImageAsset`：
-### 3.5 `app/models/image_asset.py`
-- 数据模型 `ImageAsset`：
   - `id` (int): 主键
   - `original_path` (str): 导入时的原始相对/上传路径，带索引
   - `full_filename` (str | null): 文件名
   - `file_hash` (str): SHA-256 散列，唯一索引，用于去重
   - `quick_hash` (str | null): 快速哈希（xxhash64 或回退），用于快速比对
   - `thumbs` (JSON array): 详细的缩略图条目数组，每项包含 `type`/`path`/`width`/`height`/`mime_type`/`generated_at`
-  - `media_path` (str | null): 存放在 `MEDIA_DIR` 下的原图相对路径
+  - `media_path` (JSON array of str): 存放在 `MEDIA_DIR` 下的原图相对路径列表；通常只含一项，设计为数组以支持未来多版本/多副本场景
   - `date_group` (str | null): 年-月分组，格式 `YYYY-MM`，用于前端日期视图索引
   - `file_created_at` (datetime | null): 文件原始创建时间（如可用）
   - `imported_at` (datetime): 导入时间
+  - `deleted_at` (datetime | null): 软删除时间；`null` 表示未删除，非 `null` 时前端所有接口均不返回该记录
   - `width` / `height` / `file_size` / `mime_type`: 媒体元信息
   - `category` (str) / `tags` (JSON array): 可选的分类与标签
+  - `album` (JSON array): 所属相册信息，数据结构待定，默认空数组
+  - `collection` (JSON array): 所属收藏集信息，数据结构待定，默认空数组
   - `created_at` (datetime): 记录创建时间
 
 示例: 以下为从数据库抽取的一个 `ImageAsset` 记录示例，展示了字段实际存储形态：
@@ -107,17 +108,20 @@
 "generated_at": "2026-03-20T10:05:00.000000"
 }
 ],
-"media_path": "media/2025-03/img001.jpg",
+"media_path": ["media/2025-03/img001.jpg"],
 "date_group": "2025-03",
 "file_created_at": "2025-03-15 12:34:00.000000",
 "imported_at": "2026-03-20T09:59:00.000000",
+"deleted_at": null,
 "created_at": "2026-03-20 09:59:00.000000",
 "width": 4000,
 "height": 3000,
 "file_size": 3421123,
 "mime_type": "image/jpeg",
 "category": "",
-"tags": []
+"tags": [],
+"album": [],
+"collection": []
 }
 ```
 

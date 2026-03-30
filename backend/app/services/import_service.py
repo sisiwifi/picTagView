@@ -416,7 +416,7 @@ async def import_files(
 
                 if existing:
                     thumb_ok = _has_required_thumb(existing.thumbs)
-                    media_resolved = _resolve_stored_path(existing.media_path)
+                    media_resolved = _resolve_stored_path(existing.media_path[0] if existing.media_path else None)
                     media_ok = bool(media_resolved and media_resolved.exists())
 
                     needs_update = False
@@ -429,7 +429,7 @@ async def import_files(
                             meta["top_subdir"],
                             meta["source_time_ms"],
                         )
-                        existing.media_path = _to_project_relative(media_path)
+                        existing.media_path = [_to_project_relative(media_path)]
                         existing.date_group = date_group
                         needs_update = True
 
@@ -491,7 +491,7 @@ async def import_files(
                         file_hash=file_hash,
                         quick_hash=quick_hash,
                         thumbs=[new_thumb] if new_thumb else [],
-                        media_path=_to_project_relative(media_path),
+                        media_path=[_to_project_relative(media_path)],
                         date_group=date_group,
                         file_created_at=file_created_at,
                         imported_at=datetime.datetime.now(),
@@ -501,6 +501,8 @@ async def import_files(
                         mime_type=mime_type,
                         category="",
                         tags=[],
+                        album=[],
+                        collection=[],
                     )
                 )
                 session.commit()
@@ -530,7 +532,7 @@ def refresh_library() -> Dict[str, int]:
     with get_session() as session:
         live_hashes: set = set()
         for a in session.exec(select(ImageAsset)).all():
-            media_path = _resolve_stored_path(a.media_path)
+            media_path = _resolve_stored_path(a.media_path[0] if a.media_path else None)
             if a.file_hash and media_path and media_path.exists():
                 live_hashes.add(a.file_hash)
 
@@ -553,7 +555,7 @@ def refresh_library() -> Dict[str, int]:
     with get_session() as session:
         all_assets = session.exec(select(ImageAsset)).all()
         for asset in all_assets:
-            media_path = _resolve_stored_path(asset.media_path)
+            media_path = _resolve_stored_path(asset.media_path[0] if asset.media_path else None)
             if asset.media_path and not (media_path and media_path.exists()):
                 for entry in asset.thumbs or []:
                     if not isinstance(entry, dict):
@@ -584,14 +586,14 @@ def refresh_library() -> Dict[str, int]:
 
         needs_thumb: List[ImageAsset] = []
         for asset in group_rep.values():
-            media_path = _resolve_stored_path(asset.media_path)
+            media_path = _resolve_stored_path(asset.media_path[0] if asset.media_path else None)
             if not media_path or not media_path.exists():
                 continue
             if not _has_required_thumb(asset.thumbs):
                 needs_thumb.append(asset)
 
     if needs_thumb:
-        entries = [(str(a.id), str(_resolve_stored_path(a.media_path))) for a in needs_thumb if _resolve_stored_path(a.media_path)]
+        entries = [(str(a.id), str(_resolve_stored_path(a.media_path[0] if a.media_path else None))) for a in needs_thumb if _resolve_stored_path(a.media_path[0] if a.media_path else None)]
         proc = process_from_paths(entries, TEMP_DIR)
     else:
         proc = {}
@@ -599,7 +601,7 @@ def refresh_library() -> Dict[str, int]:
     # ── Step 3: DB writes + metadata maintenance ──────────────────────────
     with get_session() as session:
         for asset in remaining:
-            media_path = _resolve_stored_path(asset.media_path)
+            media_path = _resolve_stored_path(asset.media_path[0] if asset.media_path else None)
             if not media_path or not media_path.exists():
                 continue
 

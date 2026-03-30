@@ -528,7 +528,9 @@ async def import_images(
 @router.get("/api/images/count")
 def images_count() -> dict:
     with get_session() as session:
-        count = session.exec(select(ImageAsset)).all().__len__()
+        count = session.exec(
+            select(ImageAsset).where(ImageAsset.deleted_at == None)  # noqa: E711
+        ).all().__len__()
     return {"count": count}
 
 
@@ -545,6 +547,7 @@ def dates_view() -> DateViewResponse:
         assets = session.exec(
             select(ImageAsset)
             .where(ImageAsset.date_group != None)  # noqa: E711
+            .where(ImageAsset.deleted_at == None)  # noqa: E711
             .order_by(col(ImageAsset.id))
         ).all()
 
@@ -592,6 +595,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
         assets = session.exec(
             select(ImageAsset)
             .where(ImageAsset.date_group == date_group)
+            .where(ImageAsset.deleted_at == None)  # noqa: E711
             .order_by(col(ImageAsset.id))
         ).all()
 
@@ -607,7 +611,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
     for asset in assets:
         if not asset.media_path:
             continue
-        media_path = _resolve_stored_path(asset.media_path)
+        media_path = _resolve_stored_path(asset.media_path[0] if asset.media_path else None)
         if not media_path:
             continue
         try:
@@ -660,7 +664,7 @@ def open_image(image_id: int) -> dict:
         asset = session.get(ImageAsset, image_id)
     if not asset or not asset.media_path:
         raise HTTPException(status_code=404, detail="Image not found")
-    path = _resolve_stored_path(asset.media_path)
+    path = _resolve_stored_path(asset.media_path[0] if asset.media_path else None)
     if not path:
         raise HTTPException(status_code=404, detail="File path is invalid")
     if not path.exists():
@@ -842,7 +846,7 @@ async def _run_cache_task(task_id: str, assets: list) -> None:
     try:
         valid_assets = []
         for a in assets:
-            media_path = _resolve_stored_path(a.media_path)
+            media_path = _resolve_stored_path(a.media_path[0] if a.media_path else None)
             if media_path and media_path.exists():
                 valid_assets.append((a, media_path))
 

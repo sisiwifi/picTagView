@@ -1,3 +1,5 @@
+import json
+
 from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy import text
 
@@ -28,6 +30,9 @@ def _migrate_db() -> None:
             ("mime_type", "TEXT"),
             ("category", "TEXT"),
             ("tags", "TEXT"),
+            ("deleted_at", "DATETIME"),
+            ("album", "TEXT"),
+            ("collection", "TEXT"),
         ]:
             try:
                 conn.execute(
@@ -38,7 +43,21 @@ def _migrate_db() -> None:
                 # Column already exists — safe to ignore
                 pass
 
-        # SQLite: make thumb_path nullable if the table was created with NOT NULL
+        # Migrate media_path: convert plain strings to JSON arrays
+        try:
+            rows = conn.execute(
+                text("SELECT id, media_path FROM imageasset WHERE media_path IS NOT NULL AND media_path != ''")
+            ).fetchall()
+            for row_id, mp in rows:
+                if mp and not mp.strip().startswith('['):
+                    conn.execute(
+                        text("UPDATE imageasset SET media_path = :v WHERE id = :id"),
+                        {"v": json.dumps([mp]), "id": row_id},
+                    )
+            conn.commit()
+        except Exception:
+            pass
+
         try:
             result = conn.execute(text("PRAGMA table_info(imageasset)"))
             thumb_notnull = any(

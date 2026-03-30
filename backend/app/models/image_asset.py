@@ -15,14 +15,17 @@ class ImageAsset(SQLModel, table=True):
     quick_hash: Optional[str] = Field(default=None, index=True)
     # thumb_path removed — thumbnail metadata is exclusively stored in `thumbs`
     thumbs: Optional[list[dict]] = Field(default_factory=list, sa_column=Column(JSON))
-    media_path: Optional[str] = Field(default=None)
+    media_path: Optional[list[str]] = Field(default_factory=list, sa_column=Column(JSON))
     date_group: Optional[str] = Field(default=None, index=True)
     file_created_at: Optional[datetime] = Field(default=None, index=True)
     imported_at: datetime = Field(default_factory=datetime.now, index=True)
+    deleted_at: Optional[datetime] = Field(default=None)  # 软删除时间，null 为未删除
     width: Optional[int] = Field(default=None)
     height: Optional[int] = Field(default=None)
     file_size: Optional[int] = Field(default=None)
     mime_type: Optional[str] = Field(default=None)
     category: Optional[str] = Field(default=None)
     tags: Optional[list[str]] = Field(default_factory=list, sa_column=Column(JSON))
+    album: Optional[list] = Field(default_factory=list, sa_column=Column(JSON))  # 所属相册
+    collection: Optional[list] = Field(default_factory=list, sa_column=Column(JSON))  # 所属收藏集
     created_at: datetime = Field(default_factory=datetime.now)
