@@ -174,7 +174,6 @@ class ImageAsset(SQLModel, table=True):
     date_group:      Optional[str]          # 日期组，如 "2025-03"
     file_created_at: Optional[datetime]     # 文件原始创建时间
     imported_at:     datetime               # 导入时间
-    deleted_at:      Optional[list]         # 按位置软删除数组（JSON），与 media_path 对应
     width / height / file_size / mime_type  # 媒体元信息
     category:        Optional[str]          # 分类
     tags:            Optional[list[str]]    # 标签（JSON）
@@ -198,6 +197,8 @@ class Album(SQLModel, table=True):
     date_group:            Optional[str]    # 继承顶层 date_group
     sort_mode:             str              # alpha / date / manual
 ```
+
+  软删除记录现在统一存放在独立表 `path_soft_delete` 中：`entity_type` 标记目标类型（`image` / `album`），`owner_id` 关联 `ImageAsset.id` 或 `Album.id`，`target_path` 保存被删除的规范化路径。查询层通过该表过滤可见项，因此 `ImageAsset` 与 `Album` 本身不再保存 `deleted_at` 字段。
 
 ---
 

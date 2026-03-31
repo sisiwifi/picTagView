@@ -1,6 +1,9 @@
-<template>
+﻿<template>
   <div class="thumb-card" :style="{ borderRadius: rounded }" @click="$emit('click', $event)">
-    <img class="thumb-card__img" :src="src" :alt="alt" loading="lazy" />
+    <img v-if="src" class="thumb-card__img" :src="src" :alt="alt" loading="lazy" />
+    <div v-else class="thumb-card__skeleton">
+      <span class="skeleton-label">···</span>
+    </div>
     <div class="thumb-card__overlay" :style="{ background: `rgba(0,0,0,${overlayOpacity})` }"></div>
     <div class="thumb-card__body">
       <slot />
@@ -41,5 +44,15 @@ export default {
 }
 .thumb-card__body {
   @apply absolute inset-0 flex flex-col items-center justify-center;
+}
+
+.thumb-card__skeleton {
+  @apply absolute inset-0 flex items-center justify-center;
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-wave 1.4s ease-in-out infinite;
+}
+.skeleton-label {
+  @apply text-slate-400 text-sm font-mono tracking-widest select-none;
 }
 </style>

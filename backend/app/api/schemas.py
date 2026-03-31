@@ -14,6 +14,8 @@ class MonthGroup(BaseModel):
     month: int
     count: int
     thumb_url: str    # URL path for the first image thumbnail
+    cache_thumb_url: Optional[str] = None
+    id: Optional[int] = None
 
 
 class YearGroup(BaseModel):
@@ -62,6 +64,11 @@ class ViewerPreferenceRequest(BaseModel):
 
 # ── Album views ───────────────────────────────────────────────────────────────
 
+class BreadcrumbItem(BaseModel):
+    public_id: str
+    title: str
+
+
 class AlbumItem(BaseModel):
     type: str                            # "image" or "album"
     name: str
@@ -80,6 +87,7 @@ class AlbumInfo(BaseModel):
     photo_count: int = 0
     subtree_photo_count: int = 0
     parent_public_id: Optional[str] = None
+    ancestors: List[BreadcrumbItem] = []
 
 
 class AlbumDetailResponse(BaseModel):

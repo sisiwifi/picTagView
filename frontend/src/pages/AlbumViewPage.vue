@@ -1,11 +1,21 @@
 <template>
   <section class="page">
     <header class="page-header">
-      <button class="back-btn" @click="goBack">← 返回</button>
-      <div>
-        <h2 class="page-title">{{ album.title || '相册' }}</h2>
-        <p class="page-subtitle">{{ totalCount }} 项</p>
-      </div>
+      <nav class="breadcrumb" aria-label="相册导航">
+        <router-link to="/calendar" class="bc-item bc-link">
+          <span class="bc-icon">&#128197;</span>日期视图
+        </router-link>
+        <template v-for="anc in album.ancestors || []" :key="anc.public_id">
+          <span class="bc-sep" aria-hidden="true">›</span>
+          <router-link
+            :to="{ name: 'album', params: { id: anc.public_id } }"
+            class="bc-item bc-link"
+          >{{ anc.title }}</router-link>
+        </template>
+        <span class="bc-sep" aria-hidden="true">›</span>
+        <span class="bc-item bc-current">{{ album.title || '相册' }}</span>
+      </nav>
+      <p class="page-subtitle">{{ totalCount }} 项</p>
     </header>
 
     <LoadingSpinner v-if="loading" />
@@ -124,7 +134,6 @@ export default {
   },
 
   watch: {
-    id() { this.fetchAlbum() },
     justifiedRows(newVal, oldVal) {
       if (newVal.length !== oldVal.length) {
         this.$nextTick(() => {
@@ -198,15 +207,6 @@ export default {
         fetch(`${API_BASE}/api/images/${item.id}/open`).catch(() => {})
       }
     },
-
-    goBack() {
-      if (this.album.parent_public_id) {
-        this.$router.push({ name: 'album', params: { id: this.album.parent_public_id } })
-      } else {
-        this.$router.back()
-      }
-    },
-
     onImgLoad(item, evt) {
       const { naturalWidth: w, naturalHeight: h } = evt.target
       if (!w || !h) return
@@ -313,15 +313,29 @@ export default {
 .page { @apply flex flex-col gap-6; }
 
 .page-header {
-  @apply sticky top-0 z-40 flex items-center gap-4 bg-white bg-opacity-95 py-2 backdrop-blur-sm shadow-sm;
+  @apply sticky top-0 z-40 flex flex-col gap-1 bg-white bg-opacity-95 py-2 px-0 backdrop-blur-sm shadow-sm;
 }
-.page-title  { @apply text-2xl font-semibold text-slate-900 m-0; }
-.page-subtitle { @apply text-sm text-slate-500 m-0; }
-.back-btn {
-  @apply flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-slate-500
-         bg-transparent border-0 cursor-pointer transition-colors duration-150;
+.page-subtitle { @apply text-sm text-slate-500 m-0 pl-1; }
+
+/* Breadcrumb */
+.breadcrumb {
+  @apply flex items-center flex-wrap gap-0.5 text-sm;
 }
-.back-btn:hover { @apply bg-slate-100 text-slate-800; }
+.bc-item {
+  @apply px-2 py-1 rounded-md max-w-[12rem] truncate;
+}
+.bc-link {
+  @apply text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors duration-150 no-underline;
+}
+.bc-current {
+  @apply text-slate-900 font-semibold;
+}
+.bc-sep {
+  @apply text-slate-300 text-base select-none px-0.5;
+}
+.bc-icon {
+  @apply mr-1;
+}
 
 .empty-hint {
   @apply border-2 border-dashed border-slate-300 bg-slate-50 rounded-xl

@@ -1,11 +1,11 @@
 <template>
-  <div class="min-h-screen bg-slate-50 text-slate-900">
+  <div class="min-h-screen bg-slate-50 text-slate-900 overflow-x-hidden">
     <div class="flex min-h-screen">
       <AppSidebar />
-      <main class="flex-1 p-10">
-        <router-view v-slot="{ Component }">
+      <main class="flex-1 min-w-0 p-10">
+        <router-view v-slot="{ Component, route }">
           <keep-alive include="GalleryPage">
-            <component :is="Component" />
+            <component :is="Component" :key="route.fullPath" />
           </keep-alive>
         </router-view>
       </main>

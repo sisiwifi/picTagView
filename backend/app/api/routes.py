@@ -18,6 +18,7 @@ from app.api.schemas import (
     AlbumDetailResponse,
     AlbumInfo,
     AlbumItem,
+    BreadcrumbItem,
     CacheRequest,
     CacheStatusItem,
     CacheStatusResponse,
@@ -95,6 +96,10 @@ def _prune_tasks() -> None:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _thumb_url(asset: ImageAsset) -> str:
+    """Return a /thumbnails/ URL for the asset's first thumbnail that lives in TEMP_DIR.
+    Skips any entries whose resolved path is outside TEMP_DIR (e.g. cache files that
+    were accidentally stored in the thumbs list).
+    """
     for thumb in asset.thumbs or []:
         if not isinstance(thumb, dict):
             continue
@@ -102,8 +107,14 @@ def _thumb_url(asset: ImageAsset) -> str:
         if not isinstance(p, str) or not p:
             continue
         resolved = _resolve_stored_path(p)
-        if resolved and resolved.exists():
-            return f"/thumbnails/{resolved.name}"
+        if not resolved or not resolved.exists():
+            continue
+        # Only serve via /thumbnails if the file is actually in TEMP_DIR
+        try:
+            resolved.relative_to(TEMP_DIR)
+        except ValueError:
+            continue
+        return f"/thumbnails/{resolved.name}"
     return ""
 
 
@@ -602,53 +613,75 @@ def dates_view() -> DateViewResponse:
             .where(Album.date_group != None)  # noqa: E711
         ).all()
 
-    album_map: dict[str, list[Album]] = defaultdict(list)
-    for album in top_albums:
-        if album.date_group:
-            album_map[album.date_group].append(album)
+        album_map: dict[str, list[Album]] = defaultdict(list)
+        for album in top_albums:
+            if album.date_group:
+                album_map[album.date_group].append(album)
 
-    all_groups = sorted(
-        set(direct_map.keys()) | set(album_map.keys()),
-        key=lambda g: (int(g.split("-")[0]), int(g.split("-")[1])),
-    )
-
-    year_map: dict[int, list[MonthGroup]] = defaultdict(list)
-    for group in all_groups:
-        parts = group.split("-")
-        year, month = int(parts[0]), int(parts[1])
-
-        direct_assets = direct_map.get(group, [])
-        group_albums = album_map.get(group, [])
-
-        # Count: direct images + total photos in albums
-        count = len(direct_assets) + sum(a.subtree_photo_count or 0 for a in group_albums)
-        if count == 0:
-            continue
-
-        # Thumbnail: prefer direct image, fallback to album cover
-        thumb_url = ""
-        rep = next((a for a in direct_assets if _thumb_url(a)), None)
-        if rep:
-            thumb_url = _thumb_url(rep)
-        else:
-            for album in group_albums:
-                if album.cover and isinstance(album.cover, dict):
-                    tp = album.cover.get("thumb_path", "")
-                    if tp:
-                        resolved = _resolve_stored_path(tp)
-                        if resolved and resolved.exists():
-                            thumb_url = f"/thumbnails/{resolved.name}"
-                            break
-
-        year_map[year].append(
-            MonthGroup(
-                group=group,
-                year=year,
-                month=month,
-                count=count,
-                thumb_url=thumb_url,
-            )
+        all_groups = sorted(
+            set(direct_map.keys()) | set(album_map.keys()),
+            key=lambda g: (int(g.split("-")[0]), int(g.split("-")[1])),
         )
+
+        year_map: dict[int, list[MonthGroup]] = defaultdict(list)
+        for group in all_groups:
+            parts = group.split("-")
+            year, month = int(parts[0]), int(parts[1])
+
+            direct_assets = direct_map.get(group, [])
+            group_albums = album_map.get(group, [])
+
+            # Count: direct images + total photos in albums
+            count = len(direct_assets) + sum(a.subtree_photo_count or 0 for a in group_albums)
+            if count == 0:
+                continue
+
+            # Thumbnail: prefer a direct image that already has a valid thumb,
+            # then any direct image with a cache thumb, then fall back to album cover.
+            thumb_url = ""
+            cache_thumb_url = None
+            cover_id = None
+
+            rep = next((a for a in direct_assets if _thumb_url(a)), None)
+            if not rep:
+                rep = next((a for a in direct_assets if _cache_thumb_url(a)), None)
+            if not rep and direct_assets:
+                rep = direct_assets[0]
+
+            if rep:
+                cover_id = rep.id
+                thumb_url = _thumb_url(rep)
+                if not thumb_url:
+                    cache_thumb_url = _cache_thumb_url(rep)
+            else:
+                for album in group_albums:
+                    cover_photo_id = None
+                    if album.cover and isinstance(album.cover, dict):
+                        cover_photo_id = album.cover.get("photo_id")
+                    if cover_photo_id is not None:
+                        asset_for_cover = session.get(ImageAsset, cover_photo_id)
+                        if asset_for_cover:
+                            cover_id = asset_for_cover.id
+                            thumb_url = _thumb_url(asset_for_cover)
+                            if not thumb_url:
+                                cache_thumb_url = _cache_thumb_url(asset_for_cover)
+                            if thumb_url or cache_thumb_url:
+                                break
+
+            if thumb_url is None:
+                thumb_url = ""
+
+            year_map[year].append(
+                MonthGroup(
+                    group=group,
+                    year=year,
+                    month=month,
+                    count=count,
+                    thumb_url=thumb_url,
+                    cache_thumb_url=cache_thumb_url,
+                    id=cover_id,
+                )
+            )
 
     years = [YearGroup(year=y, months=year_map[y]) for y in sorted(year_map.keys())]
     return DateViewResponse(years=years)
@@ -693,18 +726,31 @@ def date_group_items(date_group: str) -> DateItemsResponse:
         album_items: list[DateItem] = []
         for album in top_albums:
             thumb_url = ""
+            cover_photo_id = None
             if album.cover and isinstance(album.cover, dict):
+                cover_photo_id = album.cover.get("photo_id")
                 tp = album.cover.get("thumb_path", "")
                 if tp:
                     resolved = _resolve_stored_path(tp)
                     if resolved and resolved.exists():
                         thumb_url = f"/thumbnails/{resolved.name}"
+            
+            cache_thumb_url = None
+            if cover_photo_id is not None:
+                asset_for_cover = session.get(ImageAsset, cover_photo_id)
+                if asset_for_cover:
+                    if not thumb_url:
+                        thumb_url = _thumb_url(asset_for_cover)
+                    cache_thumb_url = _cache_thumb_url(asset_for_cover)
+
             album_items.append(
                 DateItem(
                     type="album",
                     name=album.title,
                     thumb_url=thumb_url,
                     count=album.subtree_photo_count,
+                    id=cover_photo_id,
+                    cache_thumb_url=cache_thumb_url,
                     public_id=album.public_id,
                 )
             )
@@ -731,12 +777,18 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
         if not album:
             raise HTTPException(status_code=404, detail="Album not found")
 
-        # Parent public_id for back-navigation
+        # Parent public_id for back-navigation and breadcrumb ancestors
         parent_public_id = None
-        if album.parent_id is not None:
-            parent = session.get(Album, album.parent_id)
-            if parent:
-                parent_public_id = parent.public_id
+        ancestors: list[BreadcrumbItem] = []
+        cur = album
+        while cur.parent_id is not None:
+            par = session.get(Album, cur.parent_id)
+            if not par:
+                break
+            ancestors.insert(0, BreadcrumbItem(public_id=par.public_id, title=par.title))
+            if cur is album:
+                parent_public_id = par.public_id
+            cur = par
 
         # Sub-albums
         sub_albums = session.exec(
@@ -749,17 +801,30 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
         sub_items: list[AlbumItem] = []
         for sa in sub_albums:
             thumb_url = ""
+            cover_photo_id = None
             if sa.cover and isinstance(sa.cover, dict):
+                cover_photo_id = sa.cover.get("photo_id")
                 tp = sa.cover.get("thumb_path", "")
                 if tp:
                     resolved = _resolve_stored_path(tp)
                     if resolved and resolved.exists():
                         thumb_url = f"/thumbnails/{resolved.name}"
+            
+            cache_thumb_url = None
+            if cover_photo_id is not None:
+                asset_for_cover = session.get(ImageAsset, cover_photo_id)
+                if asset_for_cover:
+                    if not thumb_url:
+                        thumb_url = _thumb_url(asset_for_cover)
+                    cache_thumb_url = _cache_thumb_url(asset_for_cover)
+
             sub_items.append(AlbumItem(
                 type="album",
                 name=sa.title,
                 thumb_url=thumb_url,
                 count=sa.subtree_photo_count,
+                id=cover_photo_id,
+                cache_thumb_url=cache_thumb_url,
                 public_id=sa.public_id,
             ))
 
@@ -795,6 +860,7 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
             photo_count=album.photo_count,
             subtree_photo_count=album.subtree_photo_count,
             parent_public_id=parent_public_id,
+            ancestors=ancestors,
         ),
         items=sub_items + image_items,
     )

@@ -46,7 +46,7 @@
             <ThumbCard
               v-for="mg in yg.months"
               :key="mg.group"
-              :src="api(mg.thumb_url)"
+              :src="resolvedUrl(mg)"
               class="month-card"
               :overlay-opacity="0.40"
               :rounded="'1.25rem'"
@@ -249,12 +249,35 @@ export default {
         const r = await fetch(`${API_BASE}/api/dates`)
         const d = await r.json()
         this.years = d.years || []
-        // Detect missing month-cover thumbnails and refresh immediately if needed
+        
+        // Populate existing cache URLs
         const allMonths = (d.years || []).flatMap(y => y.months || [])
-        if (allMonths.some(m => !m.thumb_url)) {
-          this._refreshAndUpdateDates()
+        for (const m of allMonths) {
+          if (m.id && m.cache_thumb_url) {
+            this.cacheUrls = { ...this.cacheUrls, [m.id]: m.cache_thumb_url }
+          }
         }
-      } catch { this.years = [] }
+
+        // Trigger cache generation for missing covers
+        const missingIds = allMonths
+          .filter(m => m.id && !m.thumb_url && !this.cacheUrls[m.id])
+          .map(m => m.id)
+        
+        if (missingIds.length > 0) {
+          try {
+            const cacheRes = await fetch(`${API_BASE}/api/thumbnails/cache`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image_ids: missingIds }),
+            })
+            if (cacheRes.ok) {
+              const { task_id } = await cacheRes.json()
+              this.taskId = task_id
+              this.startPoll()
+            }
+          } catch (e) { /* ignore cache trigger error */ }
+        }
+      } catch (e) { this.years = [] }
       finally  { this.loadingDates = false }
     },
 

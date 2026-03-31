@@ -79,7 +79,6 @@
   - `date_group` (str | null): 年-月分组，格式 `YYYY-MM`，用于前端日期视图索引
   - `file_created_at` (datetime | null): 文件原始创建时间（如可用）
   - `imported_at` (datetime): 导入时间
-  - `deleted_at` (JSON array | null): 按位置软删除数组，与 `media_path` 位置一一对应；`null` 表示所有位置均未删除，`[null, "2024-07-01T00:00:00"]` 表示位置 0 未删除、位置 1 已删除
   - `width` / `height` / `file_size` / `mime_type`: 媒体元信息
   - `category` (str) / `tags` (JSON array): 可选的分类与标签
   - `album` (JSON array of arrays): 所属相册路径，每个内层数组是从根相册到叶相册的 `public_id` 完整路径，如 `[["album_1", "album_3"], ["album_5"]]`
@@ -102,9 +101,20 @@
   - `sort_mode` (str): 排序模式 `alpha`（默认）/ `date` / `manual`
   - `settings` / `stats` (JSON dict): 扩展设置与统计
   - `date_group` (str | null): 所有嵌套层级继承顶层的 `date_group`
-  - `created_at` / `updated_at` / `deleted_at`: 时间戳
+  - `created_at` / `updated_at`: 时间戳
 
-### 3.5c 哈希索引缓存（`.hash_index.json`）
+### 3.5c `app/models/soft_delete.py`
+- 数据模型 `PathSoftDelete`（独立软删除表）：
+  - `id` (int): 主键
+  - `entity_type` (str): 目标类型，当前为 `image` 或 `album`
+  - `owner_id` (int | null): 关联的 `ImageAsset.id` 或 `Album.id`
+  - `target_path` (str): 被删除的规范化路径；图片对应具体的 `media_path` 条目，相册对应 `Album.path`
+  - `deleted_at` (datetime): 删除时间戳
+  - `created_at` (datetime): 记录创建时间
+
+说明：当前查询层通过 `path_soft_delete` 过滤可见项，`ImageAsset` 与 `Album` 本身不再保存 `deleted_at` 字段。
+
+### 3.5d 哈希索引缓存（`.hash_index.json`）
 - 文件位置：`MEDIA_DIR/.hash_index.json`
 - 格式：`{"file_hash": image_id, ...}` 的 JSON 对象
 - 用途：导入时快速去重查询，避免逐条 DB 查询
@@ -145,7 +155,6 @@
 "date_group": "2025-03",
 "file_created_at": "2025-03-15 12:34:00.000000",
 "imported_at": "2026-03-20T09:59:00.000000",
-"deleted_at": null,
 "created_at": "2026-03-20 09:59:00.000000",
 "width": 4000,
 "height": 3000,
@@ -191,6 +200,9 @@
 - 并行调用逻辑
   - `process_from_bytes`（线程池，适合来自前端上传的流式字节）
   - `process_from_paths`（进程池，适合本地磁盘批量扫描）
+- 软删除查询规则
+  - `ImageAsset` 和 `Album` 的可见性由 `path_soft_delete` 决定，而不是各自表内的 `deleted_at`
+  - 恢复操作本质上是删除对应的 `path_soft_delete` 记录
 - 缩略图缓存策略
   - **导入缩略图**（月份封面）：仅对每月代表图生成 `TEMP_DIR/{file_hash}.webp`，400×400 方形裁剪
   - **缓存展示缩略图**（相册内浏览）：按需生成 `CACHE_DIR/{file_hash}_cache.webp`，最短边 600，保持原始比例

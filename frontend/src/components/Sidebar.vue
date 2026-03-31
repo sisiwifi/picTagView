@@ -78,7 +78,7 @@ export default {
 
 <style scoped lang="css">
 .sidebar {
-  @apply sticky top-0 h-screen overflow-y-auto flex flex-col border-r border-slate-200 bg-white transition-all duration-300;
+  @apply sticky top-0 h-screen flex-shrink-0 z-50 overflow-y-auto flex flex-col border-r border-slate-200 bg-white transition-all duration-300;
 }
 
 .sidebar--collapsed {

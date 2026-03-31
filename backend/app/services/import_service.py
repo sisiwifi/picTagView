@@ -15,6 +15,8 @@ from app.core.config import CACHE_DIR, MEDIA_DIR, PROJECT_ROOT, TEMP_DIR
 from app.db.session import get_session, init_db
 from app.models.album import Album
 from app.models.image_asset import ImageAsset
+from app.models.soft_delete import PathSoftDelete
+from sqlalchemy import not_, exists
 from app.services.parallel_processor import (
     IMPORT_BATCH_SIZE,
     process_from_bytes,
@@ -916,6 +918,15 @@ def refresh_library() -> Dict[str, int]:
     }
 
 
+def _ia_not_deleted_for_refresh():
+    return not_(
+        exists(
+            select(PathSoftDelete.id)
+            .where(PathSoftDelete.entity_type == "image")
+            .where(PathSoftDelete.owner_id == ImageAsset.id)
+        )
+    )
+
 def recalculate_album_counts() -> None:
     """Recalculate photo_count, subtree_photo_count, and covers for all albums."""
     with get_session() as session:
@@ -927,13 +938,11 @@ def recalculate_album_counts() -> None:
             a.photo_count = 0
             a.subtree_photo_count = 0
 
-        # Track best cover candidate per album (asset with valid thumb,
-        # alphabetically first filename; fallback to any asset if none have thumbs)
+        # Track best cover candidate per album (alphabetically first filename among all images in subtree)
         cover_candidates: Dict[str, ImageAsset] = {}
-        cover_has_thumb: Dict[str, bool] = {}
 
         # Count images per leaf album
-        all_assets = session.exec(select(ImageAsset)).all()
+        all_assets = session.exec(select(ImageAsset).where(_ia_not_deleted_for_refresh())).all()
         for asset in all_assets:
             for path in (asset.album or []):
                 if not isinstance(path, list) or not path:
@@ -941,19 +950,12 @@ def recalculate_album_counts() -> None:
                 for pid in path:
                     if pid in album_map:
                         album_map[pid].subtree_photo_count += 1
-                    # Track cover candidate: prefer assets with valid thumbnails
+                    # Track cover candidate: strictly alphabetically first filename
                     fname = asset.full_filename or ""
-                    has_thumb = _has_required_thumb(asset.thumbs)
-                    current_has = cover_has_thumb.get(pid, False)
                     current_fname = (cover_candidates[pid].full_filename or "") if pid in cover_candidates else ""
-                    # Replace if: new has thumb but current doesn't, or
-                    # both have/lack thumb and new is alphabetically first
-                    if pid not in cover_candidates or (
-                        (has_thumb and not current_has) or
-                        (has_thumb == current_has and fname < current_fname)
-                    ):
+                    # Always replace if alphabetically first
+                    if pid not in cover_candidates or (fname < current_fname):
                         cover_candidates[pid] = asset
-                        cover_has_thumb[pid] = has_thumb
                 leaf_pid = path[-1]
                 if leaf_pid in album_map:
                     album_map[leaf_pid].photo_count += 1
