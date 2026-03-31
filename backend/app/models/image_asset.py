@@ -1,43 +1,10 @@
 from __future__ import annotations
 
-import json as _json
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, Column, String
-from sqlalchemy.types import TypeDecorator
+from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
-
-
-class _NullSafeJSON(TypeDecorator):
-    """JSON column that stores Python None as SQL NULL (never as JSON 'null' text).
-
-    SQLAlchemy's built-in JSON type serialises None → 'null' on SQLite regardless
-    of the none_as_null flag in some versions.  This decorator intercepts the
-    value at the Python→DB boundary and forces None through as SQL NULL.
-    On the DB→Python side any bare 'null' / '["null"]' artefact is also
-    normalised back to None so existing dirty rows are handled transparently.
-    """
-
-    impl = String
-    cache_ok = True
-
-    def process_bind_param(self, value, dialect):
-        if value is None:
-            return None
-        return _json.dumps(value, ensure_ascii=False)
-
-    def process_result_value(self, value, dialect):
-        if value is None:
-            return None
-        # Normalise known bogus serialisations left by previous SQLAlchemy behaviour
-        if value in ("null", '"null"', "[null]", '["null"]', "[]"):
-            return None
-        try:
-            return _json.loads(value)
-        except Exception:
-            return None
-
 
 
 class ImageAsset(SQLModel, table=True):
@@ -52,9 +19,7 @@ class ImageAsset(SQLModel, table=True):
     date_group: Optional[str] = Field(default=None, index=True)
     file_created_at: Optional[datetime] = Field(default=None, index=True)
     imported_at: datetime = Field(default_factory=datetime.now, index=True)
-    # 软删除：JSON 数组，按 media_path 位置对应；null 表示所有位置均未删除
-    # 示例: [null, "2024-07-01T00:00:00"] 表示位置0未删除，位置1已删除
-    deleted_at: Optional[list] = Field(default=None, sa_column=Column(_NullSafeJSON))
+    # 软删除已迁移到独立表 path_soft_delete，此处不再存储 deleted_at
     width: Optional[int] = Field(default=None)
     height: Optional[int] = Field(default=None)
     file_size: Optional[int] = Field(default=None)

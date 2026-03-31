@@ -12,35 +12,41 @@ _db_initialized = False
 
 def init_db() -> None:
     global _db_initialized
-    if not _db_initialized:
-        from app.models.album import Album  # noqa: F401 – ensure Album table is created
-        SQLModel.metadata.create_all(engine)
-        _migrate_db()
-        _db_initialized = True
-    # 每次启动都清理 deleted_at 中的 JSON 'null' 文本
-    _cleanup_deleted_at()
+    if _db_initialized:
+        return
+    # Import all models so SQLModel.metadata knows every table before create_all.
+    from app.models.album import Album          # noqa: F401
+    from app.models.soft_delete import PathSoftDelete  # noqa: F401
+    SQLModel.metadata.create_all(engine)
+    _migrate_db()
+    _db_initialized = True
 
 
 def _migrate_db() -> None:
-    """Add new columns to existing tables if they don't exist yet."""
+    """Add new columns to existing tables if they don't exist yet.
+
+    Only additive (ALTER TABLE ADD COLUMN) migrations are performed here.
+    Destructive schema changes (e.g. removing deleted_at) are left to the
+    caller who will drop-and-recreate the DB when clearing all data.
+    """
     with engine.connect() as conn:
+        # ── imageasset columns ────────────────────────────────────────────
         for column, col_type in [
-            ("media_path", "TEXT"),
-            ("date_group", "TEXT"),
-            ("full_filename", "TEXT"),
-            ("quick_hash", "TEXT"),
-            ("thumbs", "TEXT"),
-            ("file_created_at", "DATETIME"),
-            ("imported_at", "DATETIME"),
-            ("width", "INTEGER"),
-            ("height", "INTEGER"),
-            ("file_size", "INTEGER"),
-            ("mime_type", "TEXT"),
-            ("category", "TEXT"),
-            ("tags", "TEXT"),
-            ("deleted_at", "DATETIME"),
-            ("album", "TEXT"),
-            ("collection", "TEXT"),
+            ("media_path",     "TEXT"),
+            ("date_group",     "TEXT"),
+            ("full_filename",  "TEXT"),
+            ("quick_hash",     "TEXT"),
+            ("thumbs",         "TEXT"),
+            ("file_created_at","DATETIME"),
+            ("imported_at",    "DATETIME"),
+            ("width",          "INTEGER"),
+            ("height",         "INTEGER"),
+            ("file_size",      "INTEGER"),
+            ("mime_type",      "TEXT"),
+            ("category",       "TEXT"),
+            ("tags",           "TEXT"),
+            ("album",          "TEXT"),
+            ("collection",     "TEXT"),
         ]:
             try:
                 conn.execute(
@@ -48,16 +54,18 @@ def _migrate_db() -> None:
                 )
                 conn.commit()
             except Exception:
-                # Column already exists — safe to ignore
-                pass
+                pass  # Column already exists — safe to ignore
 
-        # Migrate media_path: convert plain strings to JSON arrays
+        # ── Migrate media_path: convert plain strings to JSON arrays ──────
         try:
             rows = conn.execute(
-                text("SELECT id, media_path FROM imageasset WHERE media_path IS NOT NULL AND media_path != ''")
+                text(
+                    "SELECT id, media_path FROM imageasset "
+                    "WHERE media_path IS NOT NULL AND media_path != ''"
+                )
             ).fetchall()
             for row_id, mp in rows:
-                if mp and not mp.strip().startswith('['):
+                if mp and not mp.strip().startswith("["):
                     conn.execute(
                         text("UPDATE imageasset SET media_path = :v WHERE id = :id"),
                         {"v": json.dumps([mp]), "id": row_id},
@@ -66,6 +74,7 @@ def _migrate_db() -> None:
         except Exception:
             pass
 
+        # ── Legacy: relax thumb_path NOT NULL constraint if present ───────
         try:
             result = conn.execute(text("PRAGMA table_info(imageasset)"))
             thumb_notnull = any(
@@ -91,27 +100,19 @@ def _migrate_db() -> None:
                 ))
                 conn.execute(text("DROP TABLE imageasset"))
                 conn.execute(text("ALTER TABLE imageasset_new RENAME TO imageasset"))
-                conn.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_imageasset_original_path "
-                    "ON imageasset(original_path)"
-                ))
-                conn.execute(text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_imageasset_file_hash "
-                    "ON imageasset(file_hash)"
-                ))
-                conn.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_imageasset_date_group "
-                    "ON imageasset(date_group)"
-                ))
-                conn.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_imageasset_quick_hash "
-                    "ON imageasset(quick_hash)"
-                ))
+                for idx_sql in [
+                    "CREATE INDEX IF NOT EXISTS ix_imageasset_original_path ON imageasset(original_path)",
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_imageasset_file_hash ON imageasset(file_hash)",
+                    "CREATE INDEX IF NOT EXISTS ix_imageasset_date_group ON imageasset(date_group)",
+                    "CREATE INDEX IF NOT EXISTS ix_imageasset_quick_hash ON imageasset(quick_hash)",
+                ]:
+                    conn.execute(text(idx_sql))
                 conn.execute(text("PRAGMA foreign_keys=ON"))
                 conn.commit()
         except Exception:
             pass
 
+        # ── Ensure quick_hash index ───────────────────────────────────────
         try:
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_imageasset_quick_hash "
@@ -121,25 +122,24 @@ def _migrate_db() -> None:
         except Exception:
             pass
 
-        # ── Album table migration ──────────────────────────────────────────
+        # ── album columns ─────────────────────────────────────────────────
         for column, col_type in [
-            ("public_id", "TEXT"),
-            ("title", "TEXT"),
-            ("description", "TEXT"),
-            ("path", "TEXT"),
-            ("category", "TEXT"),
-            ("is_leaf", "INTEGER"),
-            ("parent_id", "INTEGER"),
-            ("cover", "TEXT"),
-            ("photo_count", "INTEGER"),
-            ("subtree_photo_count", "INTEGER"),
-            ("sort_mode", "TEXT"),
-            ("settings", "TEXT"),
-            ("stats", "TEXT"),
-            ("date_group", "TEXT"),
-            ("created_at", "DATETIME"),
-            ("updated_at", "DATETIME"),
-            ("deleted_at", "DATETIME"),
+            ("public_id",            "TEXT"),
+            ("title",                "TEXT"),
+            ("description",          "TEXT"),
+            ("path",                 "TEXT"),
+            ("category",             "TEXT"),
+            ("is_leaf",              "INTEGER"),
+            ("parent_id",            "INTEGER"),
+            ("cover",                "TEXT"),
+            ("photo_count",          "INTEGER"),
+            ("subtree_photo_count",  "INTEGER"),
+            ("sort_mode",            "TEXT"),
+            ("settings",             "TEXT"),
+            ("stats",                "TEXT"),
+            ("date_group",           "TEXT"),
+            ("created_at",           "DATETIME"),
+            ("updated_at",           "DATETIME"),
         ]:
             try:
                 conn.execute(
@@ -148,47 +148,6 @@ def _migrate_db() -> None:
                 conn.commit()
             except Exception:
                 pass
-
-        # ── Migrate deleted_at from datetime string to JSON ────────────────
-        try:
-            rows = conn.execute(
-                text(
-                    "SELECT id, deleted_at FROM imageasset "
-                    "WHERE deleted_at IS NOT NULL AND deleted_at != '' "
-                    "AND deleted_at NOT LIKE '[%'"
-                )
-            ).fetchall()
-            for row_id, dt_val in rows:
-                conn.execute(
-                    text("UPDATE imageasset SET deleted_at = :v WHERE id = :id"),
-                    {"v": json.dumps([dt_val]), "id": row_id},
-                )
-            conn.commit()
-        except Exception:
-            pass
-
-        # ── Clean up bogus deleted_at values ───────────────────────────────
-        # Now handled by _cleanup_deleted_at() which runs on every init_db()
-        pass
-
-
-def _cleanup_deleted_at() -> None:
-    """Reset bogus deleted_at values (JSON 'null' text) to SQL NULL.
-
-    Runs on every init_db() call; the UPDATE is a no-op when no rows match,
-    so the cost is negligible once the database is clean.
-    """
-    try:
-        with engine.connect() as conn:
-            conn.execute(
-                text(
-                    "UPDATE imageasset SET deleted_at = NULL "
-                    "WHERE deleted_at IN ('[\"null\"]', '[null]', '\"null\"', 'null', '[]')"
-                )
-            )
-            conn.commit()
-    except Exception:
-        pass
 
 
 def get_session() -> Session:

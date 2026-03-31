@@ -30,29 +30,39 @@ from app.api.schemas import (
     YearGroup,
 )
 from app.core.config import CACHE_DIR, DATA_DIR, MEDIA_DIR, PROJECT_ROOT, TEMP_DIR, VIEWER_ICON_DIR
-from sqlalchemy import or_
+from sqlalchemy import not_, exists
 
 from app.db.session import get_session
 from app.models.album import Album
 from app.models.image_asset import ImageAsset
-
-# Bogus values written by old SQLAlchemy JSON serialization (None → 'null' text)
-_NULL_JSON_VALUES = ('null', '"null"', '[null]', '["null"]', '[]')
+from app.models.soft_delete import PathSoftDelete
 
 
 def _ia_not_deleted():
-    """ImageAsset filter: not soft-deleted (handles both SQL NULL and JSON 'null' artefacts)."""
-    return or_(
-        ImageAsset.deleted_at == None,  # noqa: E711
-        ImageAsset.deleted_at.in_(_NULL_JSON_VALUES),
+    """ImageAsset filter: not soft-deleted.
+
+    Returns True when no row in path_soft_delete references this asset's id.
+    """
+    return not_(
+        exists(
+            select(PathSoftDelete.id)
+            .where(PathSoftDelete.entity_type == "image")
+            .where(PathSoftDelete.owner_id == ImageAsset.id)
+        )
     )
 
 
 def _album_not_deleted():
-    """Album filter: not soft-deleted."""
-    return or_(
-        Album.deleted_at == None,  # noqa: E711
-        Album.deleted_at.in_(_NULL_JSON_VALUES),
+    """Album filter: not soft-deleted.
+
+    Returns True when no row in path_soft_delete references this album's id.
+    """
+    return not_(
+        exists(
+            select(PathSoftDelete.id)
+            .where(PathSoftDelete.entity_type == "album")
+            .where(PathSoftDelete.owner_id == Album.id)
+        )
     )
 from app.services.cache_thumb_service import generate_cache_thumbs_progressively
 from app.services.import_service import (
