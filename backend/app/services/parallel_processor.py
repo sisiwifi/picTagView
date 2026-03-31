@@ -128,16 +128,27 @@ def _compute_hash_only(
     args: Tuple[str, bytes],
 ) -> Tuple[str, Optional[str], Optional[str], Optional[str], Optional[int], Optional[int]]:
     """
-    Worker (ThreadPoolExecutor): SHA-256 + quick hash only (no image decode).
-    Dimensions are computed lazily by the caller for new records only.
+    Worker (ThreadPoolExecutor): SHA-256 + quick hash + image dimensions in parallel.
+    Dimensions are computed here (cv2) to avoid serialising decode in the DB write loop.
     args = (key, content)
     returns (key, file_hash, error_str, quick_hash, width, height)
     """
     key, content = args
     try:
+        import cv2
+        import numpy as np
+
         file_hash = hashlib.sha256(content).hexdigest()
         qh = _quick_hash(content)
-        return key, file_hash, None, qh, None, None
+
+        arr = np.frombuffer(content, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is not None:
+            img_h, img_w = img.shape[:2]
+        else:
+            img_w, img_h = None, None
+
+        return key, file_hash, None, qh, img_w, img_h
     except Exception as exc:
         return key, None, str(exc), None, None, None
 

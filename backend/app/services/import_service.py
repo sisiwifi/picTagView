@@ -713,7 +713,8 @@ async def import_files(
                     continue
 
                 # ── New record ─────────────────────────────────────────────
-                # Lazy dimension computation: only for new records that lack dimensions
+                # Dimensions come from the parallel phase (cv2 ran in ThreadPoolExecutor).
+                # Fallback only if the worker failed to decode (e.g. corrupted file).
                 if px_w is None or px_h is None:
                     px_w, px_h = _image_dimensions_from_bytes(content)
 

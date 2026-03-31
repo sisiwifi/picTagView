@@ -41,9 +41,10 @@
   - 子目录链 → 自动创建 Album 树（`_ensure_album_chain`），所有嵌套层级继承顶层 `date_group`
   - 去重策略：相同哈希在相册内 → 保留并添加 album 关系；直传重复 → 跳过
   - 导入结束后保存哈希索引并释放内存
-  - 批次读取文件内容（`IMPORT_BATCH_SIZE=20`）
-  - 线程池并行 `process_from_bytes` 只为“每月封面所需图片”生成 temp 缩略图
-  - 其他图片仅计算哈希，不在导入时批量生成 temp 缩略图
+  - 批次读取文件内容（`IMPORT_BATCH_SIZE=50`）
+  - 线程池并行 `process_from_bytes` 只为"每月封面所需图片"生成 temp 缩略图
+  - 其他图片调用 `process_hash_only_from_bytes`（`_compute_hash_only` worker）：并行完成 SHA-256 + xxhash + **cv2.imdecode 尺寸读取**，不生成缩略图
+  - DB 串行写入循环中仅使用已并行得到的宽高，不再在主线程调用 cv2（性能优化方案 A）
   - 导入不中断行为：前端在开始导入时会设置全局标记 `window.__ptvImporting = true`（见 `frontend/src/pages/GalleryPage.vue`），导入结束时恢复为 `false`。
   - 前端刷新策略变更（路由切换相关）：项目已移除“路由切换自动触发全库刷新”的行为，`frontend/src/router/index.js` 不再在每次路由变更时发起后台 `POST /api/admin/refresh`。当前前端刷新策略为：
     - 仅在 Gallery 页面由用户点击的“刷新”按钮触发完整的 `POST /api/admin/refresh`（保留为手动触发的全库修复/补齐）。
@@ -66,6 +67,10 @@
   - 计算 SHA-256 hash
   - 基于 `opencv-python`/`numpy` decode 并中心裁剪缩放到 `400×400`，保存 `temp_dir/{hash}.webp`（WebP 格式）
   - 误码处理 `decode_failed`、异常情况返回错误
+- `_compute_hash_only`（线程池 worker）：
+  - 计算 SHA-256 + xxhash（quick_hash）**并同时用 cv2.imdecode 获取图片宽高**
+  - 将 cv2 解码移入并行阶段，避免在 DB 串行写入循环中执行 cv2（约 230 ms/张），消除主要性能瓶颈
+  - 解码失败时宽高返回 `None`，import_service 保留 fallback 调用进行补偿
 
 ### 3.5 `app/models/image_asset.py`
 - 数据模型 `ImageAsset`：
