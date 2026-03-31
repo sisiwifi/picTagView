@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-slate-50 text-slate-900 overflow-x-hidden">
+  <div class="min-h-screen bg-slate-50 text-slate-900 [overflow-x:clip]">
     <div class="flex min-h-screen">
       <AppSidebar />
       <main class="flex-1 min-w-0 p-10">

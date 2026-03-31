@@ -15,7 +15,7 @@
         <span class="bc-sep" aria-hidden="true">›</span>
         <span class="bc-item bc-current">{{ album.title || '相册' }}</span>
       </nav>
-      <p class="page-subtitle">{{ totalCount }} 项</p>
+      <span class="header-count">{{ totalCount }} 项</span>
     </header>
 
     <LoadingSpinner v-if="loading" />
@@ -86,6 +86,7 @@ export default {
       taskId: null,
       observer: null,
       debounceTimer: null,
+      resizeObserver: null,
       lastCenter: -1,
       imgDimensions: {},
       containerWidth: 0,
@@ -151,6 +152,7 @@ export default {
 
   beforeUnmount() {
     this.teardownObserver()
+    this.teardownResizeObserver()
     this.stopPoll()
     window.removeEventListener('resize', this.onResize)
   },
@@ -162,6 +164,7 @@ export default {
       this.imgDimensions = {}
       this.lastCenter = -1
       this.teardownObserver()
+      this.teardownResizeObserver()
       this.stopPoll()
 
       try {
@@ -186,6 +189,7 @@ export default {
         }
         this.triggerCacheAt(0)
         this.setupObserver()
+        this.setupResizeObserver()
       })
     },
 
@@ -305,6 +309,23 @@ export default {
       if (this.observer) { this.observer.disconnect(); this.observer = null }
       if (this.debounceTimer) { clearTimeout(this.debounceTimer); this.debounceTimer = null }
     },
+
+    setupResizeObserver() {
+      if (!this.$refs.itemGrid) return
+      if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null }
+      this.resizeObserver = new ResizeObserver(() => {
+        requestAnimationFrame(() => {
+          if (this.$refs.itemGrid) {
+            this.containerWidth = this.$refs.itemGrid.offsetWidth
+          }
+        })
+      })
+      this.resizeObserver.observe(this.$refs.itemGrid)
+    },
+
+    teardownResizeObserver() {
+      if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null }
+    },
   },
 }
 </script>
@@ -313,13 +334,13 @@ export default {
 .page { @apply flex flex-col gap-6; }
 
 .page-header {
-  @apply sticky top-0 z-40 flex flex-col gap-1 bg-white bg-opacity-95 py-2 px-0 backdrop-blur-sm shadow-sm;
+  @apply sticky top-0 z-40 flex items-center gap-3 bg-white bg-opacity-95 py-3 px-0 backdrop-blur-sm shadow-sm;
 }
-.page-subtitle { @apply text-sm text-slate-500 m-0 pl-1; }
+.header-count { @apply text-sm text-slate-400 flex-shrink-0; }
 
 /* Breadcrumb */
 .breadcrumb {
-  @apply flex items-center flex-wrap gap-0.5 text-sm;
+  @apply flex items-center flex-wrap gap-0.5 text-sm flex-1;
 }
 .bc-item {
   @apply px-2 py-1 rounded-md max-w-[12rem] truncate;

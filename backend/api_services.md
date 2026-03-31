@@ -47,18 +47,19 @@
 - **用途**：健康检查。
 - **返回**：`{"status": "ok"}`。
 
-#### `GET /api/images/count`
-- 实现位置：`backend/app/api/routes.py` （函数 `images_count()`）
-- **用途**：快速获取数据库中所有图片的计数。
-- **返回**：`{"count": <int>}`。
-
-- 实现位置：`backend/app/api/routes.py`（调用 `app/services/import_service.import_files`）
+#### `POST /api/import`
+- 实现位置：`backend/app/api/routes.py`（函数 `import_images()`，调用 `app/services/import_service.import_files`）
 - **用途**：导入前端上传的高清照片原始文件。支持 FormData 解析前端传回来的文件流和文件相关的时间。
 - **参数 (FormData)**：
   - `files`：多文件上传 (`UploadFile`)
   - `last_modified_json`：与 files 对应的上次修改时间数组 (JSON string，可选)
   - `created_time_json`：与 files 对应的文件创建时间数组 (JSON string，可选)
 - **返回**：`{"imported": ["file1.jpg", ...], "skipped": [...]}`。
+
+#### `GET /api/images/count`
+- 实现位置：`backend/app/api/routes.py` （函数 `images_count()`）
+- **用途**：快速获取数据库中所有图片的计数。
+- **返回**：`{"count": <int>}`。
 
 #### `POST /api/admin/refresh`
 - 实现位置：`backend/app/api/routes.py`（路由直接调用 `import_service.refresh_library()`）
@@ -84,19 +85,32 @@
             "year": 2025,
             "month": 3,
             "count": 12,
-            "thumb_url": "/thumbnails/xxxxx.webp"
+            "thumb_url": "/thumbnails/xxxxx.webp",
+            "cache_thumb_url": "/cache/xxxxx_cache.webp",
+            "id": 123
           }
         ]
       }
     ]
   }
   ```
+- **说明**：`thumb_url` 优先指向已存在的 400x400 预览图；若暂时没有，前端可利用 `id` 和 `cache_thumb_url` 继续走懒加载。
 
 #### `GET /api/dates/{date_group}/items`
 - 实现位置：`backend/app/api/routes.py`（函数 `date_group_items()`）
 - **用途**：获取某个特定月份组（如 `2025-03`）里面的具体照片或者子相册（目录）。
 - **参数 (Path)**：`date_group`，如 `2025-03`。
-- **返回**：包含 `date_group` 和 `items`。`items` 类型分为 `image`（直接在根组下）或 `album`（有子目录）。
+- **返回**：包含 `date_group` 和 `items`。`items` 类型分为 `image`（直接在根组下）或 `album`（有子目录）。每个条目都可能包含 `id`、`thumb_url`、`cache_thumb_url` 和 `public_id`。
+
+#### `GET /api/albums/{album_id}`
+- 实现位置：`backend/app/api/routes.py`（函数 `album_detail()`）
+- **用途**：获取某个相册的详细内容，包括面包屑祖先层级、子相册和当前相册下的图片列表。
+- **参数 (Path)**：`album_id`，即相册的 `public_id`。
+- **返回**：包含 `album` 和 `items`。
+  - `album.ancestors`：从根到当前相册父级的层级路径，供 Breadcrumb 显示和上级返回使用。
+  - `album.parent_public_id`：当前相册的直接父级，用于固定返回上一级。
+  - `items`：子相册项使用 `type=album`，并返回 `public_id`、`id`、`thumb_url`、`cache_thumb_url`；图片项使用 `type=image`。
+- **说明**：该接口是多级相册浏览的核心数据源，前端返回上一级时应优先依据 `parent_public_id` / `ancestors`，不要仅靠本地路径拼接。
 
 ---
 
@@ -118,9 +132,11 @@
 - **返回**：包含应用列表（含注册表 ProgID、名称、类型、提取并代理好的程序图标 URL）、偏好选择情况。
 
 #### `GET /api/system/viewer-preference`
+- 实现位置：`backend/app/api/routes.py`（函数 `viewer_preference()`）
 - **用途**：获取配置在本应用范围的偏好看图软件 ID。
 
 #### `POST /api/system/viewer-preference`
+- 实现位置：`backend/app/api/routes.py`（函数 `set_viewer_preference()`）
 - **用途**：设置并保存应用内打开图片的默认程序到配置文件中。
 - **请求体 (JSON)**：`{"viewer_id": "xxx.ProgID" | ""}`，空字符串意味着跟随系统。
 
@@ -143,14 +159,23 @@
 - 实现位置：`backend/app/api/routes.py`（状态轮询路由，返回 `_task_store` 中的运行状态）
 - **用途**：通过给定的 task_id 轮询当前批量大图转缓存缩略图进度的进度及新生成的资源 URL 列表。
 - **返回**：
-  ```json
-  {
-    "status": "running" | "done" | "error",
-    "items": [
-      {
-        "id": 1,
-        "cache_thumb_url": "/cache/xxxxx_cache.webp"
+            "thumb_url": "/thumbnails/xxxxx.webp",
+            "cache_thumb_url": "/cache/xxxxx_cache.webp",
+            "id": 123
+          }
+        ]
       }
     ]
   }
+    ]
+  }
   ```
+
+---
+
+## 3. 说明与约定
+
+- `thumb_url` 通常表示已经可直接展示的缩略图路径；`cache_thumb_url` 表示按需生成的缓存缩略图路径。
+- 图片条目的 `id` 对应 `ImageAsset.id`，前端可用它触发懒加载缓存缩略图。
+- 相册条目的 `public_id` 是前端路由与 Breadcrumb 的稳定标识，不应依赖数据库自增主键进行导航。
+- 软删除逻辑不再依赖 `deleted_at` 字段，而是通过独立的 path soft delete 记录过滤可见项。

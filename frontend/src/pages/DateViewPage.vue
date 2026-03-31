@@ -9,14 +9,9 @@
       >
         ← 返回
       </button>
-      <div>
-        <h2 class="page-title">{{ (view === 'detail' || view === 'returning') ? selectedGroup : '日期视图' }}</h2>
-        <p class="page-subtitle">
-          {{ (view === 'detail' || view === 'returning')
-            ? `${selectedItems.length} 项`
-            : '按年份与月份浏览已导入的图片。' }}
-        </p>
-      </div>
+      <h2 class="page-title flex-1">{{ (view === 'detail' || view === 'returning') ? selectedGroup : '日期视图' }}</h2>
+      <span v-if="view === 'detail' || view === 'returning'" class="header-count">{{ selectedItems.length }} 项</span>
+      <span v-else class="page-subtitle">按年份与月份浏览已导入的图片。</span>
     </header>
 
     <!-- Grid view -->
@@ -145,6 +140,7 @@ export default {
       taskId:        null,
       observer:      null,
       debounceTimer: null,
+      resizeObserver: null,
       lastCenter:    -1,
       imgDimensions: {},      // id -> { w, h }  tracked from img.onload
       containerWidth: 0,      // width of the photo-grid container
@@ -227,6 +223,7 @@ export default {
 
   beforeUnmount() {
     this.teardownObserver()
+    this.teardownResizeObserver()
     this.stopPoll()
     window.removeEventListener('resize', this.onResize)
   },
@@ -322,6 +319,7 @@ export default {
         }
         this.triggerCacheAt(0)
         this.setupObserver()
+        this.setupResizeObserver()
       })
       // Detect missing item thumbnails and trigger an immediate background refresh
       this._checkAndRefreshItems()
@@ -329,6 +327,7 @@ export default {
 
     closeDetail() {
       this.teardownObserver()
+      this.teardownResizeObserver()
       this.stopPoll()
       this.navDir = 'back'
       this.view = 'returning'
@@ -426,6 +425,23 @@ export default {
       if (this.debounceTimer) { clearTimeout(this.debounceTimer); this.debounceTimer = null }
     },
 
+    setupResizeObserver() {
+      if (!this.$refs.itemGrid) return
+      if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null }
+      this.resizeObserver = new ResizeObserver(() => {
+        requestAnimationFrame(() => {
+          if (this.$refs.itemGrid) {
+            this.containerWidth = this.$refs.itemGrid.offsetWidth
+          }
+        })
+      })
+      this.resizeObserver.observe(this.$refs.itemGrid)
+    },
+
+    teardownResizeObserver() {
+      if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null }
+    },
+
     onImgLoad(item, evt) {
       const { naturalWidth: w, naturalHeight: h } = evt.target
       if (!w || !h) return
@@ -508,10 +524,11 @@ export default {
 .page { @apply flex flex-col gap-6; }
 
 .page-header {
-  @apply sticky top-0 z-40 flex items-center gap-4 bg-white bg-opacity-95 py-2 backdrop-blur-sm shadow-sm;
+  @apply sticky top-0 z-40 flex items-center gap-3 bg-white bg-opacity-95 py-3 backdrop-blur-sm shadow-sm;
 }
-.page-title  { @apply text-2xl font-semibold text-slate-900 m-0; }
-.page-subtitle { @apply text-sm text-slate-500 m-0; }
+.page-title  { @apply text-xl font-semibold text-slate-900 m-0 min-w-0; }
+.page-subtitle { @apply text-sm text-slate-400 m-0; }
+.header-count { @apply text-sm text-slate-400; }
 .back-btn {
   @apply flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-slate-500
          bg-transparent border-0 cursor-pointer transition-colors duration-150;
@@ -542,10 +559,14 @@ export default {
   background: linear-gradient(to right, #cbd5e1, transparent);
 }
 
-.card-grid { @apply grid grid-cols-2 gap-5; }
-@media (min-width: 640px)  { .card-grid { @apply grid-cols-3; } }
-@media (min-width: 768px)  { .card-grid { @apply grid-cols-4; } }
-@media (min-width: 1024px) { .card-grid { @apply grid-cols-5; } }
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+}
+@media (min-width: 768px) {
+  .card-grid { grid-template-columns: repeat(6, 1fr); }
+}
 
 .month-card { aspect-ratio: 1 / 1; }
 .month-label {
