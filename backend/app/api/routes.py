@@ -726,6 +726,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
         album_items: list[DateItem] = []
         for album in top_albums:
             thumb_url = ""
+            cache_thumb_url = None
             cover_photo_id = None
             if album.cover and isinstance(album.cover, dict):
                 cover_photo_id = album.cover.get("photo_id")
@@ -733,15 +734,23 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                 if tp:
                     resolved = _resolve_stored_path(tp)
                     if resolved and resolved.exists():
-                        thumb_url = f"/thumbnails/{resolved.name}"
-            
-            cache_thumb_url = None
+                        try:
+                            resolved.relative_to(TEMP_DIR)
+                            thumb_url = f"/thumbnails/{resolved.name}"
+                        except ValueError:
+                            try:
+                                resolved.relative_to(CACHE_DIR)
+                                cache_thumb_url = f"/cache/{resolved.name}"
+                            except ValueError:
+                                pass
+
             if cover_photo_id is not None:
                 asset_for_cover = session.get(ImageAsset, cover_photo_id)
                 if asset_for_cover:
                     if not thumb_url:
                         thumb_url = _thumb_url(asset_for_cover)
-                    cache_thumb_url = _cache_thumb_url(asset_for_cover)
+                    if not cache_thumb_url:
+                        cache_thumb_url = _cache_thumb_url(asset_for_cover)
 
             album_items.append(
                 DateItem(
@@ -801,6 +810,7 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
         sub_items: list[AlbumItem] = []
         for sa in sub_albums:
             thumb_url = ""
+            cache_thumb_url = None
             cover_photo_id = None
             if sa.cover and isinstance(sa.cover, dict):
                 cover_photo_id = sa.cover.get("photo_id")
@@ -808,15 +818,23 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
                 if tp:
                     resolved = _resolve_stored_path(tp)
                     if resolved and resolved.exists():
-                        thumb_url = f"/thumbnails/{resolved.name}"
-            
-            cache_thumb_url = None
+                        try:
+                            resolved.relative_to(TEMP_DIR)
+                            thumb_url = f"/thumbnails/{resolved.name}"
+                        except ValueError:
+                            try:
+                                resolved.relative_to(CACHE_DIR)
+                                cache_thumb_url = f"/cache/{resolved.name}"
+                            except ValueError:
+                                pass
+
             if cover_photo_id is not None:
                 asset_for_cover = session.get(ImageAsset, cover_photo_id)
                 if asset_for_cover:
                     if not thumb_url:
                         thumb_url = _thumb_url(asset_for_cover)
-                    cache_thumb_url = _cache_thumb_url(asset_for_cover)
+                    if not cache_thumb_url:
+                        cache_thumb_url = _cache_thumb_url(asset_for_cover)
 
             sub_items.append(AlbumItem(
                 type="album",

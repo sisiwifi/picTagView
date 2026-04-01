@@ -95,6 +95,7 @@
                   loading="lazy"
                   :alt="item.name || ''"
                   @load="onImgLoad(item, $event)"
+                  @error="onImgError(item, $event)"
                 />
                 <div v-if="item.type === 'album'" class="album-badge">
                   <span class="badge-icon">📁</span>
@@ -145,6 +146,9 @@ export default {
       imgDimensions: {},      // id -> { w, h }  tracked from img.onload
       containerWidth: 0,      // width of the photo-grid container
       refreshingThumbs: false,
+      cacheBustById: {},
+      thumbErrorRetries: {},
+      failedThumbIds: {},
     }
   },
 
@@ -234,10 +238,55 @@ export default {
     resolvedUrl(item) {
       if (!item) return ''
       const cached = this.cacheUrls[item.id]
-      if (cached) return `${API_BASE}${cached}`
-      if (item.cache_thumb_url) return `${API_BASE}${item.cache_thumb_url}`
-      if (item.thumb_url)       return `${API_BASE}${item.thumb_url}`
-      return ''
+      let urlPath = ''
+      if (cached) {
+        urlPath = cached
+      } else if (item.cache_thumb_url) {
+        urlPath = item.cache_thumb_url
+      } else if (item.thumb_url) {
+        urlPath = item.thumb_url
+      }
+      if (!urlPath) return ''
+
+      const nonce = item.id ? this.cacheBustById[item.id] : null
+      return nonce ? `${API_BASE}${urlPath}?v=${nonce}` : `${API_BASE}${urlPath}`
+    },
+
+    bumpCacheBust(id) {
+      if (!id) return
+      this.cacheBustById = { ...this.cacheBustById, [id]: Date.now() }
+    },
+
+    async triggerCacheForIds(ids) {
+      const uniq = Array.from(new Set((ids || []).filter(Boolean)))
+      if (!uniq.length) return
+      const cacheRes = await fetch(`${API_BASE}/api/thumbnails/cache`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_ids: uniq }),
+      })
+      if (!cacheRes.ok) return
+      const { task_id } = await cacheRes.json()
+      this.taskId = task_id
+      this.startPoll()
+    },
+
+    async onImgError(item) {
+      const id = item?.id
+      if (!id) return
+
+      const retries = this.thumbErrorRetries[id] || 0
+      if (retries >= 2) return
+      this.thumbErrorRetries = { ...this.thumbErrorRetries, [id]: retries + 1 }
+      this.failedThumbIds = { ...this.failedThumbIds, [id]: true }
+      this.bumpCacheBust(id)
+
+      try {
+        await this.triggerCacheForIds([id])
+      } catch { /* ignore */ }
+
+      // Fallback: force refresh even when URLs exist but actual files were stale/missing.
+      this._checkAndRefreshItems(true)
     },
 
     async fetchDates() {
@@ -340,6 +389,9 @@ export default {
         this.taskId         = null
         this.imgDimensions  = {}
         this.containerWidth = 0
+        this.cacheBustById = {}
+        this.thumbErrorRetries = {}
+        this.failedThumbIds = {}
       }, 430)
     },
 
@@ -379,7 +431,10 @@ export default {
           const data = await res.json()
           const newUrls = {}
           for (const it of (data.items || [])) {
-            if (it.id && it.cache_thumb_url) newUrls[it.id] = it.cache_thumb_url
+            if (it.id && it.cache_thumb_url) {
+              newUrls[it.id] = it.cache_thumb_url
+              this.bumpCacheBust(it.id)
+            }
           }
           if (Object.keys(newUrls).length > 0) {
             this.cacheUrls = { ...this.cacheUrls, ...newUrls }
@@ -449,6 +504,11 @@ export default {
       if (!ex || ex.w !== w || ex.h !== h) {
         this.imgDimensions = { ...this.imgDimensions, [item.id]: { w, h } }
       }
+      if (item?.id && this.failedThumbIds[item.id]) {
+        const next = { ...this.failedThumbIds }
+        delete next[item.id]
+        this.failedThumbIds = next
+      }
     },
 
     onResize() {
@@ -479,12 +539,13 @@ export default {
 
     // Check if any visible items are missing thumbnails. If so, trigger an
     // immediate refresh and re-fetch to update the detail view automatically.
-    async _checkAndRefreshItems() {
+    async _checkAndRefreshItems(force = false) {
       if (this.refreshingThumbs) return
       const hasMissing = this.selectedItems.some(
         item => !item.thumb_url && !item.cache_thumb_url
       )
-      if (!hasMissing) return
+      const hasFailed = this.selectedItems.some(item => item.id && this.failedThumbIds[item.id])
+      if (!force && !hasMissing && !hasFailed) return
       this.refreshingThumbs = true
       try {
         const refreshRes = await fetch(`${API_BASE}/api/admin/refresh`, { method: 'POST' })
