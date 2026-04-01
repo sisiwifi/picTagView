@@ -9,9 +9,76 @@
       >
         ← 返回
       </button>
-      <h2 class="page-title flex-1">{{ (view === 'detail' || view === 'returning') ? selectedGroup : '日期视图' }}</h2>
-      <span v-if="view === 'detail' || view === 'returning'" class="header-count">{{ selectedItems.length }} 项</span>
-      <span v-else class="page-subtitle">按年份与月份浏览已导入的图片。</span>
+
+      <!-- Detail mode: breadcrumb + view-mode toggle -->
+      <template v-if="view === 'detail' || view === 'returning'">
+        <div
+          class="breadcrumb-wrap"
+          ref="breadcrumbWrap"
+          :class="{ 'bc-dragging': bcDragging }"
+          @mousedown="onBcMousedown"
+          @mouseleave="onBcMouseleave"
+          @mouseup="onBcMouseup"
+          @mousemove="onBcMousemove"
+        >
+          <nav class="breadcrumb">
+            <span class="bc-item" title="日期视图">日期视图</span>
+            <span class="bc-sep">›</span>
+            <span class="bc-item bc-item--cur" :title="selectedGroup">{{ truncate(selectedGroup, 20) }}</span>
+          </nav>
+        </div>
+        <div class="header-actions">
+          <span class="header-count">{{ selectedItems.length }} 项</span>
+          <div class="view-toggle" role="group" aria-label="显示方式">
+            <button
+              class="vt-btn"
+              :class="{ active: viewMode === 'grid' }"
+              title="大缩略图显示"
+              aria-label="大缩略图显示"
+              @click="viewMode = 'grid'"
+            >
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor" aria-hidden="true">
+                <rect x="1"   y="1"   width="5.5" height="5.5" rx="1"/>
+                <rect x="8.5" y="1"   width="5.5" height="5.5" rx="1"/>
+                <rect x="1"   y="8.5" width="5.5" height="5.5" rx="1"/>
+                <rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1"/>
+              </svg>
+            </button>
+            <button
+              class="vt-btn"
+              :class="{ active: viewMode === 'list' }"
+              title="列表显示"
+              aria-label="列表显示"
+              @click="viewMode = 'list'"
+            >
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor" aria-hidden="true">
+                <rect x="1"   y="1.5" width="4"   height="4"   rx="0.75"/>
+                <rect x="6.5" y="3"   width="7.5" height="1.5" rx="0.75"/>
+                <rect x="1"   y="7.5" width="4"   height="4"   rx="0.75"/>
+                <rect x="6.5" y="9"   width="7.5" height="1.5" rx="0.75"/>
+                <rect x="1"   y="13"  width="4"   height="1.5" rx="0.75"/>
+                <rect x="6.5" y="13"  width="7.5" height="1.5" rx="0.75"/>
+              </svg>
+            </button>
+            <button
+              class="vt-btn vt-btn--placeholder"
+              title="选择（即将推出）"
+              aria-label="选择"
+              disabled
+            >
+              <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor" aria-hidden="true">
+                <path d="M3.5 1 L3.5 12 L6.3 9.2 L8.7 14 L10.5 13.2 L8.1 8.4 L12 8.4 Z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <!-- Grid mode: plain title -->
+      <template v-else>
+        <h2 class="page-title flex-1">日期视图</h2>
+        <span class="page-subtitle">按年份与月份浏览已导入的图片。</span>
+      </template>
     </header>
 
     <!-- Grid view -->
@@ -64,48 +131,78 @@
       >
         <LoadingSpinner v-if="loadingItems" />
 
-        <div v-else ref="itemGrid" class="photo-grid">
-          <div
-            v-for="(row, ri) in justifiedRows"
-            :key="ri"
-            class="jl-row"
-            :style="{ height: row.height + 'px' }"
-          >
+        <template v-else>
+          <!-- Grid mode: justified-layout large thumbnails -->
+          <div v-if="viewMode === 'grid'" ref="itemGrid" class="photo-grid">
             <div
-              v-for="item in row.items"
-              :key="item.id || item._idx"
-              class="photo-wrap"
-              :data-index="item._idx"
-              :style="{ width: item.computedWidth + 'px' }"
+              v-for="(row, ri) in justifiedRows"
+              :key="ri"
+              class="jl-row"
+              :style="{ height: row.height + 'px' }"
             >
-              <!-- Skeleton while no thumbnail available -->
-              <div v-if="!resolvedUrl(item)" class="photo-skeleton">
-                <span class="skeleton-label">···</span>
-              </div>
-
-              <!-- Image -->
               <div
-                v-else
-                class="photo-card"
-                @click="openImage(item)"
+                v-for="item in row.items"
+                :key="item.id || item._idx"
+                class="photo-wrap"
+                :data-index="item._idx"
+                :style="{ width: item.computedWidth + 'px' }"
               >
-                <img
-                  :src="resolvedUrl(item)"
-                  class="photo-img"
-                  loading="lazy"
-                  :alt="item.name || ''"
-                  @load="onImgLoad(item, $event)"
-                  @error="onImgError(item, $event)"
-                />
-                <div v-if="item.type === 'album'" class="album-badge">
-                  <span class="badge-icon">📁</span>
-                  <span class="badge-name">{{ item.name }}</span>
-                  <span class="badge-count">{{ item.count }} 张</span>
+                <!-- Skeleton while no thumbnail available -->
+                <div v-if="!resolvedUrl(item)" class="photo-skeleton">
+                  <span class="skeleton-label">···</span>
+                </div>
+
+                <!-- Image -->
+                <div
+                  v-else
+                  class="photo-card"
+                  @click="openImage(item)"
+                >
+                  <img
+                    :src="resolvedUrl(item)"
+                    class="photo-img"
+                    loading="lazy"
+                    :alt="item.name || ''"
+                    @load="onImgLoad(item, $event)"
+                    @error="onImgError(item, $event)"
+                  />
+                  <div v-if="item.type === 'album'" class="album-badge">
+                    <span class="badge-icon">📁</span>
+                    <span class="badge-name">{{ item.name }}</span>
+                    <span class="badge-count">{{ item.count }} 张</span>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
+
+          <!-- List mode: 50 px thumbnail + filename -->
+          <div v-else ref="listView" class="list-view">
+            <div
+              v-for="(item, idx) in selectedItems"
+              :key="item.id || idx"
+              class="list-item"
+              :data-index="idx"
+              @click="openImage(item)"
+            >
+              <div class="list-thumb-wrap">
+                <div v-if="!resolvedUrl(item)" class="list-thumb-skeleton"></div>
+                <img
+                  v-else
+                  :src="resolvedUrl(item)"
+                  class="list-thumb"
+                  loading="lazy"
+                  :alt="item.name || ''"
+                  :style="listThumbStyle(item)"
+                  @load="onImgLoad(item, $event)"
+                  @error="onImgError(item, $event)"
+                />
+              </div>
+              <span class="list-filename">{{ item.name || '—' }}</span>
+              <span v-if="item.type === 'album'" class="list-album-badge">📁 {{ item.count }} 张</span>
+            </div>
+          </div>
+        </template>
       </div>
     </Transition>
   </section>
@@ -149,6 +246,10 @@ export default {
       cacheBustById: {},
       thumbErrorRetries: {},
       failedThumbIds: {},
+      viewMode:       'grid',   // 'grid' | 'list'
+      bcDragging:     false,
+      bcStartX:       0,
+      bcScrollLeft:   0,
     }
   },
 
@@ -210,6 +311,18 @@ export default {
           this.setupObserver()
         })
       }
+    },
+    // Re-connect observer when switching between grid and list
+    viewMode() {
+      this.$nextTick(() => {
+        this.teardownObserver()
+        this.teardownResizeObserver()
+        this.setupObserver()
+        this.setupResizeObserver()
+        if (this.$refs.itemGrid) {
+          this.containerWidth = this.$refs.itemGrid.offsetWidth
+        }
+      })
     },
   },
 
@@ -332,6 +445,7 @@ export default {
       this.originX = `${Math.round(((rect.left + rect.width  / 2) / window.innerWidth)  * 100)}%`
       this.originY = `${Math.round(((rect.top  + rect.height / 2) / window.innerHeight) * 100)}%`
 
+      this.viewMode  = 'grid'
       this.navDir = 'forward'
       this.view   = 'animating'
       this.selectedGroup = mg.group
@@ -452,7 +566,8 @@ export default {
     },
 
     setupObserver() {
-      if (!this.$refs.itemGrid) return
+      const container = this.$refs.itemGrid || this.$refs.listView
+      if (!container) return
       this.observer = new IntersectionObserver(
         (entries) => {
           const visible = entries
@@ -470,7 +585,7 @@ export default {
         },
         { root: null, rootMargin: '0px', threshold: 0.1 },
       )
-      for (const el of this.$refs.itemGrid.querySelectorAll('[data-index]')) {
+      for (const el of container.querySelectorAll('[data-index]')) {
         this.observer.observe(el)
       }
     },
@@ -481,7 +596,8 @@ export default {
     },
 
     setupResizeObserver() {
-      if (!this.$refs.itemGrid) return
+      const container = this.$refs.itemGrid || this.$refs.listView
+      if (!container) return
       if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null }
       this.resizeObserver = new ResizeObserver(() => {
         requestAnimationFrame(() => {
@@ -490,7 +606,7 @@ export default {
           }
         })
       })
-      this.resizeObserver.observe(this.$refs.itemGrid)
+      this.resizeObserver.observe(container)
     },
 
     teardownResizeObserver() {
@@ -565,6 +681,36 @@ export default {
         }
       } catch { /* ignore */ }
       finally { this.refreshingThumbs = false }
+    },
+
+    truncate(str, max = 20) {
+      if (!str) return ''
+      return str.length > max ? str.slice(0, max) + '\u2026' : str
+    },
+
+    listThumbStyle(item) {
+      const dims = this.imgDimensions[item?.id]
+      if (!dims || !dims.w || !dims.h) return { width: '50px', height: '50px', objectFit: 'contain' }
+      const { w, h } = dims
+      if (w >= h) return { width: '50px', height: Math.round(h / w * 50) + 'px', objectFit: 'contain' }
+      return { width: Math.round(w / h * 50) + 'px', height: '50px', objectFit: 'contain' }
+    },
+
+    onBcMousedown(e) {
+      const el = this.$refs.breadcrumbWrap
+      if (!el) return
+      this.bcDragging   = true
+      this.bcStartX     = e.pageX
+      this.bcScrollLeft = el.scrollLeft
+    },
+    onBcMouseup()    { this.bcDragging = false },
+    onBcMouseleave() { this.bcDragging = false },
+    onBcMousemove(e) {
+      if (!this.bcDragging) return
+      e.preventDefault()
+      const el = this.$refs.breadcrumbWrap
+      if (!el) return
+      el.scrollLeft = this.bcScrollLeft - (e.pageX - this.bcStartX)
     },
 
     async openImage(item) {
@@ -733,4 +879,138 @@ export default {
 }
 .t-back-leave-from { opacity: 1; transform: scale(1)    translateY(0); }
 .t-back-leave-to   { opacity: 0; transform: scale(0.92) translateY(14px); }
+
+/* ── Breadcrumb ─────────────────────────────────────────── */
+.breadcrumb-wrap {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow-x: auto;
+  cursor: grab;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  user-select: none;
+}
+.breadcrumb-wrap::-webkit-scrollbar { display: none; }
+.breadcrumb-wrap.bc-dragging { cursor: grabbing; }
+
+.breadcrumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+  padding: 0.125rem 0;
+}
+.bc-item {
+  font-size: 0.875rem;
+  color: #64748b;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bc-item--cur {
+  color: #1e293b;
+  font-weight: 600;
+}
+.bc-sep {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+/* ── View-mode toggle ───────────────────────────────────── */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  flex-shrink: 0;
+}
+.view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: #f1f5f9;
+  border-radius: 8px;
+  padding: 3px;
+}
+.vt-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.vt-btn:hover:not(:disabled) {
+  background: #e2e8f0;
+  color: #475569;
+}
+.vt-btn.active {
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0,0,0,.04);
+}
+.vt-btn--placeholder {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── List view ──────────────────────────────────────────── */
+.list-view {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.list-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 130ms ease;
+}
+.list-item:hover { background: #f8fafc; }
+.list-thumb-wrap {
+  flex-shrink: 0;
+  width: 50px;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #f1f5f9;
+}
+.list-thumb {
+  display: block;
+  border-radius: 3px;
+}
+.list-thumb-skeleton {
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-wave 1.4s ease-in-out infinite;
+}
+.list-filename {
+  font-size: 0.8125rem;
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+.list-album-badge {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
 </style>

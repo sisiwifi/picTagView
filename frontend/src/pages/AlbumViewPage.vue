@@ -1,21 +1,64 @@
 <template>
   <section class="page">
     <header class="page-header">
-      <nav class="breadcrumb" aria-label="相册导航">
-        <router-link to="/calendar" class="bc-item bc-link">
-          <span class="bc-icon">&#128197;</span>日期视图
-        </router-link>
-        <template v-for="anc in album.ancestors || []" :key="anc.public_id">
+      <div
+        class="breadcrumb-wrap"
+        @mousedown="onBcMouseDown"
+        @mousemove="onBcMouseMove"
+        @mouseup="onBcMouseUp"
+        @mouseleave="onBcMouseUp"
+      >
+        <nav class="breadcrumb" aria-label="相册导航">
+          <router-link to="/calendar" class="bc-item bc-link" title="日期视图">
+            {{ bcLabel('日期视图') }}
+          </router-link>
+          <template v-for="anc in album.ancestors || []" :key="anc.public_id">
+            <span class="bc-sep" aria-hidden="true">›</span>
+            <router-link
+              :to="{ name: 'album', params: { id: anc.public_id } }"
+              class="bc-item bc-link"
+              :title="anc.title"
+            >{{ bcLabel(anc.title) }}</router-link>
+          </template>
           <span class="bc-sep" aria-hidden="true">›</span>
-          <router-link
-            :to="{ name: 'album', params: { id: anc.public_id } }"
-            class="bc-item bc-link"
-          >{{ anc.title }}</router-link>
-        </template>
-        <span class="bc-sep" aria-hidden="true">›</span>
-        <span class="bc-item bc-current">{{ album.title || '相册' }}</span>
-      </nav>
-      <span class="header-count">{{ totalCount }} 项</span>
+          <span class="bc-item bc-current" :title="album.title || '相册'">{{ bcLabel(album.title || '相册') }}</span>
+        </nav>
+      </div>
+      <div class="header-right">
+        <span class="header-count">{{ totalCount }} 项</span>
+        <div class="vm-btns" role="group" aria-label="视图模式">
+          <button
+            class="vm-btn"
+            :class="{ active: viewMode === 'grid' }"
+            title="大缩略图"
+            @click="viewMode = 'grid'"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor"/>
+              <rect x="8" y="1" width="5" height="5" rx="1" fill="currentColor"/>
+              <rect x="1" y="8" width="5" height="5" rx="1" fill="currentColor"/>
+              <rect x="8" y="8" width="5" height="5" rx="1" fill="currentColor"/>
+            </svg>
+          </button>
+          <button
+            class="vm-btn"
+            :class="{ active: viewMode === 'list' }"
+            title="列表显示"
+            @click="viewMode = 'list'"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <rect x="1" y="2" width="12" height="2" rx="1" fill="currentColor"/>
+              <rect x="1" y="6" width="12" height="2" rx="1" fill="currentColor"/>
+              <rect x="1" y="10" width="12" height="2" rx="1" fill="currentColor"/>
+            </svg>
+          </button>
+          <button class="vm-btn vm-btn--disabled" title="选择（即将推出）" disabled>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M3 1L3 11L6 8.5L8 13L9.5 12.3L7.5 7.8L11 7.8Z" fill="currentColor"/>
+            </svg>
+          </button>
+        </div>
+      </div>
     </header>
 
     <LoadingSpinner v-if="loading" />
@@ -25,7 +68,7 @@
       <p>此相册尚无内容。</p>
     </div>
 
-    <div v-else ref="itemGrid" class="photo-grid">
+    <div v-else-if="viewMode === 'grid'" ref="itemGrid" class="photo-grid">
       <div
         v-for="(row, ri) in justifiedRows"
         :key="ri"
@@ -60,6 +103,29 @@
         </div>
       </div>
     </div>
+
+    <div v-else ref="itemGrid" class="list-view">
+      <div
+        v-for="(item, idx) in items"
+        :key="item.public_id || item.id || idx"
+        class="list-row"
+        :data-index="idx"
+        @click="openItem(item)"
+      >
+        <div class="list-thumb-wrap">
+          <div v-if="!resolvedUrl(item)" class="list-thumb-skeleton" />
+          <img
+            v-else
+            :src="resolvedUrl(item)"
+            class="list-thumb-img"
+            :alt="item.name || ''"
+            @load="onImgLoad(item, $event)"
+          />
+        </div>
+        <span class="list-name">{{ item.name || item.full_filename || '未知文件' }}</span>
+        <span v-if="item.type === 'album'" class="list-album-badge">📁 {{ item.count }} 张</span>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -90,6 +156,7 @@ export default {
       lastCenter: -1,
       imgDimensions: {},
       containerWidth: 0,
+      viewMode: 'grid',
     }
   },
 
@@ -143,9 +210,18 @@ export default {
         })
       }
     },
+    viewMode() {
+      this.$nextTick(() => {
+        this.teardownObserver()
+        this.setupObserver()
+      })
+    },
   },
 
   created() {
+    this.$_bcDragging = false
+    this.$_bcStartX = 0
+    this.$_bcScrollX = 0
     this.fetchAlbum()
     window.addEventListener('resize', this.onResize)
   },
@@ -160,6 +236,7 @@ export default {
   methods: {
     async fetchAlbum() {
       this.loading = true
+      this.viewMode = 'grid'
       this.cacheUrls = {}
       this.imgDimensions = {}
       this.lastCenter = -1
@@ -323,6 +400,22 @@ export default {
       this.resizeObserver.observe(this.$refs.itemGrid)
     },
 
+    bcLabel(str) {
+      if (!str) return ''
+      return str.length > 20 ? str.slice(0, 20) + '…' : str
+    },
+    onBcMouseDown(e) {
+      this.$_bcDragging = true
+      this.$_bcStartX = e.pageX
+      this.$_bcScrollX = e.currentTarget.scrollLeft
+    },
+    onBcMouseMove(e) {
+      if (!this.$_bcDragging) return
+      e.currentTarget.scrollLeft = this.$_bcScrollX - (e.pageX - this.$_bcStartX)
+    },
+    onBcMouseUp() {
+      this.$_bcDragging = false
+    },
     teardownResizeObserver() {
       if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null }
     },
@@ -334,16 +427,44 @@ export default {
 .page { @apply flex flex-col gap-6; }
 
 .page-header {
-  @apply sticky top-0 z-40 flex items-center gap-3 bg-white bg-opacity-95 py-3 px-0 backdrop-blur-sm shadow-sm;
+  @apply sticky top-0 z-40 flex items-center bg-white bg-opacity-95 py-3 px-0 backdrop-blur-sm shadow-sm;
+  gap: 8px;
+  min-width: 0;
 }
-.header-count { @apply text-sm text-slate-400 flex-shrink-0; }
+
+/* Breadcrumb wrap */
+.breadcrumb-wrap {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  cursor: grab;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  user-select: none;
+}
+.breadcrumb-wrap::-webkit-scrollbar { display: none; }
+.breadcrumb-wrap:active { cursor: grabbing; }
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.header-count { @apply text-sm text-slate-400; }
 
 /* Breadcrumb */
 .breadcrumb {
-  @apply flex items-center flex-wrap gap-0.5 text-sm flex-1;
+  @apply flex items-center gap-0.5 text-sm;
+  white-space: nowrap;
 }
 .bc-item {
-  @apply px-2 py-1 rounded-md max-w-[12rem] truncate;
+  @apply px-2 py-1 rounded-md;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 14rem;
+  display: inline-block;
 }
 .bc-link {
   @apply text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors duration-150 no-underline;
@@ -354,8 +475,47 @@ export default {
 .bc-sep {
   @apply text-slate-300 text-base select-none px-0.5;
 }
-.bc-icon {
-  @apply mr-1;
+
+/* View mode buttons */
+.vm-btns {
+  display: flex;
+  align-items: center;
+  background: #f1f5f9;
+  border-radius: 8px;
+  padding: 2px;
+  gap: 1px;
+}
+.vm-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0;
+  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+.vm-btn:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+.vm-btn.active {
+  background: #fff;
+  color: #1e293b;
+  box-shadow: 0 1px 3px rgba(0,0,0,.12);
+}
+.vm-btn--disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.vm-btn--disabled:hover {
+  background: transparent;
+  color: #64748b;
+  box-shadow: none;
 }
 
 .empty-hint {
@@ -434,5 +594,59 @@ export default {
   @apply select-none;
   color: rgba(100, 116, 139, 0.8);
   font-size: 0.65rem;
+}
+
+/* List view */
+.list-view {
+  display: flex;
+  flex-direction: column;
+}
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+.list-row:hover { background: #f1f5f9; }
+.list-thumb-wrap {
+  width: 50px;
+  height: 50px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #e2e8f0;
+}
+.list-thumb-skeleton {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-wave 1.4s ease-in-out infinite;
+}
+.list-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.list-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.875rem;
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.list-album-badge {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: #64748b;
+  background: #f1f5f9;
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 </style>
