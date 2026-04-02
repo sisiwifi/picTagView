@@ -1,181 +1,132 @@
 # picTagView Backend API & Services Document
 
-本文档整理了 picTagView 后端所有可用的 REST API 以及内部核心处理服务的位置、用途与调用方法。
+本文档说明后端服务分层、路由拆分结构以及各 API 的实现位置。
 
-## 1. 核心服务 (Services)
+## 1. 服务分层
 
-核心业务逻辑全部隔离在 `app/services/` 目录下，并被 `app/api/routes.py` 或互相调用。
+- 路由层：app/api/routes.py 与 app/api/routers/*.py
+- 公共 API 工具：app/api/common.py
+- 业务服务层：app/services/*.py
 
-### 1.1 并发与哈希服务
-- **位置**：`app/services/parallel_processor.py` 和 `app/services/hash_service.py`
-- **用途**：处理繁重的 CPU 密集型任务，主要进行图片解码（OpenCV）、图片裁剪与哈希计算。
-- **核心方法**：
-  - `process_from_paths(entries, temp_dir, max_workers)`：基于外部路径利用多进程 `ProcessPoolExecutor` 并发生成缩略图，避免大量图片数据跨进程序列化，适合已存在磁盘的图片的二次处理。
-  - `process_from_bytes(entries, temp_dir, max_workers)`：利用 `ThreadPoolExecutor` 并发处理内存中的图片，适合直接在上传、读取文件时边解析边执行。利用 OpenCV 与 hashlib 会释放 GIL 的特性实现高吞吐。
-  - `process_hash_only_from_bytes(entries, max_workers)`：专注于仅求得图片的 `sha256` 散列，不提取缩略图。
+### 1.1 主要服务
 
-### 1.2 缓存缩略图生成服务
-- **位置**：`app/services/cache_thumb_service.py`
-- **用途**：负责相册页面按需动态生成的（即浏览器请求但未命中缓存时触发）短边 600px 的 WebP 预览缩略图。
-- **核心方法**：
-  - `generate_cache_thumbs_progressively(entries, cache_dir, on_complete)`：通过多线程流式生成缓存缩略图，使得前端可以收到逐步加载的视觉反馈。
+- app/services/import_service.py
+  - import_files(files, last_modified_times, created_times)
+  - refresh_library()
+- app/services/parallel_processor.py
+  - process_from_paths(entries, temp_dir)
+  - process_from_bytes(entries, temp_dir)
+  - process_hash_only_from_bytes(entries)
+- app/services/cache_thumb_service.py
+  - generate_cache_thumbs_progressively(entries, cache_dir, on_complete)
+- app/services/viewer_service.py
+  - collect_image_viewers(extensions)
+  - get_preferred_viewer_id() / set_preferred_viewer_id()
+  - launch_with_preferred_viewer(command_template, file_path)
+  - ensure_viewer_icon(viewer)
 
-### 1.3 导入与刷新服务
-- **位置**：`app/services/import_service.py`
-- **用途**：管理新图片导入与媒体库定期清理校验，更新图片的元数据信息，如创建时间、标签、宽高、QuickHash 等。
-- **核心方法**：
-  - `import_files(files, last_modified_times, created_times)`：多阶段进行图片处理。Phase1 提取上传队列的元信息，Phase2 根据修改日期提取 `date_group` 并仅为一个分组打最新缩略图，Phase3 基于并行框架 `parallel_processor` 执行运算并更新 SQLModel 数据库及写入物理位置 (`media/`)。
-  - `refresh_library()`：数据一致性自检。Step0 删除无主的 Cache 图片；Step1 删除物理文件确实已丢失的数据库记录；Step2 保证所有月份分组必须存在至少一张 400x400 的封面 Temp 缩略图；Step3 回填遗漏的快哈希和分辨率。
+## 2. 路由组织
 
-### 1.4 缩略图创建基础服务
-- **位置**：`app/services/thumbnail_service.py`
-- **用途**：供特殊单张图片读取或遗留调用的纯同步 1:1 裁剪创建函数。
-- **核心方法**：
-  - `create_thumbnail_from_bytes(content, file_hash)`：用 OpenCV 裁剪 1:1，直接写入 `TEMP_DIR`。
+- app/api/routes.py
+  - 仅作为聚合入口，统一 include 子路由。
+- app/api/routers/basic.py
+  - GET /
+  - POST /api/import
+  - GET /api/images/count
+  - POST /api/admin/refresh
+- app/api/routers/dates.py
+  - GET /api/dates
+  - GET /api/dates/{date_group}/items
+- app/api/routers/albums.py
+  - GET /api/albums/{album_id}
+- app/api/routers/images.py
+  - GET /api/images/{image_id}/open
+- app/api/routers/system.py
+  - GET /api/system/viewer-info
+  - GET /api/system/image-viewers
+  - GET /api/system/viewer-preference
+  - POST /api/system/viewer-preference
+- app/api/routers/cache.py
+  - DELETE /api/cache
+  - POST /api/thumbnails/cache
+  - GET /api/thumbnails/cache/status/{task_id}
 
----
+## 3. API 说明
 
-## 2. API 接口 (Routes)
+### 3.1 基础接口
 
-所有的 REST API 由 FastAPI 提供，路由集中注册于 `backend/app/api/routes.py`（大多数路由）；具体实现逻辑有时会委托到 `backend/app/services/` 下的服务函数（例如 `import_service.py`, `parallel_processor.py`, `cache_thumb_service.py`）。
-本地基础路径默认为：`http://127.0.0.1:8000`。
+- GET /
+  - 实现：app/api/routers/basic.py
+  - 用途：健康检查
+  - 返回：{"status": "ok"}
 
-### 2.1 基础与基础运维 API
+- POST /api/import
+  - 实现：app/api/routers/basic.py，调用 app/services/import_service.py
+  - 参数：files, last_modified_json, created_time_json
+  - 返回：{"imported": [...], "skipped": [...]}
 
-#### `GET /`
-- 实现位置：`backend/app/api/routes.py`
-- **用途**：健康检查。
-- **返回**：`{"status": "ok"}`。
+- GET /api/images/count
+  - 实现：app/api/routers/basic.py
+  - 返回：{"count": int}
 
-#### `POST /api/import`
-- 实现位置：`backend/app/api/routes.py`（函数 `import_images()`，调用 `app/services/import_service.import_files`）
-- **用途**：导入前端上传的高清照片原始文件。支持 FormData 解析前端传回来的文件流和文件相关的时间。
-- **参数 (FormData)**：
-  - `files`：多文件上传 (`UploadFile`)
-  - `last_modified_json`：与 files 对应的上次修改时间数组 (JSON string，可选)
-  - `created_time_json`：与 files 对应的文件创建时间数组 (JSON string，可选)
-- **返回**：`{"imported": ["file1.jpg", ...], "skipped": [...]}`。
+- POST /api/admin/refresh
+  - 实现：app/api/routers/basic.py，调用 app/services/import_service.py
+  - 用途：触发库修复与缩略图补齐
 
-#### `GET /api/images/count`
-- 实现位置：`backend/app/api/routes.py` （函数 `images_count()`）
-- **用途**：快速获取数据库中所有图片的计数。
-- **返回**：`{"count": <int>}`。
+### 3.2 日期与相册接口
 
-#### `POST /api/admin/refresh`
-- 实现位置：`backend/app/api/routes.py`（路由直接调用 `import_service.refresh_library()`）
-- **用途**：触发文件清理与图库元数据、缩略图同步扫描修复。
-- **返回**：`{"pruned": <int>, "total_images": <int>, "cache_deleted": <int>, "regenerated": <int>}`。
+- GET /api/dates
+  - 实现：app/api/routers/dates.py
+  - 用途：返回按年月分组的汇总和封面信息
 
----
+- GET /api/dates/{date_group}/items
+  - 实现：app/api/routers/dates.py
+  - 用途：返回某年月下的直图与子相册
 
-### 2.2 相册视图 API
+- GET /api/albums/{album_id}
+  - 实现：app/api/routers/albums.py
+  - 用途：返回相册详情、祖先面包屑、子相册与直图
 
-#### `GET /api/dates`
-- 实现位置：`backend/app/api/routes.py`（函数 `dates_view()`）
-- **用途**：获取全量按年-月份分组（`date_group`）聚类的相册大纲列表，以及当前月份首选展示的封面图片 URL。
-- **返回**：
-  ```json
-  {
-    "years": [
-      {
-        "year": 2025,
-        "months": [
-          {
-            "group": "2025-03",
-            "year": 2025,
-            "month": 3,
-            "count": 12,
-            "thumb_url": "/thumbnails/xxxxx.webp",
-            "cache_thumb_url": "/cache/xxxxx_cache.webp",
-            "id": 123
-          }
-        ]
-      }
-    ]
-  }
-  ```
-- **说明**：`thumb_url` 优先指向已存在的 400x400 预览图；若暂时没有，前端可利用 `id` 和 `cache_thumb_url` 继续走懒加载。
+### 3.3 系统集成接口
 
-#### `GET /api/dates/{date_group}/items`
-- 实现位置：`backend/app/api/routes.py`（函数 `date_group_items()`）
-- **用途**：获取某个特定月份组（如 `2025-03`）里面的具体照片或者子相册（目录）。
-- **参数 (Path)**：`date_group`，如 `2025-03`。
-- **返回**：包含 `date_group` 和 `items`。`items` 类型分为 `image`（直接在根组下）或 `album`（有子目录）。每个条目都可能包含 `id`、`thumb_url`、`cache_thumb_url` 和 `public_id`。
+- GET /api/images/{image_id}/open
+  - 实现：app/api/routers/images.py，调用 app/services/viewer_service.py
+  - 用途：在本机系统中打开原图
 
-#### `GET /api/albums/{album_id}`
-- 实现位置：`backend/app/api/routes.py`（函数 `album_detail()`）
-- **用途**：获取某个相册的详细内容，包括面包屑祖先层级、子相册和当前相册下的图片列表。
-- **参数 (Path)**：`album_id`，即相册的 `public_id`。
-- **返回**：包含 `album` 和 `items`。
-  - `album.ancestors`：从根到当前相册父级的层级路径，供 Breadcrumb 显示和上级返回使用。
-  - `album.parent_public_id`：当前相册的直接父级，用于固定返回上一级。
-  - `items`：子相册项使用 `type=album`，并返回 `public_id`、`id`、`thumb_url`、`cache_thumb_url`；图片项使用 `type=image`。
-- **说明**：该接口是多级相册浏览的核心数据源，前端返回上一级时应优先依据 `parent_public_id` / `ancestors`，不要仅靠本地路径拼接。
+- GET /api/system/viewer-info
+  - 实现：app/api/routers/system.py
+  - 用途：返回系统默认看图软件与应用内偏好
 
----
+- GET /api/system/image-viewers
+  - 实现：app/api/routers/system.py
+  - 用途：扫描可用看图程序（Windows）
 
-### 2.3 查看原图与操作系统集成 API
+- GET /api/system/viewer-preference
+  - 实现：app/api/routers/system.py
+  - 用途：读取应用内偏好看图程序
 
-#### `GET /api/images/{image_id}/open`
-- 实现位置：`backend/app/api/routes.py`（函数 `open_image()`）
-- **用途**：触发在服务端当前运行设备的操作系统内，使用系统或指定的默认图片浏览器打开此张图片的原图。
-- **返回**：`{"status": "ok", "mode": "preferred"|"system", "viewer_id": "..."}`。
+- POST /api/system/viewer-preference
+  - 实现：app/api/routers/system.py
+  - 用途：设置应用内偏好看图程序
 
-#### `GET /api/system/viewer-info`
-- 实现位置：`backend/app/api/routes.py`（函数 `viewer_info()`）
-- **用途**：获取当前操作系统的全局默认看图软件和 App 内指定看图软件的信息。
-- **返回**：`{"viewer": "...", "preferred_viewer_id": null, "system_viewer": "..."}`。
+### 3.4 缓存接口
 
-#### `GET /api/system/image-viewers`
-- 实现位置：`backend/app/api/routes.py`（函数 `image_viewers()`）
-- **用途**：扫描 Windows 注册表，返回操作系统内所有已安装且能打开主流图片的程序。
-- **返回**：包含应用列表（含注册表 ProgID、名称、类型、提取并代理好的程序图标 URL）、偏好选择情况。
+- DELETE /api/cache
+  - 实现：app/api/routers/cache.py
+  - 用途：清理 temp 与 cache 文件，并清理 DB 中失效缩略图引用
 
-#### `GET /api/system/viewer-preference`
-- 实现位置：`backend/app/api/routes.py`（函数 `viewer_preference()`）
-- **用途**：获取配置在本应用范围的偏好看图软件 ID。
+- POST /api/thumbnails/cache
+  - 实现：app/api/routers/cache.py，生成逻辑调用 app/services/cache_thumb_service.py
+  - 用途：异步启动缓存缩略图生成任务
+  - 返回：{"task_id": "<uuid>"}
 
-#### `POST /api/system/viewer-preference`
-- 实现位置：`backend/app/api/routes.py`（函数 `set_viewer_preference()`）
-- **用途**：设置并保存应用内打开图片的默认程序到配置文件中。
-- **请求体 (JSON)**：`{"viewer_id": "xxx.ProgID" | ""}`，空字符串意味着跟随系统。
+- GET /api/thumbnails/cache/status/{task_id}
+  - 实现：app/api/routers/cache.py
+  - 用途：轮询任务状态与新增缓存缩略图 URL
 
----
+## 4. 约定
 
-### 2.4 缩略图缓存管理 API
-
-#### `DELETE /api/cache`
-- 实现位置：`backend/app/api/routes.py`（函数 `delete_cache` / 删除逻辑位于 routes.py）
-- **用途**：清除 `temp/` 及 `data/cache/` 这两处的缩略图存放位置所有已缓存文件，并移除数据库内丢失记录的字段清理，强制重新触发刷新。
-- **返回**：`{"temp_deleted": <int>, "cache_deleted": <int>, "error": null}`。
-
-#### `POST /api/thumbnails/cache`
-- 实现位置：`backend/app/api/routes.py`（路由 + 后台任务协调；实际生成由 `app/services/cache_thumb_service.py` 实现并在 routes.py 中被调用）
-- **用途**：通知后端异步为所提供的特定全量图片 ID 生成 600px 尺寸长列表模式的缓存缩略图。
-- **请求体 (JSON)**：`{"image_ids": [1, 2, 3, ...]}`。
-- **返回**：`{"task_id": "<uuid>"}` 返回用于轮询的任务 ID。
-
-#### `GET /api/thumbnails/cache/status/{task_id}`
-- 实现位置：`backend/app/api/routes.py`（状态轮询路由，返回 `_task_store` 中的运行状态）
-- **用途**：通过给定的 task_id 轮询当前批量大图转缓存缩略图进度的进度及新生成的资源 URL 列表。
-- **返回**：
-            "thumb_url": "/thumbnails/xxxxx.webp",
-            "cache_thumb_url": "/cache/xxxxx_cache.webp",
-            "id": 123
-          }
-        ]
-      }
-    ]
-  }
-    ]
-  }
-  ```
-
----
-
-## 3. 说明与约定
-
-- `thumb_url` 通常表示已经可直接展示的缩略图路径；`cache_thumb_url` 表示按需生成的缓存缩略图路径。
-- 图片条目的 `id` 对应 `ImageAsset.id`，前端可用它触发懒加载缓存缩略图。
-- 相册条目的 `public_id` 是前端路由与 Breadcrumb 的稳定标识，不应依赖数据库自增主键进行导航。
-- 软删除逻辑不再依赖 `deleted_at` 字段，而是通过独立的 path soft delete 记录过滤可见项。
+- thumb_url 表示 temp 预览图路径。
+- cache_thumb_url 表示按需生成的 cache 预览图路径。
+- 相册导航使用 public_id，不依赖数据库自增主键。
+- 软删除可见性由 path_soft_delete 表过滤。

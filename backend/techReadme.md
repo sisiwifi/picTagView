@@ -21,15 +21,16 @@
   - 挂载 `/media` -> `MEDIA_DIR`
   - 注册路由 `app.include_router(api_router)`
 
-### 3.2 `app/api/routes.py`
-- API 路由定义：
-  - `GET /`：健康检查
-  - `POST /api/import`：批量上传图片，调用 `import_service.import_files`
-  - `GET /api/images/count`：总图像数量
-  - `POST /api/admin/refresh`：修复/重建库，调用 `import_service.refresh_library`
-  - `GET /api/dates`：按年份/月份汇总（基于 `ImageAsset.date_group`）
-  - `GET /api/dates/{date_group}/items`：获取某月内容（直图 + 子相册），相册数据来自 Album 表
-  - `GET /api/albums/{album_id}`：获取指定相册的详情（子相册 + 直属图片），`album_id` 为 `public_id`
+### 3.2 `app/api/routes.py` + `app/api/routers/*`
+- 路由聚合入口：`app/api/routes.py` 只负责 `include_router`。
+- 业务按职责拆分到子路由模块：
+  - `app/api/routers/basic.py`：`GET /`、`POST /api/import`、`GET /api/images/count`、`POST /api/admin/refresh`
+  - `app/api/routers/dates.py`：`GET /api/dates`、`GET /api/dates/{date_group}/items`
+  - `app/api/routers/albums.py`：`GET /api/albums/{album_id}`
+  - `app/api/routers/images.py`：`GET /api/images/{image_id}/open`
+  - `app/api/routers/system.py`：`/api/system/*` 相关接口
+  - `app/api/routers/cache.py`：`DELETE /api/cache`、`/api/thumbnails/cache*`
+- 共享查询与路径工具在 `app/api/common.py`：软删除过滤、缩略图 URL 解析、存储路径解析。
 
 ### 3.3 `app/services/import_service.py`
 - 核心导入与库修复逻辑
@@ -71,6 +72,13 @@
   - 计算 SHA-256 + xxhash（quick_hash）**并同时用 cv2.imdecode 获取图片宽高**
   - 将 cv2 解码移入并行阶段，避免在 DB 串行写入循环中执行 cv2（约 230 ms/张），消除主要性能瓶颈
   - 解码失败时宽高返回 `None`，import_service 保留 fallback 调用进行补偿
+
+### 3.4b `app/services/viewer_service.py`
+- 系统看图程序集成逻辑（原先在路由层）：
+  - 读取/写入 `app_settings.json` 中的偏好看图程序
+  - Windows 注册表枚举图片关联程序与默认程序
+  - 解析并提取程序图标（输出到 `VIEWER_ICON_DIR`）
+  - 启动偏好看图程序打开图片（失败回退系统默认）
 
 ### 3.5 `app/models/image_asset.py`
 - 数据模型 `ImageAsset`：

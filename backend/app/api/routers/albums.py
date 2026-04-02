@@ -1,0 +1,114 @@
+from fastapi import APIRouter, HTTPException
+from sqlmodel import col, select
+
+from app.api.common import album_not_deleted, cache_thumb_url, ia_not_deleted, resolve_stored_path, thumb_url
+from app.api.schemas import AlbumDetailResponse, AlbumInfo, AlbumItem, BreadcrumbItem
+from app.core.config import CACHE_DIR, TEMP_DIR
+from app.db.session import get_session
+from app.models.album import Album
+from app.models.image_asset import ImageAsset
+
+router = APIRouter()
+
+
+@router.get("/api/albums/{album_id}", response_model=AlbumDetailResponse)
+def album_detail(album_id: str) -> AlbumDetailResponse:
+    with get_session() as session:
+        album = session.exec(
+            select(Album)
+            .where(Album.public_id == album_id)
+            .where(album_not_deleted())
+        ).first()
+        if not album:
+            raise HTTPException(status_code=404, detail="Album not found")
+
+        parent_public_id = None
+        ancestors: list[BreadcrumbItem] = []
+        cur = album
+        while cur.parent_id is not None:
+            par = session.get(Album, cur.parent_id)
+            if not par:
+                break
+            ancestors.insert(0, BreadcrumbItem(public_id=par.public_id, title=par.title))
+            if cur is album:
+                parent_public_id = par.public_id
+            cur = par
+
+        sub_albums = session.exec(
+            select(Album)
+            .where(Album.parent_id == album.id)
+            .where(album_not_deleted())
+            .order_by(col(Album.title))
+        ).all()
+
+        sub_items: list[AlbumItem] = []
+        for sa in sub_albums:
+            row_thumb_url = ""
+            row_cache_thumb_url = None
+            cover_photo_id = None
+            if sa.cover and isinstance(sa.cover, dict):
+                cover_photo_id = sa.cover.get("photo_id")
+                tp = sa.cover.get("thumb_path", "")
+                if tp:
+                    resolved = resolve_stored_path(tp)
+                    if resolved and resolved.exists():
+                        try:
+                            resolved.relative_to(TEMP_DIR)
+                            row_thumb_url = f"/thumbnails/{resolved.name}"
+                        except ValueError:
+                            try:
+                                resolved.relative_to(CACHE_DIR)
+                                row_cache_thumb_url = f"/cache/{resolved.name}"
+                            except ValueError:
+                                pass
+
+            if cover_photo_id is not None:
+                asset_for_cover = session.get(ImageAsset, cover_photo_id)
+                if asset_for_cover:
+                    if not row_thumb_url:
+                        row_thumb_url = thumb_url(asset_for_cover)
+                    if not row_cache_thumb_url:
+                        row_cache_thumb_url = cache_thumb_url(asset_for_cover)
+
+            sub_items.append(AlbumItem(
+                type="album",
+                name=sa.title,
+                thumb_url=row_thumb_url,
+                count=sa.subtree_photo_count,
+                id=cover_photo_id,
+                cache_thumb_url=row_cache_thumb_url,
+                public_id=sa.public_id,
+            ))
+
+        all_assets = session.exec(
+            select(ImageAsset)
+            .where(ia_not_deleted())
+            .order_by(col(ImageAsset.id))
+        ).all()
+
+        image_items: list[AlbumItem] = []
+        for asset in all_assets:
+            for path in (asset.album or []):
+                if isinstance(path, list) and path and path[-1] == album_id:
+                    image_items.append(AlbumItem(
+                        type="image",
+                        name=asset.full_filename or "",
+                        thumb_url=thumb_url(asset),
+                        id=asset.id,
+                        cache_thumb_url=cache_thumb_url(asset),
+                    ))
+                    break
+
+    return AlbumDetailResponse(
+        album=AlbumInfo(
+            public_id=album.public_id,
+            title=album.title,
+            description=album.description,
+            date_group=album.date_group,
+            photo_count=album.photo_count,
+            subtree_photo_count=album.subtree_photo_count,
+            parent_public_id=parent_public_id,
+            ancestors=ancestors,
+        ),
+        items=sub_items + image_items,
+    )
