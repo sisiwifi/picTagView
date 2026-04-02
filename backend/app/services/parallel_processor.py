@@ -2,12 +2,13 @@ import hashlib
 import os
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+_xxhash: Optional[Any] = None
 try:
-    import xxhash as _xxhash  # type: ignore
+    import xxhash as _xxhash
 except ImportError:
-    _xxhash = None
+    pass
 
 _THUMB_W = 400
 _THUMB_H = 400

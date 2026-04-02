@@ -13,6 +13,20 @@
 - app/services/import_service.py
   - import_files(files, last_modified_times, created_times)
   - refresh_library()
+  - rebuild_hash_index()
+  - recalculate_album_counts()
+  - 说明：该文件是稳定门面，具体实现拆分在下列子模块
+- app/services/imports/pipeline.py
+  - import_files(...)
+  - 负责导入批处理、预去重、并行处理编排、DB 串行写入
+- app/services/imports/maintenance.py
+  - refresh_library()
+  - recalculate_album_counts()
+  - 负责库修复、孤儿清理、相册计数与封面重算
+- app/services/imports/hash_index.py
+  - load/save/lookup/add/rebuild hash index
+- app/services/imports/helpers.py
+  - 路径转换、文件时间、缩略图条目处理、mime/尺寸/quick_hash 等通用工具
 - app/services/parallel_processor.py
   - process_from_paths(entries, temp_dir)
   - process_from_bytes(entries, temp_dir)

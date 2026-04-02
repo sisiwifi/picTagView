@@ -32,9 +32,17 @@
   - `app/api/routers/cache.py`：`DELETE /api/cache`、`/api/thumbnails/cache*`
 - 共享查询与路径工具在 `app/api/common.py`：软删除过滤、缩略图 URL 解析、存储路径解析。
 
-### 3.3 `app/services/import_service.py`
-- 核心导入与库修复逻辑
-- `import_files(files, last_modified_times)`：
+### 3.3 `app/services/import_service.py`（门面）
+- 对外稳定入口：
+  - `import_files(files, last_modified_times, created_times)`
+  - `refresh_library()`
+  - `rebuild_hash_index()`
+  - `recalculate_album_counts()`
+- 该文件仅做兼容导出；实现已拆到 `app/services/imports/*`。
+
+### 3.3a `app/services/imports/pipeline.py`
+- 导入主流程（批处理与去重核心）
+- `import_files(files, last_modified_times, created_times)`：
   - 解析上传路径（兼容 `webkitRelativePath`），`_parse_relative_path` 返回 `(subdir_chain, filename)`
   - 过滤非图片，由扩展名判断
   - 维护目录级 `date_group`，按子目录最早时间分组（格式 `YYYY-MM`）
@@ -54,11 +62,27 @@
   - 文件时间规则：取创建时间与修改时间最小值，回刷到导入文件，并记录到元数据
   - 写入 `ImageAsset`（`quick_hash`、尺寸、mime、tags/thumbs 等扩展字段）
 
+### 3.3b `app/services/imports/maintenance.py`
+- 维护/修复工作流：
 - `refresh_library()`：
   - 清理 DB 中 orphan 记录（媒体文件丢失则删记录与关联缩略图元数据）
   - 清理 orphan cache（无对应媒体记录的 `*_cache.webp`）
   - 仅检查并补齐每个 `date_group` 代表图所需的 400×400 temp 缩略图
   - 维护 `thumbs` 字段与必要元数据占位
+- `recalculate_album_counts()`：重算 `photo_count` / `subtree_photo_count` 与封面。
+
+### 3.3c `app/services/imports/hash_index.py`
+- 哈希索引缓存子模块：
+  - `load_hash_index()` / `save_hash_index()`
+  - `lookup_hash_index()` / `lookup_quick_hash()`
+  - `add_to_hash_index()` / `rebuild_hash_index()`
+
+### 3.3d `app/services/imports/helpers.py`
+- 导入与维护公共工具：
+  - 路径转换：`to_project_relative`、`resolve_stored_path`
+  - 文件时间：`apply_file_times`、`set_windows_creation_time`
+  - 缩略图条目：`required_thumb_entry`、`upsert_thumb`、`has_required_thumb`
+  - 媒体基础能力：`quick_hash_from_bytes`、`mime_from_name`、`image_dimensions_from_*`
 
 ### 3.4 `app/services/parallel_processor.py`
 - 图片处理核心，提供两种 API：
@@ -131,10 +155,10 @@
 - 文件位置：`MEDIA_DIR/.hash_index.json`
 - 格式：`{"file_hash": image_id, ...}` 的 JSON 对象
 - 用途：导入时快速去重查询，避免逐条 DB 查询
-- 生命周期：
+- 生命周期（由 `app/services/imports/hash_index.py` 管理）：
   - 导入开始时加载到内存
   - 导入过程中新增/更新条目
-  - 导入结束后序列化回磁盘并释放内存
+  - 导入结束后序列化回磁盘
   - `refresh_library()` 结束时完整重建
 
 示例: 以下为从数据库抽取的一个 `ImageAsset` 记录示例，展示了字段实际存储形态：

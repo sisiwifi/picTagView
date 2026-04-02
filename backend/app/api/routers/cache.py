@@ -16,7 +16,7 @@ from app.core.config import CACHE_DIR, TEMP_DIR
 from app.db.session import get_session
 from app.models.image_asset import ImageAsset
 from app.services.cache_thumb_service import generate_cache_thumbs_progressively
-from app.services.import_service import _required_thumb_entry, _to_project_relative, _upsert_thumb
+from app.services.imports.helpers import required_thumb_entry, to_project_relative, upsert_thumb
 
 router = APIRouter()
 
@@ -131,14 +131,14 @@ async def _run_cache_task(task_id: str, assets: list) -> None:
             })
             if cache_path and not err:
                 try:
-                    rel = _to_project_relative(Path(cache_path))
-                    entry = _required_thumb_entry(rel, width=thumb_w or 0, height=thumb_h or 0)
+                    rel = to_project_relative(Path(cache_path))
+                    entry = required_thumb_entry(rel, width=thumb_w or 0, height=thumb_h or 0)
                     orig = asset_map.get(key)
                     if orig is not None:
                         with get_session() as sess:
                             db_asset = sess.get(ImageAsset, orig.id)
                             if db_asset is not None:
-                                db_asset.thumbs = _upsert_thumb(db_asset.thumbs, entry)
+                                db_asset.thumbs = upsert_thumb(db_asset.thumbs, entry)
                                 sess.add(db_asset)
                                 sess.commit()
                 except Exception:
