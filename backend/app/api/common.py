@@ -62,3 +62,44 @@ def cache_thumb_url(asset: ImageAsset) -> Optional[str]:
     if cache_file.exists():
         return f"/cache/{asset.file_hash}_cache.webp"
     return None
+
+
+def normalize_stored_path(path: str) -> str:
+    return path.replace("\\", "/").strip()
+
+
+def build_soft_delete_maps(session) -> tuple[dict[int, set[str]], dict[int, set[str]]]:
+    image_deleted: dict[int, set[str]] = {}
+    album_deleted: dict[int, set[str]] = {}
+    rows = session.exec(select(PathSoftDelete)).all()
+    for row in rows:
+        if not row.target_path:
+            continue
+        normalized = normalize_stored_path(row.target_path)
+        owner_id = row.owner_id
+        if row.entity_type == "image" and owner_id is not None:
+            image_deleted.setdefault(owner_id, set()).add(normalized)
+        elif row.entity_type == "album" and owner_id is not None:
+            album_deleted.setdefault(owner_id, set()).add(normalized)
+    return image_deleted, album_deleted
+
+
+def asset_visible(asset: ImageAsset, image_deleted: dict[int, set[str]]) -> bool:
+    if asset.id is None:
+        return True
+    deleted_paths = image_deleted.get(asset.id, set())
+    media_paths = [
+        normalize_stored_path(p)
+        for p in (asset.media_path or [])
+        if isinstance(p, str) and p
+    ]
+    if not media_paths:
+        return True
+    return any(path not in deleted_paths for path in media_paths)
+
+
+def album_visible(album: Album, album_deleted: dict[int, set[str]]) -> bool:
+    if album.id is None:
+        return True
+    deleted_paths = album_deleted.get(album.id, set())
+    return normalize_stored_path(album.path) not in deleted_paths

@@ -4,7 +4,7 @@ from typing import List, Optional
 from fastapi import APIRouter, File, Form, UploadFile
 from sqlmodel import select
 
-from app.api.common import ia_not_deleted
+from app.api.common import asset_visible, build_soft_delete_maps
 from app.api.schemas import ImportResponse
 from app.db.session import get_session
 from app.models.image_asset import ImageAsset
@@ -46,10 +46,12 @@ async def import_images(
 @router.get("/api/images/count")
 def images_count() -> dict:
     with get_session() as session:
-        count = len(session.exec(select(ImageAsset).where(ia_not_deleted())).all())
+        assets = session.exec(select(ImageAsset)).all()
+        image_deleted, _ = build_soft_delete_maps(session)
+        count = sum(1 for asset in assets if asset_visible(asset, image_deleted))
     return {"count": count}
 
 
 @router.post("/api/admin/refresh")
-def refresh() -> dict:
-    return refresh_library()
+def refresh(mode: str = "quick") -> dict:
+    return refresh_library(mode=mode)

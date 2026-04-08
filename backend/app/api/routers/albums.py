@@ -1,7 +1,14 @@
 from fastapi import APIRouter, HTTPException
 from sqlmodel import col, select
 
-from app.api.common import album_not_deleted, cache_thumb_url, ia_not_deleted, resolve_stored_path, thumb_url
+from app.api.common import (
+    album_visible,
+    asset_visible,
+    build_soft_delete_maps,
+    cache_thumb_url,
+    resolve_stored_path,
+    thumb_url,
+)
 from app.api.schemas import AlbumDetailResponse, AlbumInfo, AlbumItem, BreadcrumbItem
 from app.core.config import CACHE_DIR, TEMP_DIR
 from app.db.session import get_session
@@ -14,12 +21,11 @@ router = APIRouter()
 @router.get("/api/albums/{album_id}", response_model=AlbumDetailResponse)
 def album_detail(album_id: str) -> AlbumDetailResponse:
     with get_session() as session:
+        image_deleted, album_deleted = build_soft_delete_maps(session)
         album = session.exec(
-            select(Album)
-            .where(Album.public_id == album_id)
-            .where(album_not_deleted())
+            select(Album).where(Album.public_id == album_id)
         ).first()
-        if not album:
+        if not album or not album_visible(album, album_deleted):
             raise HTTPException(status_code=404, detail="Album not found")
 
         parent_public_id = None
@@ -37,9 +43,9 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
         sub_albums = session.exec(
             select(Album)
             .where(Album.parent_id == album.id)
-            .where(album_not_deleted())
             .order_by(col(Album.title))
         ).all()
+        sub_albums = [sa for sa in sub_albums if album_visible(sa, album_deleted)]
 
         sub_items: list[AlbumItem] = []
         for sa in sub_albums:
@@ -81,10 +87,9 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
             ))
 
         all_assets = session.exec(
-            select(ImageAsset)
-            .where(ia_not_deleted())
-            .order_by(col(ImageAsset.id))
+            select(ImageAsset).order_by(col(ImageAsset.id))
         ).all()
+        all_assets = [asset for asset in all_assets if asset_visible(asset, image_deleted)]
 
         image_items: list[AlbumItem] = []
         for asset in all_assets:

@@ -3,7 +3,14 @@ from collections import defaultdict
 from fastapi import APIRouter, HTTPException
 from sqlmodel import col, select
 
-from app.api.common import album_not_deleted, cache_thumb_url, ia_not_deleted, resolve_stored_path, thumb_url
+from app.api.common import (
+    album_visible,
+    asset_visible,
+    build_soft_delete_maps,
+    cache_thumb_url,
+    resolve_stored_path,
+    thumb_url,
+)
 from app.api.schemas import DateItem, DateItemsResponse, DateViewResponse, MonthGroup, YearGroup
 from app.core.config import CACHE_DIR, TEMP_DIR
 from app.db.session import get_session
@@ -16,12 +23,13 @@ router = APIRouter()
 @router.get("/api/dates", response_model=DateViewResponse)
 def dates_view() -> DateViewResponse:
     with get_session() as session:
-        assets = session.exec(
+        all_assets = session.exec(
             select(ImageAsset)
             .where(ImageAsset.date_group != None)  # noqa: E711
-            .where(ia_not_deleted())
             .order_by(col(ImageAsset.id))
         ).all()
+        image_deleted, album_deleted = build_soft_delete_maps(session)
+        assets = [asset for asset in all_assets if asset_visible(asset, image_deleted)]
 
         direct_map: dict[str, list[ImageAsset]] = defaultdict(list)
         for asset in assets:
@@ -33,9 +41,9 @@ def dates_view() -> DateViewResponse:
         top_albums = session.exec(
             select(Album)
             .where(Album.parent_id == None)  # noqa: E711
-            .where(album_not_deleted())
             .where(Album.date_group != None)  # noqa: E711
         ).all()
+        top_albums = [album for album in top_albums if album_visible(album, album_deleted)]
 
         album_map: dict[str, list[Album]] = defaultdict(list)
         for album in top_albums:
@@ -108,12 +116,13 @@ def dates_view() -> DateViewResponse:
 @router.get("/api/dates/{date_group}/items", response_model=DateItemsResponse)
 def date_group_items(date_group: str) -> DateItemsResponse:
     with get_session() as session:
-        assets = session.exec(
+        all_assets = session.exec(
             select(ImageAsset)
             .where(ImageAsset.date_group == date_group)
-            .where(ia_not_deleted())
             .order_by(col(ImageAsset.id))
         ).all()
+        image_deleted, album_deleted = build_soft_delete_maps(session)
+        assets = [asset for asset in all_assets if asset_visible(asset, image_deleted)]
 
         direct_items: list[DateItem] = []
         for asset in assets:
@@ -135,9 +144,9 @@ def date_group_items(date_group: str) -> DateItemsResponse:
             select(Album)
             .where(Album.date_group == date_group)
             .where(Album.parent_id == None)  # noqa: E711
-            .where(album_not_deleted())
             .order_by(col(Album.title))
         ).all()
+        top_albums = [album for album in top_albums if album_visible(album, album_deleted)]
 
         album_items: list[DateItem] = []
         for album in top_albums:

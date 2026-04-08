@@ -86,6 +86,9 @@
 - POST /api/admin/refresh
   - 实现：app/api/routers/basic.py，调用 app/services/import_service.py
   - 用途：触发库修复与缩略图补齐
+  - 模式：支持 mode=quick|full（默认 quick）
+    - quick：路径对账 + 相册关系维护 + 缩略图/元数据补齐
+    - full：在 quick 基础上额外扫描 media 并收编未入库图片，更新哈希索引
 
 ### 3.2 日期与相册接口
 
@@ -143,4 +146,4 @@
 - thumb_url 表示 temp 预览图路径。
 - cache_thumb_url 表示按需生成的 cache 预览图路径。
 - 相册导航使用 public_id，不依赖数据库自增主键。
-- 软删除可见性由 path_soft_delete 表过滤。
+- 软删除可见性由 path_soft_delete.target_path 判定（路径级可见性）。

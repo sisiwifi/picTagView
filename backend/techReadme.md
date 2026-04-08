@@ -65,10 +65,12 @@
 ### 3.3b `app/services/imports/maintenance.py`
 - 维护/修复工作流：
 - `refresh_library()`：
-  - 清理 DB 中 orphan 记录（媒体文件丢失则删记录与关联缩略图元数据）
+  - 支持 `mode=quick|full`（默认 `quick`）
+  - 三阶段执行：
+    1) 路径对账与关系修复：清理失效 `media_path`、重建 `ImageAsset.album`、维护 `Album` 表并处理非相册唯一实例冲突
+    2) 缩略图与元数据修复：补齐代表图所需 400×400 temp 缩略图及缺失元数据
+    3) `full` 模式下收编新文件：扫描 `MEDIA_DIR` 中未入库图片，按导入规则做 hash 去重并写回索引
   - 清理 orphan cache（无对应媒体记录的 `*_cache.webp`）
-  - 仅检查并补齐每个 `date_group` 代表图所需的 400×400 temp 缩略图
-  - 维护 `thumbs` 字段与必要元数据占位
 - `recalculate_album_counts()`：重算 `photo_count` / `subtree_photo_count` 与封面。
 
 ### 3.3c `app/services/imports/hash_index.py`
@@ -150,6 +152,7 @@
   - `created_at` (datetime): 记录创建时间
 
 说明：当前查询层通过 `path_soft_delete` 过滤可见项，`ImageAsset` 与 `Album` 本身不再保存 `deleted_at` 字段。
+补充：可见性以 `target_path` 为准做路径级判定，不再仅以 `owner_id` 做整实体屏蔽。
 
 ### 3.5d 哈希索引缓存（`.hash_index.json`）
 - 文件位置：`MEDIA_DIR/.hash_index.json`
@@ -216,7 +219,7 @@
 2. `/api/import` 解析 `last_modified_json`，并发处理图像哈希/缩略图
 3. 记录写入数据库并保存到 `MEDIA_DIR`（按 `date_group`/子目录组织）
 4. 前端调用 `/api/dates` 和 `/api/dates/{date_group}/items` 构建图库视图
-5. 管理端 `/api/admin/refresh` 保持一致性（丢文件修复、更新 DB）
+5. 管理端 `/api/admin/refresh` 保持一致性（支持 `quick/full`）
 
 ## 5. 配置与外部依赖
 - `app/core/config.py`（含 `MEDIA_DIR`, `TEMP_DIR`, `DB_PATH`）
@@ -262,7 +265,7 @@
 4. API 说明：
    - `GET /` 健康检查
    - `POST /api/import` 多文件上传（`files` + 可选 `last_modified_json`）
-   - `POST /api/admin/refresh` 修复库状态
+  - `POST /api/admin/refresh?mode=quick|full` 修复库状态（默认 `quick`）
    - `GET /api/images/count` 计数
    - `GET /api/dates` 列出年月分组
    - `GET /api/dates/{date_group}/items` 列直图/子相册
