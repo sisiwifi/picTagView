@@ -64,6 +64,19 @@ def cache_thumb_url(asset: ImageAsset) -> Optional[str]:
     return None
 
 
+def media_url(asset: ImageAsset) -> Optional[str]:
+    for stored in (asset.media_path or []):
+        if not isinstance(stored, str) or not stored:
+            continue
+        resolved = resolve_stored_path(stored)
+        if not resolved or not resolved.exists():
+            continue
+        norm = normalize_stored_path(stored)
+        if norm.startswith("media/"):
+            return f"/{norm}"
+    return None
+
+
 def normalize_stored_path(path: str) -> str:
     return path.replace("\\", "/").strip()
 

@@ -8,6 +8,7 @@ from app.api.common import (
     asset_visible,
     build_soft_delete_maps,
     cache_thumb_url,
+    media_url,
     resolve_stored_path,
     thumb_url,
 )
@@ -130,13 +131,16 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                 continue
             if not asset.media_path:
                 continue
+            thumb = thumb_url(asset)
+            cache_thumb = cache_thumb_url(asset)
+            media_fallback = media_url(asset)
             direct_items.append(
                 DateItem(
                     type="image",
                     name=asset.full_filename or "",
-                    thumb_url=thumb_url(asset),
+                    thumb_url=thumb,
                     id=asset.id,
-                    cache_thumb_url=cache_thumb_url(asset),
+                    cache_thumb_url=cache_thumb or media_fallback,
                 )
             )
 
