@@ -17,6 +17,7 @@ def init_db() -> None:
     # Import all models so SQLModel.metadata knows every table before create_all.
     from app.models.album import Album          # noqa: F401
     from app.models.soft_delete import PathSoftDelete  # noqa: F401
+    from app.models.tag import Tag              # noqa: F401
     SQLModel.metadata.create_all(engine)
     _migrate_db()
     _db_initialized = True
@@ -121,6 +122,26 @@ def _migrate_db() -> None:
             conn.commit()
         except Exception:
             pass
+
+        # ── tag columns ───────────────────────────────────────────────────
+        for column, col_type in [
+            ("public_id",    "TEXT"),
+            ("display_name", "TEXT"),
+            ("description",  "TEXT"),
+            ("category",     "TEXT"),
+            ("usage_count",  "INTEGER"),
+            ("last_used_at", "TEXT"),
+            ("metadata",     "TEXT"),
+            ("created_by",   "TEXT"),
+            ("updated_at",   "DATETIME"),
+        ]:
+            try:
+                conn.execute(
+                    text(f"ALTER TABLE tag ADD COLUMN {column} {col_type}")
+                )
+                conn.commit()
+            except Exception:
+                pass
 
         # ── album columns ─────────────────────────────────────────────────
         for column, col_type in [

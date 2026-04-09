@@ -119,7 +119,8 @@
   - `file_created_at` (datetime | null): 文件原始创建时间（如可用）
   - `imported_at` (datetime): 导入时间
   - `width` / `height` / `file_size` / `mime_type`: 媒体元信息
-  - `category` (str) / `tags` (JSON array): 可选的分类与标签
+  - `category` (str): 可选分类
+  - `tags` (JSON array of int): 关联的 Tag ID 整数列表，如 `[23, 45, 91]`；前端查询标签详情时通过 `/api/tags?ids=23,45,91` 批量获取
   - `album` (JSON array of arrays): 所属相册路径，每个内层数组是从根相册到叶相册的 `public_id` 完整路径，如 `[["album_1", "album_3"], ["album_5"]]`
   - `collection` (JSON array): 所属收藏集信息，数据结构待定，默认空数组
   - `created_at` (datetime): 记录创建时间
@@ -201,18 +202,65 @@
 "file_size": 3421123,
 "mime_type": "image/jpeg",
 "category": "",
-"tags": [],
+"tags": [23, 45, 91],
 "album": [["album_1", "album_3"]],
 "collection": []
 }
 ```
 
 说明：`thumbs` 字段通常以 JSON 存储在 SQLite 中（`SQLModel` 使用 `JSON` 列），`thumb_path` 与 `thumbs[*].path` 可为相对路径或工程内路径，外部访问时会由路由解析为 `/thumbnails/...`。
+`tags` 字段存储整数 ID 列表，而非文字字符串；前端需显示标签名称时通过批量查询接口 `/api/tags?ids=...` 获取对应 `Tag` 记录。
+
+### 3.5e `app/models/tag.py`
+- 数据模型 `Tag`（标签库）：
+  - `id` (int): 主键自增
+  - `public_id` (str): 对外稳定标识符，格式 `tag_{id}`，唯一索引；写入 DB 后由系统自动回填
+  - `name` (str): 规范化名称，全小写英文，数据库唯一约束，最大 256 字节
+  - `display_name` (str): 前端展示名称，默认与 name 相同
+  - `description` (str | null): 描述，最大 1024 字节
+  - `category` (str | null): 分类，与其他实体保持一致
+  - `usage_count` (int): 缓存字段，表示当前有多少张图片关联了该 Tag，由写入侧维护
+  - `last_used_at` (str | null): Tag 最后被关联或访问的时间，格式 `YYYYMMDDHHMMSS`
+  - `metadata_` (JSON dict): 存储为数据库列 `metadata`，可扩展扩展字段，结构如下：
+    - `schema_version` (int): Tag 元信息版本号，当前为 1
+    - `color` (str): 展示颜色，十六进制如 `#FF9900`
+    - `created_via` (str): 创建来源，合法值见下表
+    - `ui_hint` (dict): 前端 UI 展示提示，如 `{"badge": "city", "promote": true}`
+    - `notes` (str): 备注，默认留空
+  - `created_at` (datetime): 记录创建时间（UTC）
+  - `created_by` (str): 创建者，主控生成为 `admin`，导入为 `import`
+  - `updated_at` (datetime): 最后更新时间（UTC）
+
+**`created_via` 合法值说明：**
+
+| 值 | 含义 |
+|---|---|
+| `manual` | 人工创建 |
+| `auto:filename` | 从文件名自动提取 |
+| `import` | 从外部数据导入 |
+| `merge` | 由合并操作产生 |
+| `split` | 由拆分操作产生 |
+| `sync` | 外部同步生成 |
+| `migration` | 由旧数据迁移生成 |
 
 ### 3.6 `app/db/session.py`
 - `engine`：`sqlite:///{DB_PATH}`
 - `init_db()`：建表 + 迁移字段（`media_path/date_group`）
 - `get_session()`：返回 `Session(engine)`
+
+## 3.7 业务数据库汇总
+
+本项目所有持久化数据均存储在同一个 SQLite 文件（路径由 `app/core/config.py` 中的 `DB_PATH` 配置，默认 `backend/db.sqlite`）。
+
+| 表名 | 对应模型 | 主要作用 |
+|---|---|---|
+| `imageasset` | `ImageAsset` (`app/models/image_asset.py`) | 图片媒体资产主表；存储哈希、路径、尺寸、日期分组、缩略图条目、关联 Tag ID 数组等全量元数据 |
+| `album` | `Album` (`app/models/album.py`) | 树形相册结构；存储相册名称、层级路径、封面、照片计数、日期分组 |
+| `pathsoftdelete` | `PathSoftDelete` (`app/models/soft_delete.py`) | 软删除日志表（路径级）；以 `target_path` 为准控制图片或相册的可见性，实体本身不删除 |
+| `tag` | `Tag` (`app/models/tag.py`) | 标签库；存储标准化名称、展示名称、分类、使用次数、来源、元信息等，`ImageAsset.tags` 存储该表的 `id` 外键 |
+
+附加文件：
+- `MEDIA_DIR/.hash_index.json`：哈希索引缓存（非 SQLite），用于导入时 O(1) 去重，详见 §3.3d。
 
 ## 4. 核心业务流程
 1. 用户前端上传图像文件列表

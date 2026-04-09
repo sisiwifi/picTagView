@@ -64,6 +64,14 @@
   - DELETE /api/cache
   - POST /api/thumbnails/cache
   - GET /api/thumbnails/cache/status/{task_id}
+- app/api/routers/tags.py
+  - GET /api/tags
+  - GET /api/tags/{tag_id}
+  - POST /api/tags
+  - PATCH /api/tags/{tag_id}
+  - DELETE /api/tags/{tag_id}
+  - GET /api/tags/export/json
+  - POST /api/tags/import/json
 
 ## 3. API 说明
 
@@ -141,7 +149,57 @@
   - 实现：app/api/routers/cache.py
   - 用途：轮询任务状态与新增缓存缩略图 URL
 
-## 4. 约定
+### 3.5 标签接口
+
+- GET /api/tags
+  - 实现：app/api/routers/tags.py
+  - 参数：ids（逗号分隔 ID 列表，批量查）、category（过滤）、q（名称模糊搜索）、limit/offset（分页）
+  - 用途：列出/搜索/批量查询 Tag；前端展示图片标签时通过 ids 参数批量拉取
+
+- GET /api/tags/{tag_id}
+  - 实现：app/api/routers/tags.py
+  - 用途：获取单个 Tag 完整详情
+
+- POST /api/tags
+  - 实现：app/api/routers/tags.py
+  - Body：`{ name, display_name, description, category, created_by, metadata }`
+  - 用途：手动创建新 Tag；name 会自动规范化为小写
+
+- PATCH /api/tags/{tag_id}
+  - 实现：app/api/routers/tags.py
+  - Body：`{ display_name?, description?, category?, metadata? }`
+  - 用途：更新 Tag 属性（name 不可修改）
+
+- DELETE /api/tags/{tag_id}
+  - 实现：app/api/routers/tags.py
+  - 用途：删除 Tag（物理删除，不软删）
+
+- GET /api/tags/export/json
+  - 实现：app/api/routers/tags.py
+  - 用途：将全库 Tag 导出为 JSON 文件（前端设置页点击"导出 JSON"触发下载）
+  - 响应头包含 Content-Disposition: attachment; filename="tags_export.json"
+
+- POST /api/tags/import/json
+  - 实现：app/api/routers/tags.py
+  - Body：`{ tags: [...], on_conflict: "skip"|"overwrite" }`
+  - 用途：批量导入 Tag；on_conflict=skip（默认）跳过同名，overwrite 覆盖可更新字段
+  - 返回：`{ imported, updated, skipped, errors }`
+
+## 4. 业务数据库汇总
+
+本项目所有持久化数据存储在同一 SQLite 文件（路径由 `app/core/config.py` 的 `DB_PATH` 配置，默认 `backend/db.sqlite`）。
+
+| 表名 | 对应模型 | 主要作用 |
+|---|---|---|
+| `imageasset` | `ImageAsset` (`app/models/image_asset.py`) | 图片媒体资产主表；存储哈希、路径、尺寸、日期分组、缩略图条目、关联 Tag ID 数组等全量元数据 |
+| `album` | `Album` (`app/models/album.py`) | 树形相册结构；存储相册名称、层级路径、封面、照片计数、日期分组 |
+| `pathsoftdelete` | `PathSoftDelete` (`app/models/soft_delete.py`) | 软删除日志表（路径级）；以 target_path 为准控制图片或相册的可见性，实体本身不删除 |
+| `tag` | `Tag` (`app/models/tag.py`) | 标签库；存储标准化名称、展示名称、分类、使用次数、来源、元信息等，`ImageAsset.tags` 存储该表的 id 外键 |
+
+附加文件：
+- `MEDIA_DIR/.hash_index.json`：哈希索引缓存（非 SQLite），用于导入时 O(1) 去重，详见服务层 `hash_index.py`。
+
+## 5. 约定
 
 - thumb_url 表示 temp 预览图路径。
 - cache_thumb_url 表示按需生成的 cache 预览图路径。

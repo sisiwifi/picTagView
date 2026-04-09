@@ -7,6 +7,7 @@ from app.api.routers import (
     dates_router,
     images_router,
     system_router,
+    tags_router,
 )
 
 router = APIRouter()
@@ -16,3 +17,4 @@ router.include_router(albums_router)
 router.include_router(images_router)
 router.include_router(system_router)
 router.include_router(cache_router)
+router.include_router(tags_router)

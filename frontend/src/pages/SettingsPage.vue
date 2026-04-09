@@ -51,6 +51,59 @@
       </div>
     </div>
 
+    <!-- 标签管理 -->
+    <div class="settings-card">
+      <h3 class="card-title">标签管理</h3>
+      <p class="card-desc">
+        将数据库中所有 Tag 导出为 JSON 文件，或从 JSON 文件批量导入 Tag。
+        导入时同名 Tag 默认跳过（可在导入对话框中选择覆盖模式）。
+      </p>
+
+      <!-- 导出 -->
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">导出标签</span>
+          <span class="setting-desc">将全部 Tag 下载为 tags_export.json</span>
+        </div>
+        <button class="btn btn--primary" :disabled="tagExporting" @click="exportTags">
+          {{ tagExporting ? '导出中…' : '导出 JSON' }}
+        </button>
+      </div>
+
+      <!-- 导入 -->
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">导入标签</span>
+          <span v-if="tagImportResult" class="setting-desc">
+            已导入 {{ tagImportResult.imported }}，更新 {{ tagImportResult.updated }}，跳过 {{ tagImportResult.skipped }}
+            <span v-if="tagImportResult.errors && tagImportResult.errors.length" class="text-red-500">
+              — {{ tagImportResult.errors.length }} 条错误
+            </span>
+          </span>
+          <span v-else class="setting-desc">从 .json 文件批量导入 Tag</span>
+        </div>
+        <div class="tag-import-group">
+          <select v-model="tagImportConflict" class="tag-conflict-select">
+            <option value="skip">跳过已存在</option>
+            <option value="overwrite">覆盖已存在</option>
+          </select>
+          <button class="btn btn--secondary" :disabled="tagImporting" @click="triggerTagImport">
+            {{ tagImporting ? '导入中…' : '导入 JSON' }}
+          </button>
+          <!-- 隐藏文件输入 -->
+          <input
+            ref="tagFileInput"
+            type="file"
+            accept=".json,application/json"
+            style="display:none"
+            @change="handleTagFileSelected"
+          />
+        </div>
+      </div>
+
+      <p v-if="tagError" class="viewer-error">{{ tagError }}</p>
+    </div>
+
     <!-- 图片查看器 -->
     <div class="settings-card">
       <h3 class="card-title">图片查看器</h3>
@@ -142,6 +195,17 @@
 <script>
 const API_BASE = 'http://127.0.0.1:8000'
 
+function toErrorMessage(err) {
+  if (!err) return '未知错误'
+  if (typeof err === 'string') return err
+  if (err instanceof Error) return err.message
+  try {
+    return JSON.stringify(err)
+  } catch {
+    return String(err)
+  }
+}
+
 export default {
   name: 'SettingsPage',
 
@@ -158,6 +222,12 @@ export default {
       viewerMessage: '',
       viewerError: '',
       systemViewerName: '',
+      // 标签管理
+      tagExporting: false,
+      tagImporting: false,
+      tagImportResult: null,
+      tagImportConflict: 'skip',
+      tagError: '',
     }
   },
 
@@ -219,7 +289,7 @@ export default {
           tempDeleted: temp_deleted,
         }
       } catch (err) {
-        this.cacheResult = { deleted: 0, temp_deleted: 0, error: err.message }
+        this.cacheResult = { deleted: 0, temp_deleted: 0, error: toErrorMessage(err) }
       } finally {
         this.clearingCache = false
       }
@@ -237,7 +307,7 @@ export default {
         this.selectedViewerId = d.selected_viewer_id || ''
         this.systemViewerName = d.system_default || '未知'
       } catch (err) {
-        this.viewerError = `加载失败：${err.message}`
+        this.viewerError = `加载失败：${toErrorMessage(err)}`
       } finally {
         this.viewerLoading = false
       }
@@ -274,9 +344,80 @@ export default {
         this.viewerMessage = viewerId ? '应用内默认查看器已更新。' : '已切换为“跟随系统默认”。'
         this.viewerPickerOpen = false
       } catch (err) {
-        this.viewerError = `保存失败：${err.message}`
+        this.viewerError = `保存失败：${toErrorMessage(err)}`
       } finally {
         this.savingViewer = false
+      }
+    },
+
+    // ── 标签管理 ─────────────────────────────────────────────────────────────
+    async exportTags() {
+      this.tagExporting = true
+      this.tagError = ''
+      try {
+        const res = await fetch(`${API_BASE}/api/tags/export/json`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'tags_export.json'
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      } catch (err) {
+        this.tagError = `导出失败：${toErrorMessage(err)}`
+      } finally {
+        this.tagExporting = false
+      }
+    },
+
+    triggerTagImport() {
+      if (this.tagImporting) return
+      this.tagError = ''
+      this.tagImportResult = null
+      const input = this.$refs.tagFileInput
+      if (!input) {
+        this.tagError = '导入控件不可用，请刷新页面后重试'
+        return
+      }
+      input.value = ''
+      input.click()
+    },
+
+    async handleTagFileSelected(event) {
+      const file = event.target.files && event.target.files[0]
+      if (!file) return
+      this.tagImporting = true
+      this.tagError = ''
+      this.tagImportResult = null
+      try {
+        const text = await file.text()
+        let parsed
+        try {
+          parsed = JSON.parse(text)
+        } catch {
+          throw new Error('文件不是合法 JSON')
+        }
+        // 兼容导出格式（含 tags 数组）或直接是数组
+        const tags = Array.isArray(parsed) ? parsed : (parsed.tags || [])
+        if (!Array.isArray(tags)) throw new Error('JSON 中未找到 tags 数组')
+
+        const res = await fetch(`${API_BASE}/api/tags/import/json`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tags, on_conflict: this.tagImportConflict }),
+        })
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}))
+          throw new Error(d.detail || `HTTP ${res.status}`)
+        }
+        this.tagImportResult = await res.json()
+      } catch (err) {
+        this.tagError = `导入失败：${toErrorMessage(err)}`
+      } finally {
+        this.tagImporting = false
       }
     },
   },
@@ -387,4 +528,15 @@ export default {
 .btn:disabled { @apply opacity-50 cursor-not-allowed; }
 .btn--danger { @apply bg-red-500 text-white; }
 .btn--danger:not(:disabled):hover { @apply bg-red-600; }
+.btn--primary { @apply bg-indigo-600 text-white; }
+.btn--primary:not(:disabled):hover { @apply bg-indigo-700; }
+.btn--secondary { @apply bg-slate-100 text-slate-700 border border-slate-300; }
+.btn--secondary:not(:disabled):hover { @apply bg-slate-200; }
+
+.tag-import-group {
+  @apply flex items-center gap-2;
+}
+.tag-conflict-select {
+  @apply text-sm border border-slate-300 rounded px-2 py-1.5 bg-white text-slate-700 cursor-pointer;
+}
 </style>

@@ -25,7 +25,8 @@ class ImageAsset(SQLModel, table=True):
     file_size: Optional[int] = Field(default=None)
     mime_type: Optional[str] = Field(default=None)
     category: Optional[str] = Field(default=None)
-    tags: Optional[list[str]] = Field(default_factory=list, sa_column=Column(JSON))
+    # 存储 Tag 的 id 整数列表，如 [23, 45, 91]；查询标签详情时通过 /api/tags?ids=... 批量获取
+    tags: Optional[list[int]] = Field(default_factory=list, sa_column=Column(JSON))
     # 所属相册：[[public_id_1, public_id_2], [...]] 每个内层数组是从根到叶的完整路径
     album: Optional[list[list[str]]] = Field(default_factory=list, sa_column=Column(JSON))
     collection: Optional[list] = Field(default_factory=list, sa_column=Column(JSON))  # 所属收藏集
