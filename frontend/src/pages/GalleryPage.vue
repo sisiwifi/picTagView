@@ -25,7 +25,7 @@
         <button
           class="btn btn--secondary"
           :disabled="importing || refreshing"
-          title="扫描媒体库：删除已失效记录，补全缺失缩略图"
+          title="全量扫描媒体库：修复记录并收编新文件"
           @click="runRefresh"
         >
           <span :class="['btn__icon', { spinning: refreshing }]">🔄</span>
@@ -123,9 +123,9 @@ export default {
     async runRefresh() {
       this.refreshing    = true
       this.clearNotice()
-      this.status        = '正在刷新媒体库…'
+      this.status        = '正在全量刷新媒体库…'
       try {
-        const res = await fetch(`${API_BASE}/api/admin/refresh`, { method: 'POST' })
+        const res = await fetch(`${API_BASE}/api/admin/refresh?mode=full`, { method: 'POST' })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
         this.showNotice({
