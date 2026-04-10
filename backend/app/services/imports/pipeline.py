@@ -8,6 +8,7 @@ from sqlmodel import col, select
 from app.core.config import TEMP_DIR
 from app.db.session import get_session, init_db
 from app.models.album import Album
+from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
 from app.services.parallel_processor import (
     IMPORT_BATCH_SIZE,
@@ -328,6 +329,18 @@ async def import_files(
                             existing.thumbs = upsert_thumb(existing.thumbs, new_thumb)
 
                         session.add(existing)
+                        # Write album_image mapping for the leaf album
+                        if album_public_ids and existing.id is not None:
+                            leaf_pid = album_public_ids[-1]
+                            leaf_album = session.exec(select(Album).where(Album.public_id == leaf_pid)).first()
+                            if leaf_album and leaf_album.id is not None:
+                                exists_row = session.exec(
+                                    select(AlbumImage)
+                                    .where(AlbumImage.album_id == leaf_album.id)
+                                    .where(AlbumImage.image_id == existing.id)
+                                ).first()
+                                if not exists_row:
+                                    session.add(AlbumImage(album_id=leaf_album.id, image_id=existing.id))
                         _update_album_photo_counts(session, album_public_ids)
                         _set_album_cover_if_needed(session, album_public_ids, existing)
                         if existing.id is not None:
@@ -435,6 +448,12 @@ async def import_files(
                 if album_public_ids:
                     _update_album_photo_counts(session, album_public_ids)
                     _set_album_cover_if_needed(session, album_public_ids, asset)
+                    # Write album_image mapping for the leaf album
+                    if asset.id is not None:
+                        leaf_pid = album_public_ids[-1]
+                        leaf_album = session.exec(select(Album).where(Album.public_id == leaf_pid)).first()
+                        if leaf_album and leaf_album.id is not None:
+                            session.add(AlbumImage(album_id=leaf_album.id, image_id=asset.id))
 
                 if asset.id is not None:
                     add_to_hash_index(file_hash, asset.id, quick_hash)

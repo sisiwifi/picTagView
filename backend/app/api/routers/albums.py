@@ -14,6 +14,7 @@ from app.api.schemas import AlbumDetailResponse, AlbumInfo, AlbumItem, Breadcrum
 from app.core.config import CACHE_DIR, TEMP_DIR
 from app.db.session import get_session
 from app.models.album import Album
+from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
 
 router = APIRouter()
@@ -87,26 +88,31 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
                 public_id=sa.public_id,
             ))
 
-        all_assets = session.exec(
-            select(ImageAsset).order_by(col(ImageAsset.id))
+        # Use album_image mapping table instead of scanning all ImageAssets
+        album_assets = session.exec(
+            select(ImageAsset)
+            .where(
+                ImageAsset.id.in_(  # type: ignore[union-attr]
+                    select(AlbumImage.image_id).where(AlbumImage.album_id == album.id)
+                )
+            )
+            .order_by(col(ImageAsset.id))
         ).all()
-        all_assets = [asset for asset in all_assets if asset_visible(asset, image_deleted)]
 
         image_items: list[AlbumItem] = []
-        for asset in all_assets:
-            for path in (asset.album or []):
-                if isinstance(path, list) and path and path[-1] == album_id:
-                    thumb = thumb_url(asset)
-                    cache_thumb = cache_thumb_url(asset)
-                    media_fallback = media_url(asset)
-                    image_items.append(AlbumItem(
-                        type="image",
-                        name=asset.full_filename or "",
-                        thumb_url=thumb,
-                        id=asset.id,
-                        cache_thumb_url=cache_thumb or media_fallback,
-                    ))
-                    break
+        for asset in album_assets:
+            if not asset_visible(asset, image_deleted):
+                continue
+            thumb = thumb_url(asset)
+            cache_thumb = cache_thumb_url(asset)
+            media_fallback = media_url(asset)
+            image_items.append(AlbumItem(
+                type="image",
+                name=asset.full_filename or "",
+                thumb_url=thumb,
+                id=asset.id,
+                cache_thumb_url=cache_thumb or media_fallback,
+            ))
 
     return AlbumDetailResponse(
         album=AlbumInfo(

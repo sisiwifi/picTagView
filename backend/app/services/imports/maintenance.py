@@ -8,6 +8,7 @@ from sqlmodel import col, select
 from app.core.config import CACHE_DIR, MEDIA_DIR, TEMP_DIR
 from app.db.session import get_session, init_db
 from app.models.album import Album
+from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
 from app.models.soft_delete import PathSoftDelete
 from app.services.file_scanner import list_image_files
@@ -143,10 +144,18 @@ def recalculate_album_counts() -> None:
     with get_session() as session:
         albums = session.exec(select(Album).order_by(col(Album.id))).all()
         album_map = {album.public_id: album for album in albums}
+        album_id_by_pid: dict[str, int] = {
+            album.public_id: album.id for album in albums if album.id is not None
+        }
 
         for album in albums:
             album.photo_count = 0
             album.subtree_photo_count = 0
+
+        # Clear existing album_image rows and rebuild
+        session.exec(select(AlbumImage)).all()  # load
+        from sqlalchemy import text as _text
+        session.exec(_text("DELETE FROM album_image"))  # type: ignore[arg-type]
 
         cover_candidates: dict[str, ImageAsset] = {}
 
@@ -169,6 +178,10 @@ def recalculate_album_counts() -> None:
                 leaf_pid = path[-1]
                 if leaf_pid in album_map:
                     album_map[leaf_pid].photo_count += 1
+                # Write album_image row for the leaf album
+                leaf_album_id = album_id_by_pid.get(leaf_pid)
+                if leaf_album_id is not None and asset.id is not None:
+                    session.add(AlbumImage(album_id=leaf_album_id, image_id=asset.id))
 
         for public_id, candidate in cover_candidates.items():
             if public_id not in album_map:
@@ -367,6 +380,18 @@ def _ingest_new_media_files_full(active_album_paths: set[str]) -> tuple[int, int
                     existing.album = existing_album
                     for album_path in album_paths:
                         active_album_paths.add(album_path)
+                    # Write album_image mapping for the leaf album
+                    if public_ids and existing.id is not None:
+                        leaf_pid = public_ids[-1]
+                        leaf_album = session.exec(select(Album).where(Album.public_id == leaf_pid)).first()
+                        if leaf_album and leaf_album.id is not None:
+                            exists_row = session.exec(
+                                select(AlbumImage)
+                                .where(AlbumImage.album_id == leaf_album.id)
+                                .where(AlbumImage.image_id == existing.id)
+                            ).first()
+                            if not exists_row:
+                                session.add(AlbumImage(album_id=leaf_album.id, image_id=existing.id))
 
                 if thumb_path_str:
                     rel_thumb = to_project_relative(Path(thumb_path_str))
@@ -428,6 +453,13 @@ def _ingest_new_media_files_full(active_album_paths: set[str]) -> tuple[int, int
                 collection=[],
             )
             session.add(asset)
+            session.flush()
+            # Write album_image mapping for the leaf album
+            if album_public_ids and asset.id is not None:
+                leaf_pid = album_public_ids[-1]
+                leaf_album = session.exec(select(Album).where(Album.public_id == leaf_pid)).first()
+                if leaf_album and leaf_album.id is not None:
+                    session.add(AlbumImage(album_id=leaf_album.id, image_id=asset.id))
             new_ingested += 1
 
         session.commit()

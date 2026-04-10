@@ -16,6 +16,7 @@ def init_db() -> None:
         return
     # Import all models so SQLModel.metadata knows every table before create_all.
     from app.models.album import Album          # noqa: F401
+    from app.models.album_image import AlbumImage  # noqa: F401
     from app.models.soft_delete import PathSoftDelete  # noqa: F401
     from app.models.tag import Tag              # noqa: F401
     SQLModel.metadata.create_all(engine)
@@ -142,6 +143,24 @@ def _migrate_db() -> None:
                 conn.commit()
             except Exception:
                 pass
+
+        # ── album_image table indexes & constraints ──────────────────────
+        try:
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_album_image_album_image "
+                "ON album_image(album_id, image_id)"
+            ))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_album_image_image_id "
+                "ON album_image(image_id)"
+            ))
+            conn.commit()
+        except Exception:
+            pass
 
         # ── album columns ─────────────────────────────────────────────────
         for column, col_type in [

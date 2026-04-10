@@ -71,7 +71,7 @@
     2) 缩略图与元数据修复：补齐代表图所需 400×400 temp 缩略图及缺失元数据
     3) `full` 模式下收编新文件：扫描 `MEDIA_DIR` 中未入库图片，按导入规则做 hash 去重并写回索引
   - 清理 orphan cache（无对应媒体记录的 `*_cache.webp`）
-- `recalculate_album_counts()`：重算 `photo_count` / `subtree_photo_count` 与封面。
+- `recalculate_album_counts()`：重算 `photo_count` / `subtree_photo_count` 与封面；同时清空并完整重建 `album_image` 关联表。
 
 ### 3.3c `app/services/imports/hash_index.py`
 - 哈希索引缓存子模块：
@@ -121,7 +121,7 @@
   - `width` / `height` / `file_size` / `mime_type`: 媒体元信息
   - `category` (str): 可选分类
   - `tags` (JSON array of int): 关联的 Tag ID 整数列表，如 `[23, 45, 91]`；前端查询标签详情时通过 `/api/tags?ids=23,45,91` 批量获取
-  - `album` (JSON array of arrays): 所属相册路径，每个内层数组是从根相册到叶相册的 `public_id` 完整路径，如 `[["album_1", "album_3"], ["album_5"]]`
+  - `album` (JSON array of arrays): 所属相册路径，每个内层数组是从根相册到叶相册的 `public_id` 完整路径，如 `[["album_1", "album_3"], ["album_5"]]`（保留用于兼容；实际查询已通过 `album_image` 关联表完成）
   - `collection` (JSON array): 所属收藏集信息，数据结构待定，默认空数组
   - `created_at` (datetime): 记录创建时间
 
@@ -211,7 +211,22 @@
 说明：`thumbs` 字段通常以 JSON 存储在 SQLite 中（`SQLModel` 使用 `JSON` 列），`thumb_path` 与 `thumbs[*].path` 可为相对路径或工程内路径，外部访问时会由路由解析为 `/thumbnails/...`。
 `tags` 字段存储整数 ID 列表，而非文字字符串；前端需显示标签名称时通过批量查询接口 `/api/tags?ids=...` 获取对应 `Tag` 记录。
 
-### 3.5e `app/models/tag.py`
+### 3.5e `app/models/album_image.py`
+- 数据模型 `AlbumImage`（相册-图片显式关联表）：
+  - `id` (int): 主键自增
+  - `album_id` (int): 关联 `Album.id`，建有索引 `ix_album_image_album_id`
+  - `image_id` (int): 关联 `ImageAsset.id`，建有索引 `ix_album_image_image_id`
+  - `sort_order` (int): 排序权重，默认 0
+  - `created_at` (datetime): 记录创建时间
+- 唯一约束：`(album_id, image_id)` 联合唯一，防止重复关联
+- 用途：替代以往遍历全量 `ImageAsset.album` JSON 的方式，通过索引 JOIN 快速定位相册内图片，显著降低相册视图与日期视图的 I/O 与 CPU 开销。
+- 数据维护：
+  - 导入流程 (`pipeline.py`) 在写入 `ImageAsset.album` 的同时双写 `album_image` 行
+  - `recalculate_album_counts()` 会先清空再完整重建 `album_image` 数据
+  - `refresh_library(mode=full)` 收编新文件时同步写入
+  - 首次部署可通过 `scripts/backfill_album_image.py` 从现有数据回填
+
+### 3.5f `app/models/tag.py`
 - 数据模型 `Tag`（标签库）：
   - `id` (int): 主键自增
   - `public_id` (str): 对外稳定标识符，格式 `tag_{id}`，唯一索引；写入 DB 后由系统自动回填
@@ -257,6 +272,7 @@
 | `imageasset` | `ImageAsset` (`app/models/image_asset.py`) | 图片媒体资产主表；存储哈希、路径、尺寸、日期分组、缩略图条目、关联 Tag ID 数组等全量元数据 |
 | `album` | `Album` (`app/models/album.py`) | 树形相册结构；存储相册名称、层级路径、封面、照片计数、日期分组 |
 | `pathsoftdelete` | `PathSoftDelete` (`app/models/soft_delete.py`) | 软删除日志表（路径级）；以 `target_path` 为准控制图片或相册的可见性，实体本身不删除 |
+| `album_image` | `AlbumImage` (`app/models/album_image.py`) | 相册-图片显式多对多关联表；通过索引 JOIN 替代全表扫描，加速相册与日期视图查询 |
 | `tag` | `Tag` (`app/models/tag.py`) | 标签库；存储标准化名称、展示名称、分类、使用次数、来源、元信息等，`ImageAsset.tags` 存储该表的 `id` 外键 |
 
 附加文件：
@@ -303,8 +319,8 @@
 
 ### 5.2 数据库设计与迁移
 - 表结构升级逻辑：`app/db/session.py` 的 `_migrate_db` 支持无痛增列，防止旧 schema 掉链
-- 唯一约束：`file_hash` 唯一，作为去重核心；`original_path` 保留原始输入路径
-- 索引：`original_path`, `file_hash`, `date_group` 用于高效查询
+- 唯一约束：`file_hash` 唯一，作为去重核心；`original_path` 保留原始输入路径；`album_image(album_id, image_id)` 联合唯一
+- 索引：`original_path`, `file_hash`, `date_group`, `album_image.album_id`, `album_image.image_id` 用于高效查询
 
 ## 6. 运行与调试
 1. 进入 `backend` 目录

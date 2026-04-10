@@ -1,6 +1,7 @@
 from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException
+from sqlalchemy import exists
 from sqlmodel import col, select
 
 from app.api.common import (
@@ -16,6 +17,7 @@ from app.api.schemas import DateItem, DateItemsResponse, DateViewResponse, Month
 from app.core.config import CACHE_DIR, TEMP_DIR
 from app.db.session import get_session
 from app.models.album import Album
+from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
 
 router = APIRouter()
@@ -32,9 +34,14 @@ def dates_view() -> DateViewResponse:
         image_deleted, album_deleted = build_soft_delete_maps(session)
         assets = [asset for asset in all_assets if asset_visible(asset, image_deleted)]
 
+        # Build set of image IDs that belong to any album via album_image table
+        album_image_ids: set[int] = set(
+            session.exec(select(AlbumImage.image_id)).all()
+        )
+
         direct_map: dict[str, list[ImageAsset]] = defaultdict(list)
         for asset in assets:
-            if asset.album:
+            if asset.id is not None and asset.id in album_image_ids:
                 continue
             if asset.date_group:
                 direct_map[asset.date_group].append(asset)
@@ -125,9 +132,19 @@ def date_group_items(date_group: str) -> DateItemsResponse:
         image_deleted, album_deleted = build_soft_delete_maps(session)
         assets = [asset for asset in all_assets if asset_visible(asset, image_deleted)]
 
+        # Build set of image IDs that belong to any album via album_image table
+        album_image_ids: set[int] = set(
+            session.exec(
+                select(AlbumImage.image_id)
+                .where(AlbumImage.image_id.in_(  # type: ignore[union-attr]
+                    select(ImageAsset.id).where(ImageAsset.date_group == date_group)
+                ))
+            ).all()
+        )
+
         direct_items: list[DateItem] = []
         for asset in assets:
-            if asset.album:
+            if asset.id is not None and asset.id in album_image_ids:
                 continue
             if not asset.media_path:
                 continue
