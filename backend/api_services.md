@@ -33,6 +33,11 @@
   - process_hash_only_from_bytes(entries)
 - app/services/cache_thumb_service.py
   - generate_cache_thumbs_progressively(entries, cache_dir, on_complete)
+- app/services/app_settings_service.py
+  - load_app_settings()/save_app_settings()
+  - get_cache_thumb_short_side_px()/set_cache_thumb_short_side_px()
+  - get_month_cover_size_px()/set_month_cover_size_px()
+  - 说明：统一持久化 app_settings.json（包含看图器偏好与缓存缩略图短边设置）
 - app/services/viewer_service.py
   - collect_image_viewers(extensions)
   - get_preferred_viewer_id() / set_preferred_viewer_id()
@@ -56,6 +61,10 @@
 - app/api/routers/images.py
   - GET /api/images/{image_id}/open
 - app/api/routers/system.py
+  - GET /api/system/cache-thumb-setting
+  - POST /api/system/cache-thumb-setting
+  - GET /api/system/month-cover-setting
+  - POST /api/system/month-cover-setting
   - GET /api/system/viewer-info
   - GET /api/system/image-viewers
   - GET /api/system/viewer-preference
@@ -122,6 +131,28 @@
   - 实现：app/api/routers/system.py
   - 用途：返回系统默认看图软件与应用内偏好
 
+- GET /api/system/cache-thumb-setting
+  - 实现：app/api/routers/system.py
+  - 用途：读取缓存缩略图短边配置（单位 px）
+  - 返回：`{ short_side_px, default_short_side_px, min_short_side_px, max_short_side_px }`
+
+- POST /api/system/cache-thumb-setting
+  - 实现：app/api/routers/system.py
+  - Body：`{ short_side_px: int }`
+  - 用途：更新缓存缩略图短边配置（仅影响后续生成到 `data/cache/` 的缩略图）
+  - 说明：前端设置页保存后会调用 `DELETE /api/cache` 清空缓存，随后按新尺寸重建
+
+- GET /api/system/month-cover-setting
+  - 实现：app/api/routers/system.py
+  - 用途：读取月份封面尺寸配置（单位 px）
+  - 返回：`{ size_px, default_size_px, min_size_px, max_size_px }`
+
+- POST /api/system/month-cover-setting
+  - 实现：app/api/routers/system.py
+  - Body：`{ size_px: int }`
+  - 用途：更新月份封面尺寸（影响 `temp/` 内月份封面与后续导入生成规则）
+  - 说明：前端设置页保存后会调用 `DELETE /api/cache` 清空缓存，随后按新尺寸重建
+
 - GET /api/system/image-viewers
   - 实现：app/api/routers/system.py
   - 用途：扫描可用看图程序（Windows）
@@ -143,6 +174,7 @@
 - POST /api/thumbnails/cache
   - 实现：app/api/routers/cache.py，生成逻辑调用 app/services/cache_thumb_service.py
   - 用途：异步启动缓存缩略图生成任务
+  - 说明：短边尺寸来自 `app_settings.json` 的 `cache_thumb_short_side_px`（默认 600）
   - 返回：{"task_id": "<uuid>"}
 
 - GET /api/thumbnails/cache/status/{task_id}

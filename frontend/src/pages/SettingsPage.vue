@@ -1,5 +1,13 @@
 <template>
   <section class="page">
+    <div
+      v-if="floatingMessage.visible"
+      class="floating-message"
+      :class="floatingMessage.type === 'error' ? 'floating-message--error' : 'floating-message--success'"
+    >
+      {{ floatingMessage.text }}
+    </div>
+
     <header class="page-header">
       <h2 class="page-title">设置</h2>
       <p class="page-subtitle">个性化与系统管理</p>
@@ -28,10 +36,68 @@
     <div class="settings-card">
       <h3 class="card-title">缓存管理</h3>
       <p class="card-desc">
-        清除 <code>data/cache/</code>（相册预览缩略图，短边 600px WebP）与
-        <code>temp/</code>（月份封面缩略图，400×400 WebP）内的所有已生成文件。
+        清除 <code>data/cache/</code>（相册预览缩略图，短边 {{ thumbShortSide }}px WebP）与
+        <code>temp/</code>（月份封面缩略图，{{ monthCoverSize }}×{{ monthCoverSize }} WebP）内的所有已生成文件。
         清除后下次浏览时将自动重新生成。
       </p>
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">缩略图短边尺寸</span>
+          <span class="setting-desc">默认 600px，仅影响后续生成到 data/cache/ 的缩略图</span>
+        </div>
+        <div class="thumb-size-group">
+          <div class="input-check-wrap">
+            <input
+              v-model="thumbShortSideDraft"
+              class="thumb-size-input"
+              type="number"
+              inputmode="numeric"
+              :min="thumbShortSideMin"
+              :max="thumbShortSideMax"
+              :disabled="thumbSettingLoading || thumbSettingSaving"
+              @keydown.enter.prevent="confirmCacheThumbSetting"
+            >
+            <button
+              v-if="thumbShortSideCanConfirm"
+              class="btn-check"
+              :disabled="thumbSettingSaving || clearingCache"
+              @click="confirmCacheThumbSetting"
+            >
+              ✓
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">月份封面尺寸</span>
+          <span class="setting-desc">默认 400px，影响 temp/ 内月份封面与后续导入时生成规则</span>
+        </div>
+        <div class="thumb-size-group">
+          <div class="input-check-wrap">
+            <input
+              v-model="monthCoverSizeDraft"
+              class="thumb-size-input"
+              type="number"
+              inputmode="numeric"
+              :min="monthCoverSizeMin"
+              :max="monthCoverSizeMax"
+              :disabled="monthCoverSettingLoading || monthCoverSettingSaving"
+              @keydown.enter.prevent="confirmMonthCoverSetting"
+            >
+            <button
+              v-if="monthCoverSizeCanConfirm"
+              class="btn-check"
+              :disabled="monthCoverSettingSaving || clearingCache"
+              @click="confirmMonthCoverSetting"
+            >
+              ✓
+            </button>
+          </div>
+        </div>
+      </div>
+      <p v-if="thumbSettingError" class="viewer-error">{{ thumbSettingError }}</p>
+      <p v-if="monthCoverSettingError" class="viewer-error">{{ monthCoverSettingError }}</p>
       <div class="setting-row">
         <div class="setting-info">
           <span class="setting-label">清除缓存</span>
@@ -214,6 +280,26 @@ export default {
       isDark: false,
       clearingCache: false,
       cacheResult: null,
+      thumbSettingLoading: false,
+      thumbSettingSaving: false,
+      thumbShortSide: 600,
+      thumbShortSideDraft: '600',
+      thumbShortSideMin: 100,
+      thumbShortSideMax: 4000,
+      thumbSettingError: '',
+      monthCoverSettingLoading: false,
+      monthCoverSettingSaving: false,
+      monthCoverSize: 400,
+      monthCoverSizeDraft: '400',
+      monthCoverSizeMin: 100,
+      monthCoverSizeMax: 2000,
+      monthCoverSettingError: '',
+      floatingMessage: {
+        visible: false,
+        type: 'success',
+        text: '',
+      },
+      floatingMessageTimer: null,
       viewerOptions: [],
       selectedViewerId: '',
       viewerLoading: false,
@@ -236,11 +322,44 @@ export default {
       if (!this.selectedViewerId) return null
       return this.viewerOptions.find(v => v.id === this.selectedViewerId) || null
     },
+
+    parsedThumbShortSide() {
+      const value = Number.parseInt(String(this.thumbShortSideDraft), 10)
+      return Number.isFinite(value) ? value : null
+    },
+
+    thumbShortSideCanConfirm() {
+      if (this.parsedThumbShortSide === null) return false
+      if (this.parsedThumbShortSide < this.thumbShortSideMin) return false
+      if (this.parsedThumbShortSide > this.thumbShortSideMax) return false
+      return this.parsedThumbShortSide !== this.thumbShortSide
+    },
+
+    parsedMonthCoverSize() {
+      const value = Number.parseInt(String(this.monthCoverSizeDraft), 10)
+      return Number.isFinite(value) ? value : null
+    },
+
+    monthCoverSizeCanConfirm() {
+      if (this.parsedMonthCoverSize === null) return false
+      if (this.parsedMonthCoverSize < this.monthCoverSizeMin) return false
+      if (this.parsedMonthCoverSize > this.monthCoverSizeMax) return false
+      return this.parsedMonthCoverSize !== this.monthCoverSize
+    },
   },
 
   created() {
     this.isDark = document.documentElement.classList.contains('dark')
+    this.fetchCacheThumbSetting()
+    this.fetchMonthCoverSetting()
     this.fetchViewerOptions()
+  },
+
+  beforeUnmount() {
+    if (this.floatingMessageTimer) {
+      clearTimeout(this.floatingMessageTimer)
+      this.floatingMessageTimer = null
+    }
   },
 
   methods: {
@@ -293,6 +412,137 @@ export default {
       } finally {
         this.clearingCache = false
       }
+    },
+
+    async fetchCacheThumbSetting() {
+      this.thumbSettingLoading = true
+      this.thumbSettingError = ''
+      try {
+        const res = await fetch(`${API_BASE}/api/system/cache-thumb-setting`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        const shortSide = Number.parseInt(String(data.short_side_px ?? 600), 10)
+        this.thumbShortSide = Number.isFinite(shortSide) ? shortSide : 600
+        this.thumbShortSideDraft = String(this.thumbShortSide)
+        if (Number.isFinite(Number(data.min_short_side_px))) {
+          this.thumbShortSideMin = Number(data.min_short_side_px)
+        }
+        if (Number.isFinite(Number(data.max_short_side_px))) {
+          this.thumbShortSideMax = Number(data.max_short_side_px)
+        }
+      } catch (err) {
+        this.thumbSettingError = `加载缓存缩略图尺寸失败：${toErrorMessage(err)}`
+      } finally {
+        this.thumbSettingLoading = false
+      }
+    },
+
+    async confirmCacheThumbSetting() {
+      if (!this.thumbShortSideCanConfirm) return
+
+      this.thumbSettingSaving = true
+      this.thumbSettingError = ''
+      try {
+        const res = await fetch(`${API_BASE}/api/system/cache-thumb-setting`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ short_side_px: this.parsedThumbShortSide }),
+        })
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.detail || `HTTP ${res.status}`)
+        }
+
+        const data = await res.json()
+        const value = Number.parseInt(String(data.short_side_px), 10)
+        if (Number.isFinite(value)) {
+          this.thumbShortSide = value
+          this.thumbShortSideDraft = String(value)
+        }
+
+        await this.clearCache()
+        this.showFloatingMessage('success', `缩略图短边尺寸已更新为 ${this.thumbShortSide}px，并已触发缓存清理。`)
+      } catch (err) {
+        this.thumbSettingError = `保存失败：${toErrorMessage(err)}`
+        this.showFloatingMessage('error', this.thumbSettingError)
+      } finally {
+        this.thumbSettingSaving = false
+      }
+    },
+
+    async fetchMonthCoverSetting() {
+      this.monthCoverSettingLoading = true
+      this.monthCoverSettingError = ''
+      try {
+        const res = await fetch(`${API_BASE}/api/system/month-cover-setting`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        const sizePx = Number.parseInt(String(data.size_px ?? 400), 10)
+        this.monthCoverSize = Number.isFinite(sizePx) ? sizePx : 400
+        this.monthCoverSizeDraft = String(this.monthCoverSize)
+        if (Number.isFinite(Number(data.min_size_px))) {
+          this.monthCoverSizeMin = Number(data.min_size_px)
+        }
+        if (Number.isFinite(Number(data.max_size_px))) {
+          this.monthCoverSizeMax = Number(data.max_size_px)
+        }
+      } catch (err) {
+        this.monthCoverSettingError = `加载月份封面尺寸失败：${toErrorMessage(err)}`
+      } finally {
+        this.monthCoverSettingLoading = false
+      }
+    },
+
+    async confirmMonthCoverSetting() {
+      if (!this.monthCoverSizeCanConfirm) return
+
+      this.monthCoverSettingSaving = true
+      this.monthCoverSettingError = ''
+      try {
+        const res = await fetch(`${API_BASE}/api/system/month-cover-setting`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ size_px: this.parsedMonthCoverSize }),
+        })
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.detail || `HTTP ${res.status}`)
+        }
+
+        const data = await res.json()
+        const value = Number.parseInt(String(data.size_px), 10)
+        if (Number.isFinite(value)) {
+          this.monthCoverSize = value
+          this.monthCoverSizeDraft = String(value)
+        }
+
+        await this.clearCache()
+        this.showFloatingMessage('success', `月份封面尺寸已更新为 ${this.monthCoverSize}px，并已触发缓存清理。`)
+      } catch (err) {
+        this.monthCoverSettingError = `保存失败：${toErrorMessage(err)}`
+        this.showFloatingMessage('error', this.monthCoverSettingError)
+      } finally {
+        this.monthCoverSettingSaving = false
+      }
+    },
+
+    showFloatingMessage(type, text) {
+      if (this.floatingMessageTimer) {
+        clearTimeout(this.floatingMessageTimer)
+        this.floatingMessageTimer = null
+      }
+
+      this.floatingMessage = {
+        visible: true,
+        type,
+        text,
+      }
+
+      this.floatingMessageTimer = setTimeout(() => {
+        this.floatingMessage.visible = false
+      }, 2600)
     },
 
     async fetchViewerOptions() {
@@ -427,6 +677,18 @@ export default {
 <style scoped lang="css">
 .page { @apply flex flex-col gap-6; }
 
+.floating-message {
+  @apply fixed top-5 right-5 z-50 text-sm px-3 py-2 rounded-lg shadow-lg border;
+}
+
+.floating-message--success {
+  @apply bg-emerald-50 text-emerald-700 border-emerald-300;
+}
+
+.floating-message--error {
+  @apply bg-red-50 text-red-700 border-red-300;
+}
+
 .page-header { @apply flex flex-col gap-1; }
 .page-title { @apply text-2xl font-semibold text-slate-900 m-0; }
 .page-subtitle { @apply text-sm text-slate-500 m-0; }
@@ -538,5 +800,39 @@ export default {
 }
 .tag-conflict-select {
   @apply text-sm border border-slate-300 rounded px-2 py-1.5 bg-white text-slate-700 cursor-pointer;
+}
+
+.thumb-size-group {
+  @apply flex items-center gap-2;
+}
+
+.input-check-wrap {
+  @apply relative;
+}
+
+.thumb-size-input {
+  @apply w-28 text-sm border border-slate-300 rounded px-2 py-1.5 pr-7 bg-white text-slate-700;
+}
+
+.thumb-size-input::-webkit-outer-spin-button,
+.thumb-size-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.thumb-size-input[type='number'] {
+  -moz-appearance: textfield;
+}
+
+.btn-check {
+  @apply absolute right-1 top-1/2 -translate-y-1/2 inline-flex items-center justify-center w-5 h-5 text-[11px] rounded border border-emerald-300 bg-emerald-50 text-emerald-700 transition-colors duration-150;
+}
+
+.btn-check:hover:not(:disabled) {
+  @apply bg-emerald-100 border-emerald-400;
+}
+
+.btn-check:disabled {
+  @apply opacity-50 cursor-not-allowed;
 }
 </style>

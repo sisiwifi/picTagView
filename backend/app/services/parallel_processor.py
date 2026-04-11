@@ -4,14 +4,14 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.services.app_settings_service import get_month_cover_size_px
+
 _xxhash: Optional[Any] = None
 try:
     import xxhash as _xxhash
 except ImportError:
     pass
 
-_THUMB_W = 400
-_THUMB_H = 400
 _THUMB_Q = 85
 
 DEFAULT_WORKERS: int = min(os.cpu_count() or 1, 8)
@@ -28,14 +28,14 @@ def _quick_hash(content: bytes) -> str:
 # ── Top-level worker functions (must be picklable for ProcessPoolExecutor) ──────
 
 def _process_from_path(
-    args: Tuple[str, str, str],
+    args: Tuple[str, str, str, int],
 ) -> Tuple[str, Optional[str], Optional[str], Optional[str], Optional[str], Optional[int], Optional[int]]:
     """
     Worker (ProcessPoolExecutor): read image from disk → SHA-256 hash → thumbnail.
-    args = (key, file_path_str, temp_dir_str)
+    args = (key, file_path_str, temp_dir_str, thumb_size_px)
     returns (key, file_hash, thumb_path_str, error_str, quick_hash, width, height)
     """
-    key, file_path_str, temp_dir_str = args
+    key, file_path_str, temp_dir_str, thumb_size_px = args
     import cv2
     import numpy as np
 
@@ -61,7 +61,7 @@ def _process_from_path(
 
             cv2.imwrite(
                 str(thumb_path),
-                cv2.resize(img, (_THUMB_W, _THUMB_H), interpolation=cv2.INTER_AREA),
+                cv2.resize(img, (thumb_size_px, thumb_size_px), interpolation=cv2.INTER_AREA),
                 [int(cv2.IMWRITE_WEBP_QUALITY), _THUMB_Q],
             )
         else:
@@ -77,15 +77,15 @@ def _process_from_path(
 
 
 def _process_from_bytes(
-    args: Tuple[str, bytes, str],
+    args: Tuple[str, bytes, str, int],
 ) -> Tuple[str, Optional[str], Optional[str], Optional[str], Optional[str], Optional[int], Optional[int]]:
     """
     Worker (ThreadPoolExecutor): SHA-256 hash + thumbnail from in-memory bytes.
     Also returns quick_hash and image dimensions to avoid redundant decode.
-    args = (key, content, temp_dir_str)
+    args = (key, content, temp_dir_str, thumb_size_px)
     returns (key, file_hash, thumb_path_str, error_str, quick_hash, width, height)
     """
-    key, content, temp_dir_str = args
+    key, content, temp_dir_str, thumb_size_px = args
     import cv2
     import numpy as np
 
@@ -110,7 +110,7 @@ def _process_from_bytes(
 
             cv2.imwrite(
                 str(thumb_path),
-                cv2.resize(img, (_THUMB_W, _THUMB_H), interpolation=cv2.INTER_AREA),
+                cv2.resize(img, (thumb_size_px, thumb_size_px), interpolation=cv2.INTER_AREA),
                 [int(cv2.IMWRITE_WEBP_QUALITY), _THUMB_Q],
             )
         else:
@@ -174,8 +174,9 @@ def process_from_paths(
         return {}
 
     n = max_workers or DEFAULT_WORKERS
+    thumb_size_px = get_month_cover_size_px()
     temp_str = str(temp_dir)
-    args_list = [(key, path, temp_str) for key, path in entries]
+    args_list = [(key, path, temp_str, thumb_size_px) for key, path in entries]
     results: Dict[str, Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[int], Optional[int]]] = {}
 
     with ProcessPoolExecutor(max_workers=n) as pool:
@@ -197,8 +198,9 @@ def process_from_bytes(
         return {}
 
     n = max_workers or DEFAULT_WORKERS
+    thumb_size_px = get_month_cover_size_px()
     temp_str = str(temp_dir)
-    args_list = [(key, content, temp_str) for key, content in entries]
+    args_list = [(key, content, temp_str, thumb_size_px) for key, content in entries]
     results: Dict[str, Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[int], Optional[int]]] = {}
 
     with ThreadPoolExecutor(max_workers=n) as pool:

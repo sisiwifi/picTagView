@@ -62,6 +62,28 @@ class ViewerPreferenceRequest(BaseModel):
     viewer_id: Optional[str] = None
 
 
+class CacheThumbSettingRequest(BaseModel):
+    short_side_px: int
+
+
+class CacheThumbSettingResponse(BaseModel):
+    short_side_px: int
+    default_short_side_px: int
+    min_short_side_px: int
+    max_short_side_px: int
+
+
+class MonthCoverSettingRequest(BaseModel):
+    size_px: int
+
+
+class MonthCoverSettingResponse(BaseModel):
+    size_px: int
+    default_size_px: int
+    min_size_px: int
+    max_size_px: int
+
+
 # ── Album views ───────────────────────────────────────────────────────────────
 
 class BreadcrumbItem(BaseModel):

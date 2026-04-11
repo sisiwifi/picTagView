@@ -1,5 +1,4 @@
 import hashlib
-import json
 import os
 import shlex
 import subprocess
@@ -7,35 +6,15 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from app.core.config import DATA_DIR, VIEWER_ICON_DIR
-
-_APP_SETTINGS_FILE = DATA_DIR / "app_settings.json"
+from app.core.config import VIEWER_ICON_DIR
+from app.services.app_settings_service import load_app_settings, save_app_settings
 IMAGE_EXTENSIONS = [
     ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".heic", ".avif",
 ]
 
 
-def _load_app_settings() -> dict:
-    if not _APP_SETTINGS_FILE.exists():
-        return {}
-    try:
-        return json.loads(_APP_SETTINGS_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _save_app_settings(data: dict) -> None:
-    try:
-        _APP_SETTINGS_FILE.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
-
-
 def get_preferred_viewer_id() -> Optional[str]:
-    data = _load_app_settings()
+    data = load_app_settings()
     viewer_id = data.get("preferred_image_viewer")
     if isinstance(viewer_id, str) and viewer_id.strip():
         return viewer_id.strip()
@@ -43,16 +22,16 @@ def get_preferred_viewer_id() -> Optional[str]:
 
 
 def set_preferred_viewer_id(viewer_id: str) -> None:
-    data = _load_app_settings()
+    data = load_app_settings()
     data["preferred_image_viewer"] = viewer_id
-    _save_app_settings(data)
+    save_app_settings(data)
 
 
 def clear_preferred_viewer_id() -> None:
-    data = _load_app_settings()
+    data = load_app_settings()
     if "preferred_image_viewer" in data:
         del data["preferred_image_viewer"]
-        _save_app_settings(data)
+        save_app_settings(data)
 
 
 def _read_reg_default(winreg_module, root, path: str, value_name: str = "") -> Optional[str]:

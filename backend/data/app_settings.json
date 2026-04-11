@@ -1,3 +1,5 @@
 {
-  "preferred_image_viewer": "IrfanView.jpg"
+  "preferred_image_viewer": "IrfanView.jpg",
+  "cache_thumb_short_side_px": 600,
+  "month_cover_size_px": 400
 }

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.core.config import MEDIA_DIR, PROJECT_ROOT
+from app.services.app_settings_service import get_month_cover_size_px
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".tiff", ".tif", ".png", ".webp", ".gif", ".bmp"}
 
@@ -78,12 +79,15 @@ def image_dimensions_from_file(path: Path) -> tuple[Optional[int], Optional[int]
         return None, None
 
 
-def required_thumb_entry(thumb_path_str: str, width: int = 400, height: int = 400) -> dict:
+def required_thumb_entry(thumb_path_str: str, width: Optional[int] = None, height: Optional[int] = None) -> dict:
+    month_cover_size = get_month_cover_size_px()
+    final_width = int(width if width is not None else month_cover_size)
+    final_height = int(height if height is not None else month_cover_size)
     return {
         "type": "webp",
         "path": thumb_path_str,
-        "width": width,
-        "height": height,
+        "width": final_width,
+        "height": final_height,
         "mime_type": "image/webp",
         "generated_at": datetime.datetime.now().isoformat(),
     }
@@ -114,12 +118,13 @@ def upsert_thumb(thumbs: Optional[list[dict]], new_thumb: dict) -> list[dict]:
 
 
 def has_required_thumb(thumbs: Optional[list[dict]]) -> bool:
+    month_cover_size = get_month_cover_size_px()
     for entry in thumbs or []:
         if not isinstance(entry, dict):
             continue
         if entry.get("type") != "webp":
             continue
-        if int(entry.get("width") or 0) != 400 or int(entry.get("height") or 0) != 400:
+        if int(entry.get("width") or 0) != month_cover_size or int(entry.get("height") or 0) != month_cover_size:
             continue
         if thumb_file_exists(entry):
             return True

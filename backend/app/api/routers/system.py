@@ -1,6 +1,24 @@
 from fastapi import APIRouter, HTTPException
 
-from app.api.schemas import ViewerPreferenceRequest
+from app.api.schemas import (
+    CacheThumbSettingRequest,
+    CacheThumbSettingResponse,
+    MonthCoverSettingRequest,
+    MonthCoverSettingResponse,
+    ViewerPreferenceRequest,
+)
+from app.services.app_settings_service import (
+    DEFAULT_CACHE_SHORT_SIDE_PX,
+    DEFAULT_MONTH_COVER_SIZE_PX,
+    MAX_CACHE_SHORT_SIDE_PX,
+    MAX_MONTH_COVER_SIZE_PX,
+    MIN_CACHE_SHORT_SIDE_PX,
+    MIN_MONTH_COVER_SIZE_PX,
+    get_cache_thumb_short_side_px,
+    get_month_cover_size_px,
+    set_cache_thumb_short_side_px,
+    set_month_cover_size_px,
+)
 from app.services.viewer_service import (
     IMAGE_EXTENSIONS,
     clear_preferred_viewer_id,
@@ -13,6 +31,66 @@ from app.services.viewer_service import (
 )
 
 router = APIRouter()
+
+
+@router.get("/api/system/cache-thumb-setting", response_model=CacheThumbSettingResponse)
+def get_cache_thumb_setting() -> CacheThumbSettingResponse:
+    return CacheThumbSettingResponse(
+        short_side_px=get_cache_thumb_short_side_px(),
+        default_short_side_px=DEFAULT_CACHE_SHORT_SIDE_PX,
+        min_short_side_px=MIN_CACHE_SHORT_SIDE_PX,
+        max_short_side_px=MAX_CACHE_SHORT_SIDE_PX,
+    )
+
+
+@router.post("/api/system/cache-thumb-setting", response_model=CacheThumbSettingResponse)
+def set_cache_thumb_setting(body: CacheThumbSettingRequest) -> CacheThumbSettingResponse:
+    if body.short_side_px < MIN_CACHE_SHORT_SIDE_PX or body.short_side_px > MAX_CACHE_SHORT_SIDE_PX:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"short_side_px must be between {MIN_CACHE_SHORT_SIDE_PX} "
+                f"and {MAX_CACHE_SHORT_SIDE_PX}"
+            ),
+        )
+
+    value = set_cache_thumb_short_side_px(body.short_side_px)
+    return CacheThumbSettingResponse(
+        short_side_px=value,
+        default_short_side_px=DEFAULT_CACHE_SHORT_SIDE_PX,
+        min_short_side_px=MIN_CACHE_SHORT_SIDE_PX,
+        max_short_side_px=MAX_CACHE_SHORT_SIDE_PX,
+    )
+
+
+@router.get("/api/system/month-cover-setting", response_model=MonthCoverSettingResponse)
+def get_month_cover_setting() -> MonthCoverSettingResponse:
+    return MonthCoverSettingResponse(
+        size_px=get_month_cover_size_px(),
+        default_size_px=DEFAULT_MONTH_COVER_SIZE_PX,
+        min_size_px=MIN_MONTH_COVER_SIZE_PX,
+        max_size_px=MAX_MONTH_COVER_SIZE_PX,
+    )
+
+
+@router.post("/api/system/month-cover-setting", response_model=MonthCoverSettingResponse)
+def set_month_cover_setting(body: MonthCoverSettingRequest) -> MonthCoverSettingResponse:
+    if body.size_px < MIN_MONTH_COVER_SIZE_PX or body.size_px > MAX_MONTH_COVER_SIZE_PX:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"size_px must be between {MIN_MONTH_COVER_SIZE_PX} "
+                f"and {MAX_MONTH_COVER_SIZE_PX}"
+            ),
+        )
+
+    value = set_month_cover_size_px(body.size_px)
+    return MonthCoverSettingResponse(
+        size_px=value,
+        default_size_px=DEFAULT_MONTH_COVER_SIZE_PX,
+        min_size_px=MIN_MONTH_COVER_SIZE_PX,
+        max_size_px=MAX_MONTH_COVER_SIZE_PX,
+    )
 
 
 @router.get("/api/system/viewer-info")

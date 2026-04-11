@@ -106,6 +106,18 @@
   - 解析并提取程序图标（输出到 `VIEWER_ICON_DIR`）
   - 启动偏好看图程序打开图片（失败回退系统默认）
 
+### 3.4c `app/services/app_settings_service.py`
+- 应用设置持久化服务：
+  - 统一读写 `data/app_settings.json`
+  - 提供缓存缩略图短边配置：
+    - `get_cache_thumb_short_side_px()`（默认 600）
+    - `set_cache_thumb_short_side_px(value)`（限制范围 100~4000）
+  - 提供月份封面尺寸配置：
+    - `get_month_cover_size_px()`（默认 400）
+    - `set_month_cover_size_px(value)`（限制范围 100~2000）
+  - 该配置被 `cache_thumb_service` 在生成 `data/cache/*.webp` 时使用
+  - `parallel_processor` 会使用月份封面尺寸配置生成 `temp/*.webp`
+
 ### 3.5 `app/models/image_asset.py`
 - 数据模型 `ImageAsset`：
   - `id` (int): 主键
@@ -296,6 +308,11 @@
 4. 前端调用 `/api/dates` 和 `/api/dates/{date_group}/items` 构建图库视图
 5. 管理端 `/api/admin/refresh` 保持一致性（支持 `quick/full`）
 
+补充：
+- 设置页可通过 `GET/POST /api/system/cache-thumb-setting` 管理缓存缩略图短边尺寸。
+- 设置页可通过 `GET/POST /api/system/month-cover-setting` 管理月份封面尺寸。
+- 当尺寸保存成功后，前端会调用 `DELETE /api/cache` 清空 `data/cache/` 与 `temp/`，后续缓存缩略图按新尺寸重新生成。
+
 ## 5. 配置与外部依赖
 - `app/core/config.py`（含 `MEDIA_DIR`, `TEMP_DIR`, `DB_PATH`）
 - `backend/requirements.txt`（依赖）
@@ -335,8 +352,8 @@
 
 ## 6. 运行与调试
 1. 进入 `backend` 目录
-2. 安装依赖 `pip install -r requirements.txt`
-3. 启动服务 `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
+2. 使用项目虚拟环境安装依赖 `..\.venv\Scripts\python.exe -m pip install -r requirements.txt`
+3. 启动服务 `..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
 4. API 说明：
    - `GET /` 健康检查
    - `POST /api/import` 多文件上传（`files` + 可选 `last_modified_json`）

@@ -306,7 +306,7 @@ build\start_project.bat
 - **后端**：`http://127.0.0.1:8000`（uvicorn，热重载）
 - **前端**：`http://localhost:8080`（Vue CLI dev server）
 
-**前提**：已在系统 PATH 中安装 Python 3.10+ 和 Node.js 16+。
+**前提**：仓库根目录已存在 `.venv`，并已安装 Node.js 16+。
 
 ---
 
@@ -315,8 +315,8 @@ build\start_project.bat
 ```bash
 # 后端
 cd backend
-pip install -r requirements.txt
-python -m uvicorn app.main:app --reload
+..\.venv\Scripts\python.exe -m pip install -r requirements.txt
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
 ```bash
