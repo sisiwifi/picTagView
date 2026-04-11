@@ -20,6 +20,10 @@ from app.models.image_asset import ImageAsset
 router = APIRouter()
 
 
+def _item_sort_key(name: str | None) -> str:
+    return (name or "").casefold()
+
+
 @router.get("/api/albums/{album_id}", response_model=AlbumDetailResponse)
 def album_detail(album_id: str) -> AlbumDetailResponse:
     with get_session() as session:
@@ -87,6 +91,7 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
                 cache_thumb_url=row_cache_thumb_url,
                 public_id=sa.public_id,
             ))
+        sub_items.sort(key=lambda item: _item_sort_key(item.name))
 
         # Use album_image mapping table instead of scanning all ImageAssets
         album_assets = session.exec(
@@ -113,6 +118,7 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
                 id=asset.id,
                 cache_thumb_url=cache_thumb or media_fallback,
             ))
+        image_items.sort(key=lambda item: _item_sort_key(item.name))
 
     return AlbumDetailResponse(
         album=AlbumInfo(

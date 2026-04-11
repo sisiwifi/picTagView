@@ -23,6 +23,10 @@ from app.models.image_asset import ImageAsset
 router = APIRouter()
 
 
+def _item_sort_key(name: str | None) -> str:
+    return (name or "").casefold()
+
+
 @router.get("/api/dates", response_model=DateViewResponse)
 def dates_view() -> DateViewResponse:
     with get_session() as session:
@@ -160,6 +164,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     cache_thumb_url=cache_thumb or media_fallback,
                 )
             )
+        direct_items.sort(key=lambda item: _item_sort_key(item.name))
 
         top_albums = session.exec(
             select(Album)
@@ -209,8 +214,9 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     public_id=album.public_id,
                 )
             )
+        album_items.sort(key=lambda item: _item_sort_key(item.name))
 
     if not direct_items and not album_items:
         raise HTTPException(status_code=404, detail=f"No assets for {date_group}")
 
-    return DateItemsResponse(date_group=date_group, items=direct_items + album_items)
+    return DateItemsResponse(date_group=date_group, items=album_items + direct_items)
