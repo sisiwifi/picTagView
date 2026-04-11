@@ -253,7 +253,8 @@
   |---|---|
   | `normal` | 普通标签 |
   | `artist` | 作者/创作者标签 |
-  | `artwork` | 作品标签 |
+  | `copyright` | 作品标签 |
+  | `character` | 人物标签 |
   | `series` | 系列标签 |
 
 **`created_via` 合法值说明：**

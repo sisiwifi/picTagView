@@ -23,7 +23,7 @@ _VALID_CREATED_VIA = {
     "manual", "auto:filename", "import", "merge", "split", "sync", "migration"
 }
 
-_VALID_TAG_TYPES = {"normal", "artist", "artwork", "series"}
+_VALID_TAG_TYPES = {"normal", "artist", "copyright","character", "series"}
 
 
 def _now_str() -> str:
@@ -78,7 +78,7 @@ class TagMetadata(BaseModel):
 class TagCreate(BaseModel):
     name: str
     display_name: str = ""
-    type: Literal["normal", "artist", "artwork", "series"] = "normal"
+    type: Literal["normal", "artist", "copyright","character", "series"] = "normal"
     description: str = ""
     category: str = ""
     created_by: str = "admin"
@@ -87,7 +87,7 @@ class TagCreate(BaseModel):
 
 class TagUpdate(BaseModel):
     display_name: Optional[str] = None
-    type: Optional[Literal["normal", "artist", "artwork", "series"]] = None
+    type: Optional[Literal["normal", "artist", "copyright","character", "series"]] = None
     description: Optional[str] = None
     category: Optional[str] = None
     metadata: Optional[TagMetadata] = None
