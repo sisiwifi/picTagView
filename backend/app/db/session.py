@@ -128,6 +128,7 @@ def _migrate_db() -> None:
         for column, col_type in [
             ("public_id",    "TEXT"),
             ("display_name", "TEXT"),
+            ("type",         "TEXT"),
             ("description",  "TEXT"),
             ("category",     "TEXT"),
             ("usage_count",  "INTEGER"),
@@ -143,6 +144,12 @@ def _migrate_db() -> None:
                 conn.commit()
             except Exception:
                 pass
+
+        try:
+            conn.execute(text("UPDATE tag SET type = 'normal' WHERE type IS NULL OR trim(type) = ''"))
+            conn.commit()
+        except Exception:
+            pass
 
         # ── album_image table indexes & constraints ──────────────────────
         try:

@@ -232,6 +232,7 @@
   - `public_id` (str): 对外稳定标识符，格式 `tag_{id}`，唯一索引；写入 DB 后由系统自动回填
   - `name` (str): 规范化名称，全小写英文，数据库唯一约束，最大 256 字节
   - `display_name` (str): 前端展示名称，默认与 name 相同
+  - `type` (str): 标签种类，取值为 `normal` / `artist` / `artwork` / `series`，默认 `normal`
   - `description` (str | null): 描述，最大 1024 字节
   - `category` (str | null): 分类，与其他实体保持一致
   - `usage_count` (int): 缓存字段，表示当前有多少张图片关联了该 Tag，由写入侧维护
@@ -245,6 +246,15 @@
   - `created_at` (datetime): 记录创建时间（UTC）
   - `created_by` (str): 创建者，主控生成为 `admin`，导入为 `import`
   - `updated_at` (datetime): 最后更新时间（UTC）
+
+  **`type` 合法值说明：**
+
+  | 值 | 含义 |
+  |---|---|
+  | `normal` | 普通标签 |
+  | `artist` | 作者/创作者标签 |
+  | `artwork` | 作品标签 |
+  | `series` | 系列标签 |
 
 **`created_via` 合法值说明：**
 

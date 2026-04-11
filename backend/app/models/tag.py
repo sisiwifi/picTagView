@@ -26,6 +26,9 @@ class Tag(SQLModel, table=True):
     # 前端展示名称
     display_name: str = Field(default="", max_length=256)
 
+    # 标签种类：normal / artist / artwork / series
+    type: str = Field(default="normal", index=True, max_length=32)
+
     # 描述（最大 1024 字节）
     description: Optional[str] = Field(default="", max_length=1024)
 

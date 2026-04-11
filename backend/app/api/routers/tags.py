@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
@@ -23,9 +23,18 @@ _VALID_CREATED_VIA = {
     "manual", "auto:filename", "import", "merge", "split", "sync", "migration"
 }
 
+_VALID_TAG_TYPES = {"normal", "artist", "artwork", "series"}
+
 
 def _now_str() -> str:
     return datetime.utcnow().strftime("%Y%m%d%H%M%S")
+
+
+def _normalize_tag_type(tag_type: object) -> str:
+    value = str(tag_type or "").strip().lower() or "normal"
+    if value not in _VALID_TAG_TYPES:
+        return "normal"
+    return value
 
 
 def _tag_to_dict(tag: Tag) -> dict:
@@ -34,6 +43,7 @@ def _tag_to_dict(tag: Tag) -> dict:
         "public_id": tag.public_id,
         "name": tag.name,
         "display_name": tag.display_name,
+        "type": tag.type,
         "description": tag.description,
         "category": tag.category,
         "usage_count": tag.usage_count,
@@ -68,6 +78,7 @@ class TagMetadata(BaseModel):
 class TagCreate(BaseModel):
     name: str
     display_name: str = ""
+    type: Literal["normal", "artist", "artwork", "series"] = "normal"
     description: str = ""
     category: str = ""
     created_by: str = "admin"
@@ -76,6 +87,7 @@ class TagCreate(BaseModel):
 
 class TagUpdate(BaseModel):
     display_name: Optional[str] = None
+    type: Optional[Literal["normal", "artist", "artwork", "series"]] = None
     description: Optional[str] = None
     category: Optional[str] = None
     metadata: Optional[TagMetadata] = None
@@ -89,11 +101,12 @@ class TagUpdate(BaseModel):
 def list_tags(
     ids: Optional[str] = Query(default=None, description="逗号分隔的 Tag ID 列表，用于批量查询"),
     category: Optional[str] = Query(default=None),
+    tag_type: Optional[str] = Query(default=None, alias="type"),
     q: Optional[str] = Query(default=None, description="按 name/display_name 模糊搜索"),
     limit: int = Query(default=200, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
-    """列出所有 Tag；支持按 ID 列表批量查、分类过滤、名称模糊搜索。"""
+    """列出所有 Tag；支持按 ID 列表批量查、分类过滤、类型过滤、名称模糊搜索。"""
     with get_session() as session:
         stmt = select(Tag)
         if ids:
@@ -104,6 +117,8 @@ def list_tags(
             stmt = stmt.where(Tag.id.in_(id_list))  # type: ignore[attr-defined]
         if category:
             stmt = stmt.where(Tag.category == category)  # type: ignore[attr-defined]
+        if tag_type:
+            stmt = stmt.where(Tag.type == _normalize_tag_type(tag_type))  # type: ignore[attr-defined]
         if q:
             pattern = f"%{q}%"
             stmt = stmt.where(
@@ -143,6 +158,7 @@ def create_tag(body: TagCreate) -> dict:
         tag = Tag(
             name=norm_name,
             display_name=body.display_name or norm_name,
+            type=_normalize_tag_type(body.type),
             description=body.description,
             category=body.category,
             created_by=body.created_by,
@@ -165,6 +181,8 @@ def update_tag(tag_id: int, body: TagUpdate) -> dict:
             raise HTTPException(status_code=404, detail=f"Tag {tag_id} 不存在")
         if body.display_name is not None:
             tag.display_name = body.display_name
+        if body.type is not None:
+            tag.type = _normalize_tag_type(body.type)
         if body.description is not None:
             tag.description = body.description
         if body.category is not None:
@@ -218,7 +236,7 @@ def import_tags(body: TagImportBody) -> dict:
     """批量导入 Tag 数据。
 
     - on_conflict=skip：跳过同名已存在的 tag（默认）
-    - on_conflict=overwrite：覆盖 display_name / description / category / metadata
+    - on_conflict=overwrite：覆盖 display_name / type / description / category / metadata
     """
     if body.on_conflict not in ("skip", "overwrite"):
         raise HTTPException(status_code=400, detail="on_conflict 必须为 skip 或 overwrite")
@@ -248,6 +266,7 @@ def import_tags(body: TagImportBody) -> dict:
                     continue
                 # overwrite
                 existing.display_name = item.get("display_name", existing.display_name)
+                existing.type = _normalize_tag_type(item.get("type", existing.type))
                 existing.description = item.get("description", existing.description)
                 existing.category = item.get("category", existing.category)
                 existing.metadata_ = meta_raw
@@ -261,6 +280,7 @@ def import_tags(body: TagImportBody) -> dict:
             tag = Tag(
                 name=raw_name,
                 display_name=item.get("display_name", raw_name),
+                type=_normalize_tag_type(item.get("type", "normal")),
                 description=item.get("description", ""),
                 category=item.get("category", ""),
                 created_by=item.get("created_by", "import"),

@@ -153,7 +153,7 @@
 
 - GET /api/tags
   - 实现：app/api/routers/tags.py
-  - 参数：ids（逗号分隔 ID 列表，批量查）、category（过滤）、q（名称模糊搜索）、limit/offset（分页）
+  - 参数：ids（逗号分隔 ID 列表，批量查）、category（过滤）、type（标签种类过滤）、q（名称模糊搜索）、limit/offset（分页）
   - 用途：列出/搜索/批量查询 Tag；前端展示图片标签时通过 ids 参数批量拉取
 
 - GET /api/tags/{tag_id}
@@ -162,12 +162,12 @@
 
 - POST /api/tags
   - 实现：app/api/routers/tags.py
-  - Body：`{ name, display_name, description, category, created_by, metadata }`
+  - Body：`{ name, display_name, type, description, category, created_by, metadata }`
   - 用途：手动创建新 Tag；name 会自动规范化为小写
 
 - PATCH /api/tags/{tag_id}
   - 实现：app/api/routers/tags.py
-  - Body：`{ display_name?, description?, category?, metadata? }`
+  - Body：`{ display_name?, type?, description?, category?, metadata? }`
   - 用途：更新 Tag 属性（name 不可修改）
 
 - DELETE /api/tags/{tag_id}
@@ -193,8 +193,9 @@
 |---|---|---|
 | `imageasset` | `ImageAsset` (`app/models/image_asset.py`) | 图片媒体资产主表；存储哈希、路径、尺寸、日期分组、缩略图条目、关联 Tag ID 数组等全量元数据 |
 | `album` | `Album` (`app/models/album.py`) | 树形相册结构；存储相册名称、层级路径、封面、照片计数、日期分组 |
+| `album_image` | `AlbumImage` (`app/models/album_image.py`) | 相册-图片显式多对多关联表；用于查询某相册下的直图成员，替代按 `ImageAsset.album` JSON 扫描，并由导入与重算流程同步维护 |
 | `pathsoftdelete` | `PathSoftDelete` (`app/models/soft_delete.py`) | 软删除日志表（路径级）；以 target_path 为准控制图片或相册的可见性，实体本身不删除 |
-| `tag` | `Tag` (`app/models/tag.py`) | 标签库；存储标准化名称、展示名称、分类、使用次数、来源、元信息等，`ImageAsset.tags` 存储该表的 id 外键 |
+| `tag` | `Tag` (`app/models/tag.py`) | 标签库；存储标准化名称、展示名称、分类、使用次数、来源、元信息等，`ImageAsset.tags` 存储该表的 id 列表 |
 
 附加文件：
 - `MEDIA_DIR/.hash_index.json`：哈希索引缓存（非 SQLite），用于导入时 O(1) 去重，详见服务层 `hash_index.py`。
