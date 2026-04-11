@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException
 from sqlmodel import col, select
 
@@ -22,6 +24,12 @@ router = APIRouter()
 
 def _item_sort_key(name: str | None) -> str:
     return (name or "").casefold()
+
+
+def _to_unix_ts(dt: datetime | None) -> int | None:
+    if dt is None:
+        return None
+    return int(dt.timestamp())
 
 
 @router.get("/api/albums/{album_id}", response_model=AlbumDetailResponse)
@@ -90,6 +98,7 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
                 id=cover_photo_id,
                 cache_thumb_url=row_cache_thumb_url,
                 public_id=sa.public_id,
+                sort_ts=_to_unix_ts(sa.updated_at or sa.created_at),
             ))
         sub_items.sort(key=lambda item: _item_sort_key(item.name))
 
@@ -117,6 +126,7 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
                 thumb_url=thumb,
                 id=asset.id,
                 cache_thumb_url=cache_thumb or media_fallback,
+                sort_ts=_to_unix_ts(asset.file_created_at or asset.imported_at or asset.created_at),
             ))
         image_items.sort(key=lambda item: _item_sort_key(item.name))
 

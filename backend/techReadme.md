@@ -32,6 +32,17 @@
   - `app/api/routers/cache.py`：`DELETE /api/cache`、`/api/thumbnails/cache*`
 - 共享查询与路径工具在 `app/api/common.py`：软删除过滤、缩略图 URL 解析、存储路径解析。
 
+补充（2026-04）：
+- `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的条目模型新增 `sort_ts`（Unix 秒级时间戳，可为空）。
+- `sort_ts` 生成规则：
+  - 图片条目：优先 `file_created_at`，回退 `imported_at`，再回退 `created_at`。
+  - 相册条目：优先 `updated_at`，回退 `created_at`。
+- 前端据此支持“Date/Alpha 排序字段切换 + 升降序切换”。
+- 前端排序规则补充：相册项与图片项分组独立排序（各自按 Date/Alpha 与升降序），最终始终保持“相册在前，图片在后”。
+- 默认策略：
+  - 日期视图详情（非相册视图）默认 `Date` 升序。
+  - 相册视图默认 `Alpha` 升序。
+
 ### 3.3 `app/services/import_service.py`（门面）
 - 对外稳定入口：
   - `import_files(files, last_modified_times, created_times)`

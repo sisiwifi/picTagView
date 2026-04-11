@@ -35,6 +35,7 @@ class DateItem(BaseModel):
     id: Optional[int] = None             # ImageAsset.id
     cache_thumb_url: Optional[str] = None  # /cache/<hash>_cache.webp when generated
     public_id: Optional[str] = None      # Album.public_id for album items
+    sort_ts: Optional[int] = None        # Unix timestamp for date sorting
 
 
 class DateItemsResponse(BaseModel):
@@ -99,6 +100,7 @@ class AlbumItem(BaseModel):
     id: Optional[int] = None             # ImageAsset.id (for images)
     cache_thumb_url: Optional[str] = None
     public_id: Optional[str] = None      # Album.public_id (for sub-albums)
+    sort_ts: Optional[int] = None        # Unix timestamp for date sorting
 
 
 class AlbumInfo(BaseModel):

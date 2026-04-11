@@ -29,6 +29,29 @@
         </div>
         <div class="header-actions">
           <span class="header-count">{{ selectedItems.length }} 项</span>
+          <div class="sort-controls" role="group" aria-label="排序设置">
+            <div class="sort-switch" role="group" aria-label="排序字段">
+              <span class="sort-thumb" :class="{ 'is-alpha': sortBy === 'alpha' }" aria-hidden="true"></span>
+              <button
+                class="sort-mode-btn"
+                :class="{ active: sortBy === 'date' }"
+                title="按日期排序"
+                aria-label="按日期排序"
+                @click="onSortModeClick('date')"
+              >
+                Date <span v-if="sortBy === 'date'" class="sort-dir-mark">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+              </button>
+              <button
+                class="sort-mode-btn"
+                :class="{ active: sortBy === 'alpha' }"
+                title="按字符顺序排序"
+                aria-label="按字符顺序排序"
+                @click="onSortModeClick('alpha')"
+              >
+                Alpha <span v-if="sortBy === 'alpha'" class="sort-dir-mark">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+              </button>
+            </div>
+          </div>
           <div class="view-toggle" role="group" aria-label="显示方式">
             <button
               class="vt-btn"
@@ -247,6 +270,8 @@ export default {
       thumbErrorRetries: {},
       failedThumbIds: {},
       viewMode:       'grid',   // 'grid' | 'list'
+      sortBy:         'date',   // 'date' | 'alpha'
+      sortDir:        'asc',    // 'asc' | 'desc'
       bcDragging:     false,
       bcStartX:       0,
       bcScrollLeft:   0,
@@ -446,6 +471,8 @@ export default {
       this.originY = `${Math.round(((rect.top  + rect.height / 2) / window.innerHeight) * 100)}%`
 
       this.viewMode  = 'grid'
+      this.sortBy    = 'date'
+      this.sortDir   = 'asc'
       this.navDir = 'forward'
       this.view   = 'animating'
       this.selectedGroup = mg.group
@@ -462,7 +489,7 @@ export default {
         new Promise(r => setTimeout(r, 170)),
       ])
 
-      this.selectedItems = data.items || []
+      this.selectedItems = this.sortItems(data.items || [])
       for (const item of this.selectedItems) {
         if (item.id && item.cache_thumb_url) {
           this.cacheUrls = { ...this.cacheUrls, [item.id]: item.cache_thumb_url }
@@ -673,7 +700,7 @@ export default {
         const r = await fetch(`${API_BASE}/api/dates/${this.selectedGroup}/items`)
         if (!r.ok) return
         const data = await r.json()
-        this.selectedItems = data.items || []
+        this.selectedItems = this.sortItems(data.items || [])
         for (const item of this.selectedItems) {
           if (item.id && item.cache_thumb_url) {
             this.cacheUrls = { ...this.cacheUrls, [item.id]: item.cache_thumb_url }
@@ -694,6 +721,71 @@ export default {
       const { w, h } = dims
       if (w >= h) return { width: '50px', height: Math.round(h / w * 50) + 'px', objectFit: 'contain' }
       return { width: Math.round(w / h * 50) + 'px', height: '50px', objectFit: 'contain' }
+    },
+
+    itemDateTs(item) {
+      const ts = Number(item?.sort_ts)
+      if (Number.isFinite(ts)) return ts
+      const fallbackId = Number(item?.id)
+      return Number.isFinite(fallbackId) ? fallbackId : 0
+    },
+
+    itemAlphaKey(item) {
+      return (item?.name || item?.full_filename || '').toString()
+    },
+
+    sortItems(items) {
+      const arr = Array.isArray(items) ? [...items] : []
+      const dir = this.sortDir === 'desc' ? -1 : 1
+
+      const compare = (a, b) => {
+        if (this.sortBy === 'date') {
+          const ta = this.itemDateTs(a)
+          const tb = this.itemDateTs(b)
+          if (ta !== tb) return (ta - tb) * dir
+        } else {
+          const na = this.itemAlphaKey(a)
+          const nb = this.itemAlphaKey(b)
+          const nc = na.localeCompare(nb, undefined, { sensitivity: 'base', numeric: true })
+          if (nc !== 0) return nc * dir
+        }
+
+        const ta = this.itemDateTs(a)
+        const tb = this.itemDateTs(b)
+        if (ta !== tb) return (ta - tb) * dir
+        const na = this.itemAlphaKey(a)
+        const nb = this.itemAlphaKey(b)
+        return na.localeCompare(nb, undefined, { sensitivity: 'base', numeric: true }) * dir
+      }
+
+      const albums = arr.filter(it => it?.type === 'album').sort(compare)
+      const images = arr.filter(it => it?.type !== 'album').sort(compare)
+      return [...albums, ...images]
+    },
+
+    refreshSortResult() {
+      this.selectedItems = this.sortItems(this.selectedItems)
+      if (!this.detailVisible) return
+      this.$nextTick(() => {
+        this.teardownObserver()
+        this.setupObserver()
+        this.triggerCacheAt(0)
+      })
+    },
+
+    onSortModeClick(mode) {
+      if (this.sortBy === mode) {
+        this.toggleSortDir()
+        return
+      }
+      this.sortBy = mode
+      this.sortDir = 'asc'
+      this.refreshSortResult()
+    },
+
+    toggleSortDir() {
+      this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc'
+      this.refreshSortResult()
     },
 
     onBcMousedown(e) {
@@ -925,6 +1017,67 @@ export default {
   gap: 0.625rem;
   flex-shrink: 0;
 }
+
+.sort-controls {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.sort-switch {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  min-width: 132px;
+  height: 30px;
+  padding: 2px;
+  border-radius: 999px;
+  background: #dbe6f0;
+}
+
+.sort-thumb {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: calc(50% - 2px);
+  height: 26px;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+  transition: transform 160ms ease;
+  pointer-events: none;
+}
+
+.sort-thumb.is-alpha {
+  transform: translateX(100%);
+}
+
+.sort-mode-btn {
+  position: relative;
+  z-index: 1;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  height: 100%;
+}
+
+.sort-mode-btn.active {
+  color: #0f172a;
+}
+
+.sort-dir-mark {
+  display: inline-block;
+  margin-left: 1px;
+  color: #0f172a;
+  font-weight: 700;
+}
+
 .view-toggle {
   display: flex;
   align-items: center;

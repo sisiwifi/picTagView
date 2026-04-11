@@ -26,6 +26,29 @@
       </div>
       <div class="header-right">
         <span class="header-count">{{ totalCount }} 项</span>
+        <div class="sort-controls" role="group" aria-label="排序设置">
+          <div class="sort-switch" role="group" aria-label="排序字段">
+            <span class="sort-thumb" :class="{ 'is-alpha': sortBy === 'alpha' }" aria-hidden="true"></span>
+            <button
+              class="sort-mode-btn"
+              :class="{ active: sortBy === 'date' }"
+              title="按日期排序"
+              aria-label="按日期排序"
+              @click="onSortModeClick('date')"
+            >
+              Date <span v-if="sortBy === 'date'" class="sort-dir-mark">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+            </button>
+            <button
+              class="sort-mode-btn"
+              :class="{ active: sortBy === 'alpha' }"
+              title="按字符顺序排序"
+              aria-label="按字符顺序排序"
+              @click="onSortModeClick('alpha')"
+            >
+              Alpha <span v-if="sortBy === 'alpha'" class="sort-dir-mark">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+            </button>
+          </div>
+        </div>
         <div class="vm-btns" role="group" aria-label="视图模式">
           <button
             class="vm-btn"
@@ -157,6 +180,8 @@ export default {
       imgDimensions: {},
       containerWidth: 0,
       viewMode: 'grid',
+      sortBy: 'alpha',
+      sortDir: 'asc',
     }
   },
 
@@ -237,6 +262,8 @@ export default {
     async fetchAlbum() {
       this.loading = true
       this.viewMode = 'grid'
+      this.sortBy = 'alpha'
+      this.sortDir = 'asc'
       this.cacheUrls = {}
       this.imgDimensions = {}
       this.lastCenter = -1
@@ -249,7 +276,7 @@ export default {
         if (!res.ok) { this.items = []; this.album = {}; return }
         const data = await res.json()
         this.album = data.album || {}
-        this.items = data.items || []
+        this.items = this.sortItems(data.items || [])
 
         for (const item of this.items) {
           if (item.id && item.cache_thumb_url) {
@@ -302,6 +329,71 @@ export default {
       if (this.$refs.itemGrid) {
         this.containerWidth = this.$refs.itemGrid.offsetWidth
       }
+    },
+
+    itemDateTs(item) {
+      const ts = Number(item?.sort_ts)
+      if (Number.isFinite(ts)) return ts
+      const fallbackId = Number(item?.id)
+      return Number.isFinite(fallbackId) ? fallbackId : 0
+    },
+
+    itemAlphaKey(item) {
+      return (item?.name || item?.full_filename || '').toString()
+    },
+
+    sortItems(items) {
+      const arr = Array.isArray(items) ? [...items] : []
+      const dir = this.sortDir === 'desc' ? -1 : 1
+
+      const compare = (a, b) => {
+        if (this.sortBy === 'date') {
+          const ta = this.itemDateTs(a)
+          const tb = this.itemDateTs(b)
+          if (ta !== tb) return (ta - tb) * dir
+        } else {
+          const na = this.itemAlphaKey(a)
+          const nb = this.itemAlphaKey(b)
+          const nc = na.localeCompare(nb, undefined, { sensitivity: 'base', numeric: true })
+          if (nc !== 0) return nc * dir
+        }
+
+        const ta = this.itemDateTs(a)
+        const tb = this.itemDateTs(b)
+        if (ta !== tb) return (ta - tb) * dir
+        const na = this.itemAlphaKey(a)
+        const nb = this.itemAlphaKey(b)
+        return na.localeCompare(nb, undefined, { sensitivity: 'base', numeric: true }) * dir
+      }
+
+      const albums = arr.filter(it => it?.type === 'album').sort(compare)
+      const images = arr.filter(it => it?.type !== 'album').sort(compare)
+      return [...albums, ...images]
+    },
+
+    refreshSortResult() {
+      this.items = this.sortItems(this.items)
+      if (this.loading) return
+      this.$nextTick(() => {
+        this.teardownObserver()
+        this.setupObserver()
+        this.triggerCacheAt(0)
+      })
+    },
+
+    onSortModeClick(mode) {
+      if (this.sortBy === mode) {
+        this.toggleSortDir()
+        return
+      }
+      this.sortBy = mode
+      this.sortDir = 'asc'
+      this.refreshSortResult()
+    },
+
+    toggleSortDir() {
+      this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc'
+      this.refreshSortResult()
     },
 
     // ── Cache thumbnail polling (same pattern as DateViewPage) ──────────
@@ -452,6 +544,66 @@ export default {
   flex-shrink: 0;
 }
 .header-count { @apply text-sm text-slate-400; }
+
+.sort-controls {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.sort-switch {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  min-width: 132px;
+  height: 30px;
+  padding: 2px;
+  border-radius: 999px;
+  background: #dbe6f0;
+}
+
+.sort-thumb {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: calc(50% - 2px);
+  height: 26px;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+  transition: transform 160ms ease;
+  pointer-events: none;
+}
+
+.sort-thumb.is-alpha {
+  transform: translateX(100%);
+}
+
+.sort-mode-btn {
+  position: relative;
+  z-index: 1;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  height: 100%;
+}
+
+.sort-mode-btn.active {
+  color: #0f172a;
+}
+
+.sort-dir-mark {
+  display: inline-block;
+  margin-left: 1px;
+  color: #0f172a;
+  font-weight: 700;
+}
 
 /* Breadcrumb */
 .breadcrumb {

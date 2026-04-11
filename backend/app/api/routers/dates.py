@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import exists
@@ -25,6 +26,12 @@ router = APIRouter()
 
 def _item_sort_key(name: str | None) -> str:
     return (name or "").casefold()
+
+
+def _to_unix_ts(dt: datetime | None) -> int | None:
+    if dt is None:
+        return None
+    return int(dt.timestamp())
 
 
 @router.get("/api/dates", response_model=DateViewResponse)
@@ -162,6 +169,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     thumb_url=thumb,
                     id=asset.id,
                     cache_thumb_url=cache_thumb or media_fallback,
+                    sort_ts=_to_unix_ts(asset.file_created_at or asset.imported_at or asset.created_at),
                 )
             )
         direct_items.sort(key=lambda item: _item_sort_key(item.name))
@@ -212,6 +220,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     id=cover_photo_id,
                     cache_thumb_url=row_cache_thumb_url,
                     public_id=album.public_id,
+                    sort_ts=_to_unix_ts(album.updated_at or album.created_at),
                 )
             )
         album_items.sort(key=lambda item: _item_sort_key(item.name))
