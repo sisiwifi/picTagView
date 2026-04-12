@@ -769,6 +769,8 @@ export default {
         if (this.selectedGroup) {
           query.group = this.selectedGroup
         }
+        // 将相册名存入 sessionStorage，供 AlbumViewPage 首次渲染时使用，避免占位符闪烁
+        sessionStorage.setItem('pendingAlbumTitle', item.name || '')
         this.$router.push({ name: 'album', params: { id: item.public_id }, query })
         return
       }

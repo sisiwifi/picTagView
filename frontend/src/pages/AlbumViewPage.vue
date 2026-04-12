@@ -144,6 +144,8 @@ export default {
       viewMode: 'grid',
       sortBy: 'alpha',
       sortDir: 'asc',
+      // 导航时预先传入的相册名，避免数据加载前显示占位符"相册"
+      pendingTitle: sessionStorage.getItem('pendingAlbumTitle') || '',
     }
   },
 
@@ -187,8 +189,8 @@ export default {
         })
       }
       crumbs.push({
-        label: this.bcLabel(this.album.title || '相册'),
-        title: this.album.title || '相册',
+        label: this.bcLabel(this.album.title || this.pendingTitle || '\u76f8\u518c'),
+        title: this.album.title || this.pendingTitle || '\u76f8\u518c',
         current: true,
       })
       return crumbs
@@ -251,6 +253,7 @@ export default {
   },
 
   created() {
+    sessionStorage.removeItem('pendingAlbumTitle')
     this.fetchAlbum()
     window.addEventListener('resize', this.onResize)
   },
@@ -342,6 +345,8 @@ export default {
       if (item.type === 'album' && item.public_id) {
         const query = { ...this.$route.query }
         if (this.currentGroup) query.group = this.currentGroup
+        // 将相册名存入 sessionStorage，避免占位符闪烁
+        sessionStorage.setItem('pendingAlbumTitle', item.name || '')
         this.$router.push({
           name: 'album',
           params: { id: item.public_id },

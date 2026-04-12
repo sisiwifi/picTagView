@@ -1,13 +1,15 @@
 <template>
   <header class="page-header">
-    <button
-      v-if="showBack"
-      class="back-btn"
-      type="button"
-      @click="$emit('back')"
-    >
-      ← {{ backText }}
-    </button>
+    <Transition name="bc-back">
+      <button
+        v-if="showBack"
+        class="back-btn"
+        type="button"
+        @click="$emit('back')"
+      >
+        ← {{ backText }}
+      </button>
+    </Transition>
 
     <div
       class="breadcrumb-wrap"
@@ -18,29 +20,29 @@
       @mouseup="onBcMouseup"
       @mousemove="onBcMousemove"
     >
-      <nav class="breadcrumb" aria-label="页面路径">
-        <template v-for="(crumb, idx) in crumbs" :key="`${idx}-${crumb.label}`">
-          <span v-if="idx > 0" class="bc-sep" aria-hidden="true">›</span>
+      <TransitionGroup tag="nav" name="bc-crumb" class="breadcrumb" aria-label="页面路径">
+        <span
+          v-for="item in crumbsFlatList"
+          :key="item.key"
+          class="bc-flat-item"
+        >
+          <span v-if="item.isSep" class="bc-sep" aria-hidden="true">›</span>
 
           <router-link
-            v-if="crumb.to && !crumb.current"
-            :to="crumb.to"
+            v-else-if="item.to && !item.current"
+            :to="item.to"
             class="bc-item bc-link"
-            :title="crumb.title || crumb.label"
-          >
-            {{ crumb.label }}
-          </router-link>
+            :title="item.title || item.label"
+          >{{ item.label }}</router-link>
 
           <span
             v-else
             class="bc-item"
-            :class="{ 'bc-current': crumb.current || idx === crumbs.length - 1 }"
-            :title="crumb.title || crumb.label"
-          >
-            {{ crumb.label }}
-          </span>
-        </template>
-      </nav>
+            :class="{ 'bc-current': item.current || item.isLast }"
+            :title="item.title || item.label"
+          >{{ item.label }}</span>
+        </span>
+      </TransitionGroup>
     </div>
 
     <div v-if="showRight" class="header-right">
@@ -107,6 +109,22 @@ export default {
     showRight() {
       return this.itemCount !== null || this.showSort || Boolean(this.$slots.default)
     },
+    crumbsFlatList() {
+      const result = []
+      for (let i = 0; i < this.crumbs.length; i++) {
+        const crumb = this.crumbs[i]
+        if (i > 0) {
+          result.push({ isSep: true, key: `sep-after-${this.crumbs[i - 1].label}` })
+        }
+        result.push({
+          isSep: false,
+          isLast: i === this.crumbs.length - 1,
+          key: `c-${crumb.label}`,
+          ...crumb,
+        })
+      }
+      return result
+    },
   },
   methods: {
     onBcMousedown(e) {
@@ -146,6 +164,7 @@ export default {
   flex: 1 1 0;
   min-width: 0;
   overflow-x: auto;
+  position: relative;
   cursor: grab;
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -161,6 +180,10 @@ export default {
   white-space: nowrap;
   padding: 0.125rem 0;
 }
+.bc-flat-item {
+  display: inline-flex;
+  align-items: center;
+}
 .bc-item {
   font-size: 0.875rem;
   color: #64748b;
@@ -169,6 +192,7 @@ export default {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-decoration: none;
+  transition: color 200ms ease;
 }
 .bc-link {
   @apply rounded-md px-2 py-1 transition-colors duration-150;
@@ -221,7 +245,7 @@ export default {
 }
 
 .sort-order-btn {
-  width: 30px;
+  width: 15px;
   height: 30px;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
@@ -238,4 +262,32 @@ export default {
   color: #0f172a;
   border-color: #94a3b8;
 }
+
+/* 返回按钮：淡入 + 宽度展开；淡出 + 宽度收缩（让面包屑平移而非跳动） */
+.bc-back-enter-active {
+  transition: opacity 180ms ease, max-width 200ms ease;
+  overflow: hidden;
+}
+.bc-back-enter-from { opacity: 0; max-width: 0; }
+.bc-back-enter-to   { opacity: 1; max-width: 200px; }
+.bc-back-leave-active {
+  transition: opacity 140ms ease, max-width 180ms ease;
+  overflow: hidden;
+}
+.bc-back-leave-from { opacity: 1; max-width: 200px; }
+.bc-back-leave-to   { opacity: 0; max-width: 0; }
+
+/* 面包屑节点：新增节点淡入展开，移除节点淡出收缩 */
+.bc-crumb-enter-active {
+  transition: opacity 200ms ease, max-width 220ms ease;
+  overflow: hidden;
+}
+.bc-crumb-enter-from { opacity: 0; max-width: 0; }
+.bc-crumb-enter-to   { opacity: 1; max-width: 240px; }
+.bc-crumb-leave-active {
+  transition: opacity 160ms ease, max-width 200ms ease;
+  overflow: hidden;
+}
+.bc-crumb-leave-from { opacity: 1; max-width: 240px; }
+.bc-crumb-leave-to   { opacity: 0; max-width: 0; }
 </style>

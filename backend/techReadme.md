@@ -48,6 +48,10 @@
   - 返回按钮语义统一为"目录上一级"：日期详情页返回月份网格；相册页优先返回父相册，无父相册则带月份参数回到日期视图。
   - 月份上下文优先级：`route.query.group` › `album.date_group` › `album.path` 中的 YYYY-MM。
   - 关键架构约束：`App.vue` 路由组件使用 `:key="route.path"` 而非 `fullPath`，确保 query 参数变化不会销毁并重建组件，避免导航恢复死循环。
+- **页面切换过渡动画**：
+  - `App.vue` 中 `<router-view>` 使用 `<Transition name="page" mode="out-in">` 包裹路由组件，跨路由切换（日期视图 ↔ 相册视图、不同相册层级间）均有淡入淡出动画（离开 110ms、进入 160ms），消除瞬间"闪动"感。
+  - `BreadcrumbHeader.vue` 中面包屑 `<nav>` 通过 `:key="crumbsKey"` 绑定路径签名，外层 `<Transition name="bc-fade" mode="out-in">` 在路径节点变化时触发淡入淡出（离开 80ms、进入 160ms）。
+  - `DateViewPage.vue` 内部月份→详情切换使用 `t-forward`/`t-back` 命名过渡（缩放 + 位移），月份网格使用 `.grid-wrapper--fading` 实现淡出配合。
 - 默认策略：
   - 日期视图详情（非相册视图）默认 `Date` 升序。
   - 相册视图默认 `Alpha` 升序。

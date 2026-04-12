@@ -4,9 +4,9 @@
       <AppSidebar />
       <main class="flex-1 min-w-0 p-10">
         <router-view v-slot="{ Component, route }">
-          <keep-alive include="GalleryPage">
+          <Transition name="page" mode="out-in">
             <component :is="Component" :key="route.path" />
-          </keep-alive>
+          </Transition>
         </router-view>
       </main>
     </div>
@@ -37,4 +37,10 @@ export default {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* 路由页面切换淡入淡出 */
+.page-enter-active { transition: opacity 160ms ease; }
+.page-enter-from   { opacity: 0; }
+.page-leave-active { transition: opacity 110ms ease; }
+.page-leave-to     { opacity: 0; }
 </style>
