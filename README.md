@@ -13,8 +13,8 @@
 | **日期归类** | 直接文件按自身修改时间归类；子目录作为整体单元，以目录内最早文件时间归类 |
 | **缩略图生成** | 自动生成 300×200 (3:2) 缩略图，保存到 `backend/thumbnails/` |
 | **SHA-256 去重** | 哈希匹配完全重复图片，自动跳过；缩略图存在但 media 丢失时自动补全 |
-| **日期视图** | 以年 / 月两级浏览图片，附带动画切换效果 |
-| **相册管理** | 子目录导入自动创建树形相册结构，支持嵌套层级、按相册浏览、独立相册页面 |
+| **日期与日历浏览** | 日历总览与按年月/相册路径浏览分离，支持嵌套层级与统一面包屑 |
+| **相册管理** | 子目录导入自动创建树形相册结构，支持嵌套层级、按相册路径浏览 |
 | **哈希索引缓存** | `.hash_index.json` 加速导入去重，避免逐条 DB 查询 |
 | **媒体库刷新** | 清除失效 DB 记录及孤立缩略图；补全 `media/` 中未入库的文件；重建哈希索引 |
 
@@ -80,8 +80,8 @@ picTagView/
 │   │   ├── pages/
 │   │   │   ├── HomePage.vue       # 主页（文件总数统计）
 │   │   │   ├── GalleryPage.vue    # 图库管理（导入 + 刷新）
-│   │   │   ├── DateViewPage.vue   # 日期视图（年/月 → 详情，双向动画）
-│   │   │   └── AlbumViewPage.vue  # 相册详情页（子相册 + 图片浏览）
+│   │   │   ├── CalendarOverview.vue # 日历总览页（按年月分组）
+│   │   │   └── BrowsePage.vue     # 浏览页（年月内容 / 物理路径相册）
 │   │   ├── router/
 │   │   │   └── index.js           # 路由配置
 │   │   ├── App.vue
@@ -213,6 +213,7 @@ class Album(SQLModel, table=True):
 | `POST` | `/api/admin/refresh`             | 媒体库刷新（清理 + 修复 + 重建哈希索引） |
 | `GET`  | `/api/dates`                     | 返回所有年/月分组及首张缩略图 |
 | `GET`  | `/api/dates/{date_group}/items`  | 返回指定日期组的一级内容（直图 + 顶层相册） |
+| `GET`  | `/api/albums/by-path/{album_path:path}` | 通过物理路径获取相册详情 |
 | `GET`  | `/api/albums/{album_id}`         | 获取相册详情（子相册 + 直属图片） |
 | `POST` | `/api/thumbnails/cache`          | 异步生成缓存缩略图 |
 | `GET`  | `/api/thumbnails/cache/status/{task_id}` | 查询缓存生成进度 |

@@ -1,10 +1,10 @@
 # picTagView Frontend 技术说明书
 
 ## 1. 项目位置
-- `D:\project2025\Python_Projects\picTagView\frontend`
+- `D:\Python_projects\picTagView_main\frontend`
 
 ## 2. 技术栈
-- Vue.js 2.x（Vue CLI 项目）
+- Vue 3（Vue CLI 项目）
 - Vue Router（页面导航）
 - Axios / Fetch（HTTP 请求，与后端API交互）
 - Tailwind CSS（样式工具类）
@@ -25,7 +25,8 @@
   - `pages/`：路由页面
     - `HomePage.vue`
     - `GalleryPage.vue`
-    - `DateViewPage.vue`
+      - `CalendarOverview.vue`
+      - `BrowsePage.vue`
     - `EmptyPage.vue`
 
 ## 4. 主要功能说明
@@ -35,14 +36,14 @@
 - 传递 `files` 与 `lastModifiedJson`
 - 成功后刷新目录数据
 
-### 4.2 按年月分组视图
-- `DateViewPage` 获取 `GET /api/dates`
+### 4.2 日历总览
+- `CalendarOverview` 获取 `GET /api/dates`
 - 按 `year -> month` 做嵌套显示
-- 点击月组进入 `GalleryPage`
+- 点击月组进入 `/calendar/{date_group}` 浏览页
 
 ### 4.3 展示图库内容
-- `GalleryPage` 调用 `GET /api/dates/{date_group}/items`
-- 直图显示 `ThumbCard`，子目录显示相册封面
+- `BrowsePage` 调用 `GET /api/dates/{date_group}/items` 或 `GET /api/albums/by-path/{album_path:path}`
+- 直图显示 `ThumbCard`，子目录显示相册封面并支持物理路径继续下钻
 
 ### 4.4 管理与重建
 - 交互按钮触发 `POST /api/admin/refresh`
@@ -50,10 +51,12 @@
 
 ## 5. 前端路由说明 (`router/index.js`)
 - `/` -> `HomePage`
-- `/gallery` -> `GalleryPage`（默认需选择日期组）
-- `/dates` -> `DateViewPage`
+- `/gallery` -> `GalleryPage`
+- `/calendar` -> `CalendarOverview`
+- `/calendar/:group` -> `BrowsePage`
+- `/calendar/:group/:albumPath+` -> `BrowsePage`
 
-\* 具体文件中有详细路由重定向与参数处理
+* 具体文件中有嵌套路由、组件复用与参数处理
 
 ## 6. 构建与运行
 ### 6.1 安装依赖
@@ -97,15 +100,16 @@ npm run lint
    - 确认后端 `POST /api/import` 成功返回
    - 缩略图 URL 形如 `/thumbnails/{hash}.jpg`
    - 确保 `backend/temp` 有该文件
-5. 404 在 /gallery/{date_group}
-   - 确认日期组存在后端数据
-   - 在页面路由中选择查看具体 `date_group`
+5. 404 在 /calendar/{date_group} 或更深层相册路径
+   - 确认日期组和相册路径在后端存在
+   - 检查浏览页是否能正确解析 `album_path`
 
 ## 9. 补充说明
 - 前端对后端 API 的依赖关系：
-  - `/api/dates` 用于年月树
-  - `/api/dates/{date_group}/items` 用于日历内容
-  - `/api/images/count` 可用于统计呈现
+   - `/api/dates` 用于年月树
+   - `/api/dates/{date_group}/items` 用于日历内容
+   - `/api/albums/by-path/{album_path:path}` 用于物理路径相册详情
+   - `/api/images/count` 可用于统计呈现
 - `ThumbCard` 负责显示缩略图，统一尺寸对齐
 - `Sidebar` 负责导航历史分组与用户操作按钮
 

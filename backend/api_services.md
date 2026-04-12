@@ -57,6 +57,7 @@
   - GET /api/dates
   - GET /api/dates/{date_group}/items
 - app/api/routers/albums.py
+  - GET /api/albums/by-path/{album_path:path}
   - GET /api/albums/{album_id}
 - app/api/routers/images.py
   - GET /api/images/{image_id}/open
@@ -116,11 +117,19 @@
 - GET /api/dates/{date_group}/items
   - 实现：app/api/routers/dates.py
   - 用途：返回某年月下的直图与子相册
+  - 说明：子相册条目中包含 `album_path` 字段（即 Album.path，如 `2024-07/vacation`），前端用于构建 `/calendar/:group/:albumPath+` 路由
+
+- GET /api/albums/by-path/{album_path:path}
+  - 实现：app/api/routers/albums.py
+  - 用途：通过相册物理路径查询相册详情（前端路由 `/calendar/:group/:albumPath+` 使用）
+  - 参数：album_path 为相对于 media 根的相册路径，如 `2024-07/vacation/day1`
+  - 返回：与 GET /api/albums/{album_id} 相同的 AlbumDetailResponse
+  - 说明：Album.path 字段有数据库索引，查询高效
 
 - GET /api/albums/{album_id}
   - 实现：app/api/routers/albums.py
   - 用途：返回相册详情、祖先面包屑、子相册与直图
-  - 说明：响应体中 `album.date_group`（YYYY-MM）与 `album.path` 供前端面包屑与返回导航使用，在路由 query 缺失时自动推断月份上下文
+  - 说明：响应体中 `album.date_group`（YYYY-MM）与 `album.path` 供前端面包屑与返回导航使用；条目中 `album_path` 字段提供子相册的物理路径用于 URL 构建
 
 ### 3.3 系统集成接口
 

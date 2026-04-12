@@ -2,9 +2,9 @@ import { createRouter, createWebHistory } from 'vue-router'
 import HomePage from '../pages/HomePage.vue'
 import GalleryPage from '../pages/GalleryPage.vue'
 import EmptyPage from '../pages/EmptyPage.vue'
-import DateViewPage from '../pages/DateViewPage.vue'
+import CalendarOverview from '../pages/CalendarOverview.vue'
+import BrowsePage from '../pages/BrowsePage.vue'
 import SettingsPage from '../pages/SettingsPage.vue'
-import AlbumViewPage from '../pages/AlbumViewPage.vue'
 
 const routes = [
   {
@@ -25,13 +25,21 @@ const routes = [
   {
     path: '/calendar',
     name: 'calendar',
-    component: DateViewPage
+    component: CalendarOverview
   },
   {
-    path: '/album/:id',
-    name: 'album',
-    component: AlbumViewPage,
-    props: true
+    path: '/calendar/:group',
+    name: 'browse-group',
+    component: BrowsePage,
+    props: true,
+    meta: { reuseKey: 'browse' }
+  },
+  {
+    path: '/calendar/:group/:albumPath+',
+    name: 'browse-album',
+    component: BrowsePage,
+    props: true,
+    meta: { reuseKey: 'browse' }
   },
   {
     path: '/settings',

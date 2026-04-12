@@ -26,7 +26,7 @@
 - 业务按职责拆分到子路由模块：
   - `app/api/routers/basic.py`：`GET /`、`POST /api/import`、`GET /api/images/count`、`POST /api/admin/refresh`
   - `app/api/routers/dates.py`：`GET /api/dates`、`GET /api/dates/{date_group}/items`
-  - `app/api/routers/albums.py`：`GET /api/albums/{album_id}`
+  - `app/api/routers/albums.py`：`GET /api/albums/by-path/{album_path:path}`、`GET /api/albums/{album_id}`
   - `app/api/routers/images.py`：`GET /api/images/{image_id}/open`
   - `app/api/routers/system.py`：`/api/system/*` 相关接口
   - `app/api/routers/cache.py`：`DELETE /api/cache`、`/api/thumbnails/cache*`
@@ -42,16 +42,23 @@
 - 前端交互补充：排序字段选择器由滑块改为 `select`（`Date`/`Alpha`），升降序箭头按钮独立放在选择框外侧。
 - 前端结构补充：日期详情页与相册页的 header 已统一为面包屑样式，并组件化为 `frontend/src/components/BreadcrumbHeader.vue`，用于复用“返回按钮 + 面包屑 + 项目数 + 排序控件 + 右侧扩展操作区”。
 - 返回与面包屑导航行为：
-  - 相册面包屑结构：日期视图 › YYYY-MM › 祖先相册… › 当前相册。
-  - 月份节点（YYYY-MM）是可点击链接，目标为 `/calendar?group=YYYY-MM`。
-  - 日期视图页在数据加载完成后自动恢复到对应月份详情，随后清除 query 参数（路径不变，不触发组件重建）。
-  - 返回按钮语义统一为"目录上一级"：日期详情页返回月份网格；相册页优先返回父相册，无父相册则带月份参数回到日期视图。
-  - 月份上下文优先级：`route.query.group` › `album.date_group` › `album.path` 中的 YYYY-MM。
-  - 关键架构约束：`App.vue` 路由组件使用 `:key="route.path"` 而非 `fullPath`，确保 query 参数变化不会销毁并重建组件，避免导航恢复死循环。
+  - 前端路由已重构为层级结构（2026-04）：
+    - 一级页面（并列）：主页 `/`、标签总览 `/tags`、图库管理 `/gallery`、日期视图 `/calendar`、设置 `/settings`
+    - 二级页面（日期域浏览）：
+      - `/calendar/:group` — 月份图片列表（BrowsePage）
+      - `/calendar/:group/:albumPath+` — 相册浏览，支持任意层级嵌套（BrowsePage）
+    - 旧路由 `/album/:id` 已废弃，相册通过物理路径映射到 URL：`/calendar/2024-07/vacation/day1`
+  - 面包屑结构：日期视图 › YYYY-MM › 相册1 › 相册2（当前），完全由 URL 路径段驱动，无需异步补标题。
+  - BrowsePage 同时承载月份列表和相册浏览，通过 `$route.params` 判断模式：无 `albumPath` 为月份模式，有则为相册模式，调用 `GET /api/albums/by-path/{path}` 获取数据。
+  - 组件复用策略：两个 browse 路由共享 `meta.reuseKey = 'browse'`，App.vue 使用 `:key="route.meta?.reuseKey || route.name"` 避免组件销毁重建，消除跨层级导航闪动。
+  - 返回按钮语义统一为"目录上一级"：在相册内返回上一级相册或月份列表，月份列表返回日期总览。
+  - CalendarOverview 为纯月份网格页面，不再内含详情子视图。
+  - 侧边栏 `/calendar` 高亮规则：路径以 `/calendar` 开头即激活。
+  - sessionStorage `pendingAlbumTitle` 机制已移除，标题由 URL 路径段或 API 响应即时提供。
 - **页面切换过渡动画**：
-  - `App.vue` 中 `<router-view>` 使用 `<Transition name="page" mode="out-in">` 包裹路由组件，跨路由切换（日期视图 ↔ 相册视图、不同相册层级间）均有淡入淡出动画（离开 110ms、进入 160ms），消除瞬间"闪动"感。
-  - `BreadcrumbHeader.vue` 中面包屑 `<nav>` 通过 `:key="crumbsKey"` 绑定路径签名，外层 `<Transition name="bc-fade" mode="out-in">` 在路径节点变化时触发淡入淡出（离开 80ms、进入 160ms）。
-  - `DateViewPage.vue` 内部月份→详情切换使用 `t-forward`/`t-back` 命名过渡（缩放 + 位移），月份网格使用 `.grid-wrapper--fading` 实现淡出配合。
+  - `App.vue` 中 `<router-view>` 使用 `<Transition name="page" mode="out-in">` 包裹路由组件，一级页面切换有淡入淡出动画（离开 110ms、进入 160ms）。
+  - BrowsePage 内在 group/album 层级间导航时组件复用（不销毁），由 watch `$route.params` 触发数据刷新，面包屑即时更新，无闪动。
+  - `BreadcrumbHeader.vue` 中面包屑 `<nav>` 通过 `TransitionGroup` 实现节点增减动画。
 - 默认策略：
   - 日期视图详情（非相册视图）默认 `Date` 升序。
   - 相册视图默认 `Alpha` 升序。

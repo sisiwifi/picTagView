@@ -5,7 +5,7 @@
       <main class="flex-1 min-w-0 p-10">
         <router-view v-slot="{ Component, route }">
           <Transition name="page" mode="out-in">
-            <component :is="Component" :key="route.path" />
+            <component :is="Component" :key="route.meta?.reuseKey || route.name" />
           </Transition>
         </router-view>
       </main>

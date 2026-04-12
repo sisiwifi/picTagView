@@ -56,6 +56,9 @@ export default {
   },
   methods: {
     isActive(path) {
+      if (path === '/calendar') {
+        return this.$route.path === '/calendar' || this.$route.path.startsWith('/calendar/')
+      }
       return this.$route.path === path
     },
     toggleSidebar() {

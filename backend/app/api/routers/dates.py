@@ -220,6 +220,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     id=cover_photo_id,
                     cache_thumb_url=row_cache_thumb_url,
                     public_id=album.public_id,
+                    album_path=album.path,
                     sort_ts=_to_unix_ts(album.updated_at or album.created_at),
                 )
             )

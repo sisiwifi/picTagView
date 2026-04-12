@@ -32,103 +32,100 @@ def _to_unix_ts(dt: datetime | None) -> int | None:
     return int(dt.timestamp())
 
 
-@router.get("/api/albums/{album_id}", response_model=AlbumDetailResponse)
-def album_detail(album_id: str) -> AlbumDetailResponse:
-    with get_session() as session:
-        image_deleted, album_deleted = build_soft_delete_maps(session)
-        album = session.exec(
-            select(Album).where(Album.public_id == album_id)
-        ).first()
-        if not album or not album_visible(album, album_deleted):
-            raise HTTPException(status_code=404, detail="Album not found")
+def _build_album_response(album: Album, session) -> AlbumDetailResponse:
+    """Shared logic for building album detail response."""
+    image_deleted, album_deleted = build_soft_delete_maps(session)
+    if not album_visible(album, album_deleted):
+        raise HTTPException(status_code=404, detail="Album not found")
 
-        parent_public_id = None
-        ancestors: list[BreadcrumbItem] = []
-        cur = album
-        while cur.parent_id is not None:
-            par = session.get(Album, cur.parent_id)
-            if not par:
-                break
-            ancestors.insert(0, BreadcrumbItem(public_id=par.public_id, title=par.title))
-            if cur is album:
-                parent_public_id = par.public_id
-            cur = par
+    parent_public_id = None
+    ancestors: list[BreadcrumbItem] = []
+    cur = album
+    while cur.parent_id is not None:
+        par = session.get(Album, cur.parent_id)
+        if not par:
+            break
+        ancestors.insert(0, BreadcrumbItem(public_id=par.public_id, title=par.title))
+        if cur is album:
+            parent_public_id = par.public_id
+        cur = par
 
-        sub_albums = session.exec(
-            select(Album)
-            .where(Album.parent_id == album.id)
-            .order_by(col(Album.title))
-        ).all()
-        sub_albums = [sa for sa in sub_albums if album_visible(sa, album_deleted)]
+    sub_albums = session.exec(
+        select(Album)
+        .where(Album.parent_id == album.id)
+        .order_by(col(Album.title))
+    ).all()
+    sub_albums = [sa for sa in sub_albums if album_visible(sa, album_deleted)]
 
-        sub_items: list[AlbumItem] = []
-        for sa in sub_albums:
-            row_thumb_url = ""
-            row_cache_thumb_url = None
-            cover_photo_id = None
-            if sa.cover and isinstance(sa.cover, dict):
-                cover_photo_id = sa.cover.get("photo_id")
-                tp = sa.cover.get("thumb_path", "")
-                if tp:
-                    resolved = resolve_stored_path(tp)
-                    if resolved and resolved.exists():
+    sub_items: list[AlbumItem] = []
+    for sa in sub_albums:
+        row_thumb_url = ""
+        row_cache_thumb_url = None
+        cover_photo_id = None
+        if sa.cover and isinstance(sa.cover, dict):
+            cover_photo_id = sa.cover.get("photo_id")
+            tp = sa.cover.get("thumb_path", "")
+            if tp:
+                resolved = resolve_stored_path(tp)
+                if resolved and resolved.exists():
+                    try:
+                        resolved.relative_to(TEMP_DIR)
+                        row_thumb_url = f"/thumbnails/{resolved.name}"
+                    except ValueError:
                         try:
-                            resolved.relative_to(TEMP_DIR)
-                            row_thumb_url = f"/thumbnails/{resolved.name}"
+                            resolved.relative_to(CACHE_DIR)
+                            row_cache_thumb_url = f"/cache/{resolved.name}"
                         except ValueError:
-                            try:
-                                resolved.relative_to(CACHE_DIR)
-                                row_cache_thumb_url = f"/cache/{resolved.name}"
-                            except ValueError:
-                                pass
+                            pass
 
-            if cover_photo_id is not None:
-                asset_for_cover = session.get(ImageAsset, cover_photo_id)
-                if asset_for_cover:
-                    if not row_thumb_url:
-                        row_thumb_url = thumb_url(asset_for_cover)
-                    if not row_cache_thumb_url:
-                        row_cache_thumb_url = cache_thumb_url(asset_for_cover)
+        if cover_photo_id is not None:
+            asset_for_cover = session.get(ImageAsset, cover_photo_id)
+            if asset_for_cover:
+                if not row_thumb_url:
+                    row_thumb_url = thumb_url(asset_for_cover)
+                if not row_cache_thumb_url:
+                    row_cache_thumb_url = cache_thumb_url(asset_for_cover)
 
-            sub_items.append(AlbumItem(
-                type="album",
-                name=sa.title,
-                thumb_url=row_thumb_url,
-                count=sa.subtree_photo_count,
-                id=cover_photo_id,
-                cache_thumb_url=row_cache_thumb_url,
-                public_id=sa.public_id,
-                sort_ts=_to_unix_ts(sa.updated_at or sa.created_at),
-            ))
-        sub_items.sort(key=lambda item: _item_sort_key(item.name))
+        sub_items.append(AlbumItem(
+            type="album",
+            name=sa.title,
+            thumb_url=row_thumb_url,
+            count=sa.subtree_photo_count,
+            id=cover_photo_id,
+            cache_thumb_url=row_cache_thumb_url,
+            public_id=sa.public_id,
+            album_path=sa.path,
+            sort_ts=_to_unix_ts(sa.updated_at or sa.created_at),
+        ))
+    sub_items.sort(key=lambda item: _item_sort_key(item.name))
 
-        # Use album_image mapping table instead of scanning all ImageAssets
-        album_assets = session.exec(
-            select(ImageAsset)
-            .where(
-                ImageAsset.id.in_(  # type: ignore[union-attr]
-                    select(AlbumImage.image_id).where(AlbumImage.album_id == album.id)
-                )
+    # Use album_image mapping table instead of scanning all ImageAssets
+    album_assets = session.exec(
+        select(ImageAsset)
+        .where(
+            ImageAsset.id.in_(  # type: ignore[union-attr]
+                select(AlbumImage.image_id).where(AlbumImage.album_id == album.id)
             )
-            .order_by(col(ImageAsset.id))
-        ).all()
+        )
+        .order_by(col(ImageAsset.id))
+    ).all()
 
-        image_items: list[AlbumItem] = []
-        for asset in album_assets:
-            if not asset_visible(asset, image_deleted):
-                continue
-            thumb = thumb_url(asset)
-            cache_thumb = cache_thumb_url(asset)
-            media_fallback = media_url(asset)
-            image_items.append(AlbumItem(
-                type="image",
-                name=asset.full_filename or "",
-                thumb_url=thumb,
-                id=asset.id,
-                cache_thumb_url=cache_thumb or media_fallback,
-                sort_ts=_to_unix_ts(asset.file_created_at or asset.imported_at or asset.created_at),
-            ))
-        image_items.sort(key=lambda item: _item_sort_key(item.name))
+    image_items: list[AlbumItem] = []
+    for asset in album_assets:
+        if not asset_visible(asset, image_deleted):
+            continue
+        thumb = thumb_url(asset)
+        cache_thumb = cache_thumb_url(asset)
+        media_fallback = media_url(asset)
+        image_items.append(AlbumItem(
+            type="image",
+            name=asset.full_filename or "",
+            thumb_url=thumb,
+            id=asset.id,
+            cache_thumb_url=cache_thumb or media_fallback,
+            sort_ts=_to_unix_ts(asset.file_created_at or asset.imported_at or asset.created_at),
+        ))
+    image_items.sort(key=lambda item: _item_sort_key(item.name))
 
     return AlbumDetailResponse(
         album=AlbumInfo(
@@ -143,3 +140,25 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
         ),
         items=sub_items + image_items,
     )
+
+
+@router.get("/api/albums/by-path/{album_path:path}", response_model=AlbumDetailResponse)
+def album_by_path(album_path: str) -> AlbumDetailResponse:
+    with get_session() as session:
+        album = session.exec(
+            select(Album).where(Album.path == album_path)
+        ).first()
+        if not album:
+            raise HTTPException(status_code=404, detail="Album not found")
+        return _build_album_response(album, session)
+
+
+@router.get("/api/albums/{album_id}", response_model=AlbumDetailResponse)
+def album_detail(album_id: str) -> AlbumDetailResponse:
+    with get_session() as session:
+        album = session.exec(
+            select(Album).where(Album.public_id == album_id)
+        ).first()
+        if not album:
+            raise HTTPException(status_code=404, detail="Album not found")
+        return _build_album_response(album, session)
