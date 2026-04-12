@@ -5,7 +5,7 @@
       <main class="flex-1 min-w-0 p-10">
         <router-view v-slot="{ Component, route }">
           <keep-alive include="GalleryPage">
-            <component :is="Component" :key="route.fullPath" />
+            <component :is="Component" :key="route.path" />
           </keep-alive>
         </router-view>
       </main>

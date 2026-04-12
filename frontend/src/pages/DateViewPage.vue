@@ -1,110 +1,59 @@
-<template>
+﻿<template>
   <section class="page">
-    <!-- Header -->
-    <header class="page-header">
-      <button
-        v-if="view === 'detail' || view === 'returning'"
-        class="back-btn"
-        @click="closeDetail"
-      >
-        ← 返回
-      </button>
-
-      <!-- Detail mode: breadcrumb + view-mode toggle -->
-      <template v-if="view === 'detail' || view === 'returning'">
-        <div
-          class="breadcrumb-wrap"
-          ref="breadcrumbWrap"
-          :class="{ 'bc-dragging': bcDragging }"
-          @mousedown="onBcMousedown"
-          @mouseleave="onBcMouseleave"
-          @mouseup="onBcMouseup"
-          @mousemove="onBcMousemove"
+    <BreadcrumbHeader
+      :show-back="isDetailView"
+      :crumbs="headerCrumbs"
+      :item-count="isDetailView ? selectedItems.length : null"
+      :show-sort="isDetailView"
+      :sort-by="sortBy"
+      :sort-dir="sortDir"
+      @back="goBackOneLevel"
+      @update:sortBy="onSortModeSelect"
+      @toggle-sort-dir="toggleSortDir"
+    >
+      <div v-if="isDetailView" class="view-toggle" role="group" aria-label="显示方式">
+        <button
+          class="vt-btn"
+          :class="{ active: viewMode === 'grid' }"
+          title="大缩略图显示"
+          aria-label="大缩略图显示"
+          @click="viewMode = 'grid'"
         >
-          <nav class="breadcrumb">
-            <span class="bc-item" title="日期视图">日期视图</span>
-            <span class="bc-sep">›</span>
-            <span class="bc-item bc-item--cur" :title="selectedGroup">{{ truncate(selectedGroup, 20) }}</span>
-          </nav>
-        </div>
-        <div class="header-actions">
-          <span class="header-count">{{ selectedItems.length }} 项</span>
-          <div class="sort-controls" role="group" aria-label="排序设置">
-            <div class="sort-switch" role="group" aria-label="排序字段">
-              <span class="sort-thumb" :class="{ 'is-alpha': sortBy === 'alpha' }" aria-hidden="true"></span>
-              <button
-                class="sort-mode-btn"
-                :class="{ active: sortBy === 'date' }"
-                title="按日期排序"
-                aria-label="按日期排序"
-                @click="onSortModeClick('date')"
-              >
-                Date <span v-if="sortBy === 'date'" class="sort-dir-mark">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
-              </button>
-              <button
-                class="sort-mode-btn"
-                :class="{ active: sortBy === 'alpha' }"
-                title="按字符顺序排序"
-                aria-label="按字符顺序排序"
-                @click="onSortModeClick('alpha')"
-              >
-                Alpha <span v-if="sortBy === 'alpha'" class="sort-dir-mark">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
-              </button>
-            </div>
-          </div>
-          <div class="view-toggle" role="group" aria-label="显示方式">
-            <button
-              class="vt-btn"
-              :class="{ active: viewMode === 'grid' }"
-              title="大缩略图显示"
-              aria-label="大缩略图显示"
-              @click="viewMode = 'grid'"
-            >
-              <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor" aria-hidden="true">
-                <rect x="1"   y="1"   width="5.5" height="5.5" rx="1"/>
-                <rect x="8.5" y="1"   width="5.5" height="5.5" rx="1"/>
-                <rect x="1"   y="8.5" width="5.5" height="5.5" rx="1"/>
-                <rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1"/>
-              </svg>
-            </button>
-            <button
-              class="vt-btn"
-              :class="{ active: viewMode === 'list' }"
-              title="列表显示"
-              aria-label="列表显示"
-              @click="viewMode = 'list'"
-            >
-              <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor" aria-hidden="true">
-                <rect x="1"   y="1.5" width="4"   height="4"   rx="0.75"/>
-                <rect x="6.5" y="3"   width="7.5" height="1.5" rx="0.75"/>
-                <rect x="1"   y="7.5" width="4"   height="4"   rx="0.75"/>
-                <rect x="6.5" y="9"   width="7.5" height="1.5" rx="0.75"/>
-                <rect x="1"   y="13"  width="4"   height="1.5" rx="0.75"/>
-                <rect x="6.5" y="13"  width="7.5" height="1.5" rx="0.75"/>
-              </svg>
-            </button>
-            <button
-              class="vt-btn vt-btn--placeholder"
-              title="选择（即将推出）"
-              aria-label="选择"
-              disabled
-            >
-              <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor" aria-hidden="true">
-                <path d="M3.5 1 L3.5 12 L6.3 9.2 L8.7 14 L10.5 13.2 L8.1 8.4 L12 8.4 Z"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-      </template>
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor" aria-hidden="true">
+            <rect x="1" y="1" width="5.5" height="5.5" rx="1"/>
+            <rect x="8.5" y="1" width="5.5" height="5.5" rx="1"/>
+            <rect x="1" y="8.5" width="5.5" height="5.5" rx="1"/>
+            <rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1"/>
+          </svg>
+        </button>
+        <button
+          class="vt-btn"
+          :class="{ active: viewMode === 'list' }"
+          title="列表显示"
+          aria-label="列表显示"
+          @click="viewMode = 'list'"
+        >
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor" aria-hidden="true">
+            <rect x="1" y="1.5" width="4" height="4" rx="0.75"/>
+            <rect x="6.5" y="3" width="7.5" height="1.5" rx="0.75"/>
+            <rect x="1" y="7.5" width="4" height="4" rx="0.75"/>
+            <rect x="6.5" y="9" width="7.5" height="1.5" rx="0.75"/>
+            <rect x="1" y="13" width="4" height="1.5" rx="0.75"/>
+            <rect x="6.5" y="13" width="7.5" height="1.5" rx="0.75"/>
+          </svg>
+        </button>
+        <button class="vt-btn vt-btn--placeholder" title="选择（即将推出）" aria-label="选择" disabled>
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor" aria-hidden="true">
+            <path d="M3.5 1 L3.5 12 L6.3 9.2 L8.7 14 L10.5 13.2 L8.1 8.4 L12 8.4 Z"/>
+          </svg>
+        </button>
+      </div>
+    </BreadcrumbHeader>
 
-      <!-- Grid mode: plain title -->
-      <template v-else>
-        <h2 class="page-title flex-1">日期视图</h2>
-        <span class="page-subtitle">按年份与月份浏览已导入的图片。</span>
-      </template>
-    </header>
+    <div v-if="!isDetailView" class="header-sub">
+      <span class="page-subtitle">按年份与月份浏览已导入的图片。</span>
+    </div>
 
-    <!-- Grid view -->
     <div
       v-show="view === 'grid' || view === 'animating' || view === 'returning'"
       class="grid-wrapper"
@@ -121,9 +70,7 @@
         <div v-for="yg in years" :key="yg.year" class="year-section">
           <div class="year-heading">
             <span class="year-heading__num">{{ yg.year }}</span>
-            <span class="year-heading__count">
-              {{ yg.months.reduce((s, m) => s + m.count, 0) }} 张
-            </span>
+            <span class="year-heading__count">{{ yg.months.reduce((s, m) => s + m.count, 0) }} 张</span>
           </div>
           <div class="year-divider"></div>
 
@@ -145,24 +92,13 @@
       </template>
     </div>
 
-    <!-- Detail view -->
     <Transition :name="transitionName">
-      <div
-        v-if="detailVisible"
-        class="detail-wrapper"
-        :style="originStyle"
-      >
+      <div v-if="detailVisible" class="detail-wrapper" :style="originStyle">
         <LoadingSpinner v-if="loadingItems" />
 
         <template v-else>
-          <!-- Grid mode: justified-layout large thumbnails -->
           <div v-if="viewMode === 'grid'" ref="itemGrid" class="photo-grid">
-            <div
-              v-for="(row, ri) in justifiedRows"
-              :key="ri"
-              class="jl-row"
-              :style="{ height: row.height + 'px' }"
-            >
+            <div v-for="(row, ri) in justifiedRows" :key="ri" class="jl-row" :style="{ height: row.height + 'px' }">
               <div
                 v-for="item in row.items"
                 :key="item.id || item._idx"
@@ -170,17 +106,11 @@
                 :data-index="item._idx"
                 :style="{ width: item.computedWidth + 'px' }"
               >
-                <!-- Skeleton while no thumbnail available -->
                 <div v-if="!resolvedUrl(item)" class="photo-skeleton">
                   <span class="skeleton-label">···</span>
                 </div>
 
-                <!-- Image -->
-                <div
-                  v-else
-                  class="photo-card"
-                  @click="openImage(item)"
-                >
+                <div v-else class="photo-card" @click="openImage(item)">
                   <img
                     :src="resolvedUrl(item)"
                     class="photo-img"
@@ -199,7 +129,6 @@
             </div>
           </div>
 
-          <!-- List mode: 50 px thumbnail + filename -->
           <div v-else ref="listView" class="list-view">
             <div
               v-for="(item, idx) in selectedItems"
@@ -221,7 +150,7 @@
                   @error="onImgError(item, $event)"
                 />
               </div>
-              <span class="list-filename">{{ item.name || '—' }}</span>
+              <span class="list-filename">{{ item.name || '-' }}</span>
               <span v-if="item.type === 'album'" class="list-album-badge">📁 {{ item.count }} 张</span>
             </div>
           </div>
@@ -234,6 +163,7 @@
 <script>
 import ThumbCard      from '../components/ThumbCard.vue'
 import LoadingSpinner from '../components/LoadingSpinner.vue'
+import BreadcrumbHeader from '../components/BreadcrumbHeader.vue'
 
 const API_BASE = 'http://127.0.0.1:8000'
 const DEBOUNCE_MS = 300
@@ -242,7 +172,7 @@ const RADIUS = 50
 
 export default {
   name: 'DateViewPage',
-  components: { ThumbCard, LoadingSpinner },
+  components: { ThumbCard, LoadingSpinner, BreadcrumbHeader },
 
   data() {
     return {
@@ -272,13 +202,22 @@ export default {
       viewMode:       'grid',   // 'grid' | 'list'
       sortBy:         'date',   // 'date' | 'alpha'
       sortDir:        'asc',    // 'asc' | 'desc'
-      bcDragging:     false,
-      bcStartX:       0,
-      bcScrollLeft:   0,
     }
   },
 
   computed: {
+    isDetailView() {
+      return this.view === 'detail' || this.view === 'returning'
+    },
+    headerCrumbs() {
+      if (this.isDetailView) {
+        return [
+          { label: '日期视图' },
+          { label: this.truncate(this.selectedGroup, 20), title: this.selectedGroup, current: true },
+        ]
+      }
+      return [{ label: '日期视图', current: true }]
+    },
     transitionName() {
       return this.navDir === 'back' ? 't-back' : 't-forward'
     },
@@ -349,18 +288,17 @@ export default {
         }
       })
     },
+    '$route.query.group'(newGroup, oldGroup) {
+      if (newGroup === oldGroup || !newGroup) return
+      this.tryRestoreGroupFromRoute()
+    },
   },
 
   created() {
-    this.fetchDates()
+    this.fetchDates().then(() => {
+      this.tryRestoreGroupFromRoute()
+    })
     window.addEventListener('resize', this.onResize)
-  },
-  activated() {
-    this.view          = 'grid'
-    this.detailVisible = false
-    this.selectedGroup = ''
-    this.selectedItems = []
-    this.fetchDates()
   },
 
   beforeUnmount() {
@@ -465,10 +403,38 @@ export default {
       finally  { this.loadingDates = false }
     },
 
+    findMonthGroup(group) {
+      if (!group) return null
+      for (const year of this.years || []) {
+        for (const month of year.months || []) {
+          if (String(month.group) === String(group)) return month
+        }
+      }
+      return null
+    },
+
+    async tryRestoreGroupFromRoute() {
+      const routeGroup = this.$route?.query?.group
+      if (!routeGroup) return
+      const target = this.findMonthGroup(routeGroup)
+      if (!target) {
+        this.$router.replace({ name: 'calendar', query: {} }).catch(() => {})
+        return
+      }
+      if (this.isDetailView && String(this.selectedGroup) === String(routeGroup)) return
+      await this.openGroup(target)
+      this.$router.replace({ name: 'calendar', query: {} }).catch(() => {})
+    },
+
     async openGroup(mg, ev) {
-      const rect = ev.currentTarget.getBoundingClientRect()
-      this.originX = `${Math.round(((rect.left + rect.width  / 2) / window.innerWidth)  * 100)}%`
-      this.originY = `${Math.round(((rect.top  + rect.height / 2) / window.innerHeight) * 100)}%`
+      const rect = ev?.currentTarget?.getBoundingClientRect?.()
+      if (rect) {
+        this.originX = `${Math.round(((rect.left + rect.width  / 2) / window.innerWidth)  * 100)}%`
+        this.originY = `${Math.round(((rect.top  + rect.height / 2) / window.innerHeight) * 100)}%`
+      } else {
+        this.originX = '50%'
+        this.originY = '50%'
+      }
 
       this.viewMode  = 'grid'
       this.sortBy    = 'date'
@@ -486,7 +452,7 @@ export default {
       const [data] = await Promise.all([
         fetch(`${API_BASE}/api/dates/${mg.group}/items`)
           .then(r => r.json()).catch(() => ({ items: [] })),
-        new Promise(r => setTimeout(r, 170)),
+        new Promise(r => setTimeout(r, rect ? 170 : 0)),
       ])
 
       this.selectedItems = this.sortItems(data.items || [])
@@ -513,6 +479,18 @@ export default {
       })
       // Detect missing item thumbnails and trigger an immediate background refresh
       this._checkAndRefreshItems()
+    },
+
+    goBackOneLevel() {
+      if (this.isDetailView) {
+        this.closeDetail()
+        return
+      }
+      if (window.history.length > 1) {
+        this.$router.back()
+        return
+      }
+      this.$router.push('/calendar')
     },
 
     closeDetail() {
@@ -773,11 +751,8 @@ export default {
       })
     },
 
-    onSortModeClick(mode) {
-      if (this.sortBy === mode) {
-        this.toggleSortDir()
-        return
-      }
+    onSortModeSelect(mode) {
+      if (this.sortBy === mode) return
       this.sortBy = mode
       this.sortDir = 'asc'
       this.refreshSortResult()
@@ -788,26 +763,13 @@ export default {
       this.refreshSortResult()
     },
 
-    onBcMousedown(e) {
-      const el = this.$refs.breadcrumbWrap
-      if (!el) return
-      this.bcDragging   = true
-      this.bcStartX     = e.pageX
-      this.bcScrollLeft = el.scrollLeft
-    },
-    onBcMouseup()    { this.bcDragging = false },
-    onBcMouseleave() { this.bcDragging = false },
-    onBcMousemove(e) {
-      if (!this.bcDragging) return
-      e.preventDefault()
-      const el = this.$refs.breadcrumbWrap
-      if (!el) return
-      el.scrollLeft = this.bcScrollLeft - (e.pageX - this.bcStartX)
-    },
-
     async openImage(item) {
       if (item.type === 'album' && item.public_id) {
-        this.$router.push({ name: 'album', params: { id: item.public_id } })
+        const query = { ...this.$route.query }
+        if (this.selectedGroup) {
+          query.group = this.selectedGroup
+        }
+        this.$router.push({ name: 'album', params: { id: item.public_id }, query })
         return
       }
       if (!item.id) return
@@ -822,17 +784,8 @@ export default {
 <style scoped lang="css">
 .page { @apply flex flex-col gap-6; }
 
-.page-header {
-  @apply sticky top-0 z-40 flex items-center gap-3 bg-white bg-opacity-95 py-3 backdrop-blur-sm shadow-sm;
-}
-.page-title  { @apply text-xl font-semibold text-slate-900 m-0 min-w-0; }
+.header-sub { @apply -mt-4; }
 .page-subtitle { @apply text-sm text-slate-400 m-0; }
-.header-count { @apply text-sm text-slate-400; }
-.back-btn {
-  @apply flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-slate-500
-         bg-transparent border-0 cursor-pointer transition-colors duration-150;
-}
-.back-btn:hover { @apply bg-slate-100 text-slate-800; }
 
 .grid-wrapper {
   @apply flex flex-col gap-10;
@@ -882,7 +835,7 @@ export default {
   letter-spacing: 0.06em;
 }
 
-/* ── Detail photo grid: justified-layout (equal-height rows, natural aspect) ──── */
+/* 鈹€鈹€ Detail photo grid: justified-layout (equal-height rows, natural aspect) 鈹€鈹€鈹€鈹€ */
 .photo-grid {
   display: flex;
   flex-direction: column;
@@ -972,7 +925,6 @@ export default {
 .t-back-leave-from { opacity: 1; transform: scale(1)    translateY(0); }
 .t-back-leave-to   { opacity: 0; transform: scale(0.92) translateY(14px); }
 
-/* ── Breadcrumb ─────────────────────────────────────────── */
 .breadcrumb-wrap {
   flex: 1 1 0;
   min-width: 0;
@@ -1010,7 +962,7 @@ export default {
   flex-shrink: 0;
 }
 
-/* ── View-mode toggle ───────────────────────────────────── */
+/* 鈹€鈹€ View-mode toggle 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
 .header-actions {
   display: flex;
   align-items: center;
@@ -1112,58 +1064,7 @@ export default {
   opacity: 0.35;
   cursor: not-allowed;
 }
-
-/* ── List view ──────────────────────────────────────────── */
-.list-view {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.list-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 5px 6px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 130ms ease;
-}
-.list-item:hover { background: #f8fafc; }
-.list-thumb-wrap {
-  flex-shrink: 0;
-  width: 50px;
-  height: 50px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  overflow: hidden;
-  background: #f1f5f9;
-}
-.list-thumb {
-  display: block;
-  border-radius: 3px;
-}
-.list-thumb-skeleton {
-  width: 40px;
-  height: 40px;
-  border-radius: 4px;
-  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
-  background-size: 200% 100%;
-  animation: skeleton-wave 1.4s ease-in-out infinite;
-}
-.list-filename {
-  font-size: 0.8125rem;
-  color: #334155;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  flex: 1;
-}
-.list-album-badge {
-  flex-shrink: 0;
-  font-size: 0.75rem;
-  color: #94a3b8;
-}
 </style>
+/* 鈹€鈹€ View-mode toggle 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
+
+

@@ -120,6 +120,7 @@
 - GET /api/albums/{album_id}
   - 实现：app/api/routers/albums.py
   - 用途：返回相册详情、祖先面包屑、子相册与直图
+  - 说明：响应体中 `album.date_group`（YYYY-MM）与 `album.path` 供前端面包屑与返回导航使用，在路由 query 缺失时自动推断月份上下文
 
 ### 3.3 系统集成接口
 

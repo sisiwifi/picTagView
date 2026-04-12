@@ -1,88 +1,49 @@
 <template>
   <section class="page">
-    <header class="page-header">
-      <div
-        class="breadcrumb-wrap"
-        @mousedown="onBcMouseDown"
-        @mousemove="onBcMouseMove"
-        @mouseup="onBcMouseUp"
-        @mouseleave="onBcMouseUp"
-      >
-        <nav class="breadcrumb" aria-label="相册导航">
-          <router-link to="/calendar" class="bc-item bc-link" title="日期视图">
-            {{ bcLabel('日期视图') }}
-          </router-link>
-          <template v-for="anc in album.ancestors || []" :key="anc.public_id">
-            <span class="bc-sep" aria-hidden="true">›</span>
-            <router-link
-              :to="{ name: 'album', params: { id: anc.public_id } }"
-              class="bc-item bc-link"
-              :title="anc.title"
-            >{{ bcLabel(anc.title) }}</router-link>
-          </template>
-          <span class="bc-sep" aria-hidden="true">›</span>
-          <span class="bc-item bc-current" :title="album.title || '相册'">{{ bcLabel(album.title || '相册') }}</span>
-        </nav>
+    <BreadcrumbHeader
+      :show-back="true"
+      :crumbs="headerCrumbs"
+      :item-count="totalCount"
+      :show-sort="true"
+      :sort-by="sortBy"
+      :sort-dir="sortDir"
+      @back="goBackOneLevel"
+      @update:sortBy="onSortModeSelect"
+      @toggle-sort-dir="toggleSortDir"
+    >
+      <div class="vm-btns" role="group" aria-label="视图模式">
+        <button
+          class="vm-btn"
+          :class="{ active: viewMode === 'grid' }"
+          title="大缩略图"
+          @click="viewMode = 'grid'"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor"/>
+            <rect x="8" y="1" width="5" height="5" rx="1" fill="currentColor"/>
+            <rect x="1" y="8" width="5" height="5" rx="1" fill="currentColor"/>
+            <rect x="8" y="8" width="5" height="5" rx="1" fill="currentColor"/>
+          </svg>
+        </button>
+        <button
+          class="vm-btn"
+          :class="{ active: viewMode === 'list' }"
+          title="列表显示"
+          @click="viewMode = 'list'"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1" y="2" width="12" height="2" rx="1" fill="currentColor"/>
+            <rect x="1" y="6" width="12" height="2" rx="1" fill="currentColor"/>
+            <rect x="1" y="10" width="12" height="2" rx="1" fill="currentColor"/>
+          </svg>
+        </button>
+        <button class="vm-btn vm-btn--disabled" title="选择（即将推出）" disabled>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M3 1L3 11L6 8.5L8 13L9.5 12.3L7.5 7.8L11 7.8Z" fill="currentColor"/>
+          </svg>
+        </button>
       </div>
-      <div class="header-right">
-        <span class="header-count">{{ totalCount }} 项</span>
-        <div class="sort-controls" role="group" aria-label="排序设置">
-          <div class="sort-switch" role="group" aria-label="排序字段">
-            <span class="sort-thumb" :class="{ 'is-alpha': sortBy === 'alpha' }" aria-hidden="true"></span>
-            <button
-              class="sort-mode-btn"
-              :class="{ active: sortBy === 'date' }"
-              title="按日期排序"
-              aria-label="按日期排序"
-              @click="onSortModeClick('date')"
-            >
-              Date <span v-if="sortBy === 'date'" class="sort-dir-mark">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
-            </button>
-            <button
-              class="sort-mode-btn"
-              :class="{ active: sortBy === 'alpha' }"
-              title="按字符顺序排序"
-              aria-label="按字符顺序排序"
-              @click="onSortModeClick('alpha')"
-            >
-              Alpha <span v-if="sortBy === 'alpha'" class="sort-dir-mark">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
-            </button>
-          </div>
-        </div>
-        <div class="vm-btns" role="group" aria-label="视图模式">
-          <button
-            class="vm-btn"
-            :class="{ active: viewMode === 'grid' }"
-            title="大缩略图"
-            @click="viewMode = 'grid'"
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor"/>
-              <rect x="8" y="1" width="5" height="5" rx="1" fill="currentColor"/>
-              <rect x="1" y="8" width="5" height="5" rx="1" fill="currentColor"/>
-              <rect x="8" y="8" width="5" height="5" rx="1" fill="currentColor"/>
-            </svg>
-          </button>
-          <button
-            class="vm-btn"
-            :class="{ active: viewMode === 'list' }"
-            title="列表显示"
-            @click="viewMode = 'list'"
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <rect x="1" y="2" width="12" height="2" rx="1" fill="currentColor"/>
-              <rect x="1" y="6" width="12" height="2" rx="1" fill="currentColor"/>
-              <rect x="1" y="10" width="12" height="2" rx="1" fill="currentColor"/>
-            </svg>
-          </button>
-          <button class="vm-btn vm-btn--disabled" title="选择（即将推出）" disabled>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M3 1L3 11L6 8.5L8 13L9.5 12.3L7.5 7.8L11 7.8Z" fill="currentColor"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-    </header>
+    </BreadcrumbHeader>
 
     <LoadingSpinner v-if="loading" />
 
@@ -154,6 +115,7 @@
 
 <script>
 import LoadingSpinner from '../components/LoadingSpinner.vue'
+import BreadcrumbHeader from '../components/BreadcrumbHeader.vue'
 
 const API_BASE = 'http://127.0.0.1:8000'
 const POLL_MS = 80
@@ -162,7 +124,7 @@ const DEBOUNCE_MS = 300
 
 export default {
   name: 'AlbumViewPage',
-  components: { LoadingSpinner },
+  components: { LoadingSpinner, BreadcrumbHeader },
   props: { id: { type: String, required: true } },
 
   data() {
@@ -186,6 +148,51 @@ export default {
   },
 
   computed: {
+    currentGroup() {
+      const fromQuery = this.$route?.query?.group
+      if (typeof fromQuery === 'string' && /^\d{4}-\d{2}$/.test(fromQuery)) {
+        return fromQuery
+      }
+      const fromAlbum = this.album?.date_group
+      if (typeof fromAlbum === 'string' && /^\d{4}-\d{2}$/.test(fromAlbum)) {
+        return fromAlbum
+      }
+      const fromPath = this.album?.path
+      if (typeof fromPath === 'string') {
+        const m = fromPath.match(/(^|\/)(\d{4}-\d{2})(\/|$)/)
+        if (m?.[2]) return m[2]
+      }
+      return ''
+    },
+    headerCrumbs() {
+      const crumbs = [{ label: this.bcLabel('日期视图'), title: '日期视图', to: '/calendar' }]
+
+      if (this.currentGroup) {
+        crumbs.push({
+          label: this.currentGroup,
+          title: this.currentGroup,
+          to: { name: 'calendar', query: { group: this.currentGroup } },
+        })
+      }
+
+      for (const anc of (this.album.ancestors || [])) {
+        crumbs.push({
+          label: this.bcLabel(anc.title),
+          title: anc.title,
+          to: {
+            name: 'album',
+            params: { id: anc.public_id },
+            query: this.currentGroup ? { group: this.currentGroup } : {},
+          },
+        })
+      }
+      crumbs.push({
+        label: this.bcLabel(this.album.title || '相册'),
+        title: this.album.title || '相册',
+        current: true,
+      })
+      return crumbs
+    },
     totalCount() {
       return this.items.length
     },
@@ -244,9 +251,6 @@ export default {
   },
 
   created() {
-    this.$_bcDragging = false
-    this.$_bcStartX = 0
-    this.$_bcScrollX = 0
     this.fetchAlbum()
     window.addEventListener('resize', this.onResize)
   },
@@ -259,6 +263,32 @@ export default {
   },
 
   methods: {
+    goBackOneLevel() {
+      const currentId = String(this.id || this.$route?.params?.id || '')
+      const ancestors = Array.isArray(this.album?.ancestors) ? this.album.ancestors : []
+      const parent = [...ancestors]
+        .reverse()
+        .find((anc) => anc?.public_id && String(anc.public_id) !== currentId)
+
+      if (parent?.public_id) {
+        const query = { ...this.$route.query }
+        if (this.currentGroup) query.group = this.currentGroup
+        this.$router.push({
+          name: 'album',
+          params: { id: parent.public_id },
+          query,
+        })
+        return
+      }
+
+      const group = this.currentGroup
+      if (group) {
+        this.$router.push({ name: 'calendar', query: { group } })
+        return
+      }
+      this.$router.push('/calendar')
+    },
+
     async fetchAlbum() {
       this.loading = true
       this.viewMode = 'grid'
@@ -310,7 +340,13 @@ export default {
 
     openItem(item) {
       if (item.type === 'album' && item.public_id) {
-        this.$router.push({ name: 'album', params: { id: item.public_id } })
+        const query = { ...this.$route.query }
+        if (this.currentGroup) query.group = this.currentGroup
+        this.$router.push({
+          name: 'album',
+          params: { id: item.public_id },
+          query,
+        })
       } else if (item.id) {
         fetch(`${API_BASE}/api/images/${item.id}/open`).catch(() => {})
       }
@@ -381,11 +417,8 @@ export default {
       })
     },
 
-    onSortModeClick(mode) {
-      if (this.sortBy === mode) {
-        this.toggleSortDir()
-        return
-      }
+    onSortModeSelect(mode) {
+      if (this.sortBy === mode) return
       this.sortBy = mode
       this.sortDir = 'asc'
       this.refreshSortResult()
@@ -496,18 +529,6 @@ export default {
       if (!str) return ''
       return str.length > 20 ? str.slice(0, 20) + '…' : str
     },
-    onBcMouseDown(e) {
-      this.$_bcDragging = true
-      this.$_bcStartX = e.pageX
-      this.$_bcScrollX = e.currentTarget.scrollLeft
-    },
-    onBcMouseMove(e) {
-      if (!this.$_bcDragging) return
-      e.currentTarget.scrollLeft = this.$_bcScrollX - (e.pageX - this.$_bcStartX)
-    },
-    onBcMouseUp() {
-      this.$_bcDragging = false
-    },
     teardownResizeObserver() {
       if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null }
     },
@@ -517,116 +538,6 @@ export default {
 
 <style scoped lang="css">
 .page { @apply flex flex-col gap-6; }
-
-.page-header {
-  @apply sticky top-0 z-40 flex items-center bg-white bg-opacity-95 py-3 px-0 backdrop-blur-sm shadow-sm;
-  gap: 8px;
-  min-width: 0;
-}
-
-/* Breadcrumb wrap */
-.breadcrumb-wrap {
-  flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-  cursor: grab;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-  user-select: none;
-}
-.breadcrumb-wrap::-webkit-scrollbar { display: none; }
-.breadcrumb-wrap:active { cursor: grabbing; }
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-.header-count { @apply text-sm text-slate-400; }
-
-.sort-controls {
-  display: flex;
-  align-items: center;
-  gap: 0;
-}
-
-.sort-switch {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  align-items: center;
-  min-width: 132px;
-  height: 30px;
-  padding: 2px;
-  border-radius: 999px;
-  background: #dbe6f0;
-}
-
-.sort-thumb {
-  position: absolute;
-  left: 2px;
-  top: 2px;
-  width: calc(50% - 2px);
-  height: 26px;
-  border-radius: 999px;
-  background: #22c55e;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
-  transition: transform 160ms ease;
-  pointer-events: none;
-}
-
-.sort-thumb.is-alpha {
-  transform: translateX(100%);
-}
-
-.sort-mode-btn {
-  position: relative;
-  z-index: 1;
-  border: none;
-  background: transparent;
-  color: #64748b;
-  font-size: 0.78rem;
-  font-weight: 600;
-  cursor: pointer;
-  line-height: 1;
-  padding: 0;
-  height: 100%;
-}
-
-.sort-mode-btn.active {
-  color: #0f172a;
-}
-
-.sort-dir-mark {
-  display: inline-block;
-  margin-left: 1px;
-  color: #0f172a;
-  font-weight: 700;
-}
-
-/* Breadcrumb */
-.breadcrumb {
-  @apply flex items-center gap-0.5 text-sm;
-  white-space: nowrap;
-}
-.bc-item {
-  @apply px-2 py-1 rounded-md;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 14rem;
-  display: inline-block;
-}
-.bc-link {
-  @apply text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors duration-150 no-underline;
-}
-.bc-current {
-  @apply text-slate-900 font-semibold;
-}
-.bc-sep {
-  @apply text-slate-300 text-base select-none px-0.5;
-}
 
 /* View mode buttons */
 .vm-btns {
