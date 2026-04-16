@@ -8,6 +8,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlmodel import select
 
 from app.db.session import get_session
@@ -124,9 +125,8 @@ def list_tags(
             stmt = stmt.where(
                 (Tag.name.like(pattern)) | (Tag.display_name.like(pattern))  # type: ignore[attr-defined]
             )
-        total_stmt = stmt
         tags = session.exec(stmt.offset(offset).limit(limit)).all()
-        total = len(session.exec(total_stmt).all())
+        total = int(session.exec(select(func.count()).select_from(stmt.subquery())).one())
         return {"total": total, "offset": offset, "limit": limit, "items": [_tag_to_dict(t) for t in tags]}
 
 

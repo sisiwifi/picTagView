@@ -10,7 +10,6 @@ from app.api.common import (
     asset_visible,
     build_soft_delete_maps,
     cache_thumb_url,
-    media_url,
     resolve_stored_path,
     thumb_url,
 )
@@ -161,15 +160,15 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                 continue
             thumb = thumb_url(asset)
             cache_thumb = cache_thumb_url(asset)
-            media_fallback = media_url(asset)
             direct_items.append(
                 DateItem(
                     type="image",
                     name=asset.full_filename or "",
                     thumb_url=thumb,
                     id=asset.id,
-                    cache_thumb_url=cache_thumb or media_fallback,
+                    cache_thumb_url=cache_thumb,
                     sort_ts=_to_unix_ts(asset.file_created_at or asset.imported_at or asset.created_at),
+                    tags=asset.tags or [],
                 )
             )
         direct_items.sort(key=lambda item: _item_sort_key(item.name))

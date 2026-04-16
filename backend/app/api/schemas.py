@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ImportResponse(BaseModel):
@@ -37,6 +37,7 @@ class DateItem(BaseModel):
     public_id: Optional[str] = None      # Album.public_id for album items
     album_path: Optional[str] = None     # Album.path for URL routing (e.g. "2024-07/vacation")
     sort_ts: Optional[int] = None        # Unix timestamp for date sorting
+    tags: List[int] = Field(default_factory=list)
 
 
 class DateItemsResponse(BaseModel):
@@ -103,6 +104,7 @@ class AlbumItem(BaseModel):
     public_id: Optional[str] = None      # Album.public_id (for sub-albums)
     album_path: Optional[str] = None     # Album.path for URL routing
     sort_ts: Optional[int] = None        # Unix timestamp for date sorting
+    tags: List[int] = Field(default_factory=list)
 
 
 class AlbumInfo(BaseModel):

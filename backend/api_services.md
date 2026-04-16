@@ -118,6 +118,8 @@
   - 实现：app/api/routers/dates.py
   - 用途：返回某年月下的直图与子相册
   - 说明：子相册条目中包含 `album_path` 字段（即 Album.path，如 `2024-07/vacation`），前端用于构建 `/calendar/:group/:albumPath+` 路由
+  - 说明补充：图片条目额外返回 `tags: list[int]`，供前端选择模式在需要时做 Tag 文本显示；该接口本身不 join Tag 表，保持主查询轻量
+  - 缩略图补充：`cache_thumb_url` 仅在 `data/cache/` 中已有缓存缩略图时返回，不再把原图路径作为常规回退值；前端应在缺失时显示骨架并通过 `/api/thumbnails/cache` 触发生成
 
 - GET /api/albums/by-path/{album_path:path}
   - 实现：app/api/routers/albums.py
@@ -130,6 +132,8 @@
   - 实现：app/api/routers/albums.py
   - 用途：返回相册详情、祖先面包屑、子相册与直图
   - 说明：响应体中 `album.date_group`（YYYY-MM）与 `album.path` 供前端面包屑与返回导航使用；条目中 `album_path` 字段提供子相册的物理路径用于 URL 构建
+  - 说明补充：直属图片条目同样返回 `tags: list[int]`，前端仅在用户显式切换到 Tag 视图时再批量解析为文本
+  - 缩略图补充：直属图片条目遵循与日期接口一致的缓存策略，仅在缓存文件实际存在时返回 `cache_thumb_url`
 
 ### 3.3 系统集成接口
 
@@ -197,6 +201,7 @@
   - 实现：app/api/routers/tags.py
   - 参数：ids（逗号分隔 ID 列表，批量查）、category（过滤）、type（标签种类过滤）、q（名称模糊搜索）、limit/offset（分页）
   - 用途：列出/搜索/批量查询 Tag；前端展示图片标签时通过 ids 参数批量拉取
+  - 性能补充：总数统计已改为数据库 `COUNT(*)` 查询，避免批量 ids 请求时先全量取回记录再在 Python 内计数
 
 - GET /api/tags/{tag_id}
   - 实现：app/api/routers/tags.py
@@ -246,5 +251,8 @@
 
 - thumb_url 表示 temp 预览图路径。
 - cache_thumb_url 表示按需生成的 cache 预览图路径。
+- BrowsePage 的普通模式与选择模式都应优先显示 cache/temp 缩略图；若缓存尚未生成，则显示骨架占位并沿用 `/api/thumbnails/cache` 的异步生成链路，而不是把原图当作常态展示源。
+- BrowsePage 的选择逻辑现已扩展到列表显示：列表模式可通过长按进入选择态，并继续使用与卡片选择界面相同的 Ctrl/Shift、多选与统一选择符号；该行为仅是前端交互扩展，不新增后端接口。
 - 相册导航使用 public_id，不依赖数据库自增主键。
 - 软删除可见性由 path_soft_delete.target_path 判定（路径级可见性）。
+- BrowsePage 选择模式默认只使用浏览接口返回的 `tags` id 列表；真正的 Tag 名称解析通过 `/api/tags?ids=...` 按需批量完成，不在 `/api/dates/*` 与 `/api/albums/*` 内联展开。
