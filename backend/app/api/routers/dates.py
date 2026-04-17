@@ -167,6 +167,8 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     thumb_url=thumb,
                     id=asset.id,
                     cache_thumb_url=cache_thumb,
+                    width=asset.width,
+                    height=asset.height,
                     sort_ts=_to_unix_ts(asset.file_created_at or asset.imported_at or asset.created_at),
                     tags=asset.tags or [],
                 )
@@ -186,6 +188,8 @@ def date_group_items(date_group: str) -> DateItemsResponse:
             row_thumb_url = ""
             row_cache_thumb_url = None
             cover_photo_id = None
+            cover_width = None
+            cover_height = None
             if album.cover and isinstance(album.cover, dict):
                 cover_photo_id = album.cover.get("photo_id")
                 tp = album.cover.get("thumb_path", "")
@@ -205,6 +209,8 @@ def date_group_items(date_group: str) -> DateItemsResponse:
             if cover_photo_id is not None:
                 asset_for_cover = session.get(ImageAsset, cover_photo_id)
                 if asset_for_cover:
+                    cover_width = asset_for_cover.width
+                    cover_height = asset_for_cover.height
                     if not row_thumb_url:
                         row_thumb_url = thumb_url(asset_for_cover)
                     if not row_cache_thumb_url:
@@ -218,6 +224,8 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     count=album.subtree_photo_count,
                     id=cover_photo_id,
                     cache_thumb_url=row_cache_thumb_url,
+                    width=cover_width,
+                    height=cover_height,
                     public_id=album.public_id,
                     album_path=album.path,
                     sort_ts=_to_unix_ts(album.updated_at or album.created_at),

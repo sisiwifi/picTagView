@@ -35,6 +35,7 @@
 补充（2026-04）：
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的条目模型新增 `sort_ts`（Unix 秒级时间戳，可为空）。
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的图片条目现同时返回 `tags`（Tag ID 整数列表）；接口仍只返回 ID，不在主查询中联表展开 Tag 名称。
+- `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的图片条目现同时返回 `width` / `height`；相册条目则返回封面图对应的 `width` / `height`。
 - `sort_ts` 生成规则：
   - 图片条目：优先 `file_created_at`，回退 `imported_at`，再回退 `created_at`。
   - 相册条目：优先 `updated_at`，回退 `created_at`。
@@ -56,6 +57,7 @@
   - 相册标识从列表右侧移至缩略图右侧，改为圆角矩形 `ALB` 标签后接相册名，右侧预留为空白区域。
 - 信息区显示补充：选择模式信息区默认显示文件名；点击任一卡片的信息区后，当前页面所有卡片统一切换为 Tag 文本显示，再次点击切回文件名。
 - 缩略图策略补充：BrowsePage 普通模式与选择模式统一优先显示 `data/cache/*.webp` 或 `temp/*.webp` 缩略图；当 `cache_thumb_url` 缺失时，前端先显示骨架占位，并通过 `/api/thumbnails/cache` 按需异步生成缓存后再更新显示。原图回退不再作为常规浏览路径。
+- 照片墙布局补充：BrowsePage 的“大缩略图”模式会优先使用浏览接口返回的 `width` / `height` 初始化 `justifiedRows` 布局，避免依赖图片逐张加载后再回填宽高，从而降低首轮重排频率；现有基于滚动锚点的缓存缩略图预取逻辑保持不变。
 - Tag 请求策略补充：前端仅在信息区切换到 Tag 模式时，才会从当前页面条目中去重收集 `tags` ID，并分批调用 `GET /api/tags?ids=...` 批量换取 `display_name/name`；普通浏览与默认文件名模式不触发该请求，以减少 DB 压力与事务占用。
 - 返回与面包屑导航行为：
   - 前端路由已重构为层级结构（2026-04）：
@@ -177,7 +179,7 @@
   - `date_group` (str | null): 年-月分组，格式 `YYYY-MM`，用于前端日期视图索引
   - `file_created_at` (datetime | null): 文件原始创建时间（如可用）
   - `imported_at` (datetime): 导入时间
-  - `width` / `height` / `file_size` / `mime_type`: 媒体元信息
+  - `width` / `height` / `file_size` / `mime_type`: 媒体元信息；其中 `width` / `height` 会直接透传到 BrowsePage 相关接口，供照片墙预布局使用
   - `category` (str): 可选分类
   - `tags` (JSON array of int): 关联的 Tag ID 整数列表，如 `[23, 45, 91]`；前端查询标签详情时通过 `/api/tags?ids=23,45,91` 批量获取
   - `album` (JSON array of arrays): 所属相册路径，每个内层数组是从根相册到叶相册的 `public_id` 完整路径，如 `[["album_1", "album_3"], ["album_5"]]`（保留用于兼容；实际查询已通过 `album_image` 关联表完成）

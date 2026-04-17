@@ -61,6 +61,8 @@ def _build_album_response(album: Album, session) -> AlbumDetailResponse:
         row_thumb_url = ""
         row_cache_thumb_url = None
         cover_photo_id = None
+        cover_width = None
+        cover_height = None
         if sa.cover and isinstance(sa.cover, dict):
             cover_photo_id = sa.cover.get("photo_id")
             tp = sa.cover.get("thumb_path", "")
@@ -80,6 +82,8 @@ def _build_album_response(album: Album, session) -> AlbumDetailResponse:
         if cover_photo_id is not None:
             asset_for_cover = session.get(ImageAsset, cover_photo_id)
             if asset_for_cover:
+                cover_width = asset_for_cover.width
+                cover_height = asset_for_cover.height
                 if not row_thumb_url:
                     row_thumb_url = thumb_url(asset_for_cover)
                 if not row_cache_thumb_url:
@@ -92,6 +96,8 @@ def _build_album_response(album: Album, session) -> AlbumDetailResponse:
             count=sa.subtree_photo_count,
             id=cover_photo_id,
             cache_thumb_url=row_cache_thumb_url,
+            width=cover_width,
+            height=cover_height,
             public_id=sa.public_id,
             album_path=sa.path,
             sort_ts=_to_unix_ts(sa.updated_at or sa.created_at),
@@ -121,6 +127,8 @@ def _build_album_response(album: Album, session) -> AlbumDetailResponse:
             thumb_url=thumb,
             id=asset.id,
             cache_thumb_url=cache_thumb,
+            width=asset.width,
+            height=asset.height,
             sort_ts=_to_unix_ts(asset.file_created_at or asset.imported_at or asset.created_at),
             tags=asset.tags or [],
         ))

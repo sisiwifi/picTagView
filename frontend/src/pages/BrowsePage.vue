@@ -413,12 +413,7 @@ export default {
         return
       }
       const data = await res.json()
-      this.items = this.sortItems(data.items || [])
-      for (const item of this.items) {
-        if (item.id && item.cache_thumb_url) {
-          this.cacheUrls = { ...this.cacheUrls, [item.id]: item.cache_thumb_url }
-        }
-      }
+      this.applyFetchedItems(data.items)
     },
 
     async fetchAlbum() {
@@ -429,12 +424,30 @@ export default {
       }
       const data = await res.json()
       this.albumInfo = data.album || null
-      this.items = this.sortItems(data.items || [])
-      for (const item of this.items) {
+      this.applyFetchedItems(data.items)
+    },
+
+    applyFetchedItems(rawItems) {
+      const nextItems = this.sortItems(rawItems || [])
+      const nextCacheUrls = {}
+      const nextDimensions = {}
+
+      for (const item of nextItems) {
         if (item.id && item.cache_thumb_url) {
-          this.cacheUrls = { ...this.cacheUrls, [item.id]: item.cache_thumb_url }
+          nextCacheUrls[item.id] = item.cache_thumb_url
+        }
+
+        const key = item.id || item.public_id
+        const width = Number(item?.width)
+        const height = Number(item?.height)
+        if (key && Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+          nextDimensions[key] = { w: width, h: height }
         }
       }
+
+      this.items = nextItems
+      this.cacheUrls = nextCacheUrls
+      this.imgDimensions = nextDimensions
     },
 
     getAncestorTitle(segIndex, fallback) {
