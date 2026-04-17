@@ -42,8 +42,8 @@
       <button
         class="media-card__details"
         type="button"
-        title="更多操作（预留）"
-        aria-label="更多操作（预留）"
+        title="查看详情"
+        aria-label="查看详情"
         @pointerdown.stop
         @click.stop="$emit('details')"
       >...</button>

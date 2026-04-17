@@ -171,6 +171,9 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     height=asset.height,
                     sort_ts=_to_unix_ts(asset.file_created_at or asset.imported_at or asset.created_at),
                     tags=asset.tags or [],
+                    file_size=asset.file_size,
+                    imported_at=asset.imported_at,
+                    file_created_at=asset.file_created_at,
                 )
             )
         direct_items.sort(key=lambda item: _item_sort_key(item.name))

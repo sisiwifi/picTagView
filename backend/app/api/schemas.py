@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -40,6 +41,9 @@ class DateItem(BaseModel):
     album_path: Optional[str] = None     # Album.path for URL routing (e.g. "2024-07/vacation")
     sort_ts: Optional[int] = None        # Unix timestamp for date sorting
     tags: List[int] = Field(default_factory=list)
+    file_size: Optional[int] = None
+    imported_at: Optional[datetime] = None
+    file_created_at: Optional[datetime] = None
 
 
 class DateItemsResponse(BaseModel):
@@ -61,6 +65,23 @@ class CacheStatusItem(BaseModel):
 class CacheStatusResponse(BaseModel):
     status: str                  # "running" | "done" | "error"
     items: List[CacheStatusItem] = []
+
+
+class ImageMetaItem(BaseModel):
+    id: int
+    name: str
+    width: Optional[int] = None
+    height: Optional[int] = None
+    file_size: Optional[int] = None
+    imported_at: Optional[datetime] = None
+    file_created_at: Optional[datetime] = None
+    tags: List[int] = Field(default_factory=list)
+    thumb_url: str = ""
+    cache_thumb_url: Optional[str] = None
+
+
+class ImageMetaResponse(BaseModel):
+    items: List[ImageMetaItem]
 
 
 class ViewerPreferenceRequest(BaseModel):
@@ -109,6 +130,9 @@ class AlbumItem(BaseModel):
     album_path: Optional[str] = None     # Album.path for URL routing
     sort_ts: Optional[int] = None        # Unix timestamp for date sorting
     tags: List[int] = Field(default_factory=list)
+    file_size: Optional[int] = None
+    imported_at: Optional[datetime] = None
+    file_created_at: Optional[datetime] = None
 
 
 class AlbumInfo(BaseModel):

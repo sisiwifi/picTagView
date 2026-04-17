@@ -58,30 +58,35 @@
       <p>此页面尚无内容。</p>
     </div>
 
-    <div v-else-if="selectionMode && viewMode === 'grid'" ref="itemGrid" class="selection-grid">
+    <div
+      v-else-if="selectionMode && viewMode === 'grid'"
+      ref="itemGrid"
+      class="selection-grid"
+      :style="selectionGridVirtualStyle"
+    >
       <div
-        v-for="(item, idx) in items"
-        :key="itemKey(item, idx)"
+        v-for="entry in visibleSelectionEntries"
+        :key="itemKey(entry.item, entry.index)"
         class="selection-wrap"
         :class="{
-          'is-selected': isItemSelected(item, idx),
-          'is-disabled': isItemDisabled(item),
+          'is-selected': isItemSelected(entry.item, entry.index),
+          'is-disabled': isItemDisabled(entry.item),
         }"
-        :data-index="idx"
-        :data-select-index="idx"
-        @pointerdown="onSelectionPointerDown($event, item, idx)"
+        :data-index="entry.index"
+        :data-select-index="entry.index"
+        @pointerdown="onSelectionPointerDown($event, entry.item, entry.index)"
       >
         <MediaItemCard
-          :src="resolvedUrl(item)"
-          :alt="item.name || ''"
-          :info-text="displayInfoText(item)"
+          :src="resolvedUrl(entry.item)"
+          :alt="entry.item.name || ''"
+          :info-text="displayInfoText(entry.item)"
           :info-title="selectionInfoMode === 'tags' ? '当前显示 Tag，点击切换为文件名' : '当前显示文件名，点击切换为 Tag'"
-          :item-type="item.type"
-          :selected="isItemSelected(item, idx)"
-          :disabled="isItemDisabled(item)"
-          @toggle-select="onItemSelectionButtonClick(item, idx)"
+          :item-type="entry.item.type"
+          :selected="isItemSelected(entry.item, entry.index)"
+          :disabled="isItemDisabled(entry.item)"
+          @toggle-select="onItemSelectionButtonClick(entry.item, entry.index)"
           @toggle-info="toggleInfoDisplayMode"
-          @details="onReservedDetailsClick(item)"
+          @details="onReservedDetailsClick(entry.item, entry.index)"
         />
       </div>
     </div>
@@ -122,47 +127,47 @@
       </div>
     </div>
 
-    <div v-else ref="itemGrid" class="list-view">
+    <div v-else ref="itemGrid" class="list-view" :style="listViewVirtualStyle">
       <div
-        v-for="(item, idx) in items"
-        :key="item.public_id || item.id || idx"
+        v-for="entry in visibleListEntries"
+        :key="entry.item.public_id || entry.item.id || entry.index"
         class="list-row"
         :class="{
           'list-row--selecting': selectionMode,
-          'is-selected': isItemSelected(item, idx),
-          'is-disabled': isItemDisabled(item),
+          'is-selected': isItemSelected(entry.item, entry.index),
+          'is-disabled': isItemDisabled(entry.item),
         }"
-        :data-index="idx"
-        :data-select-index="idx"
-        @pointerdown="onListPointerDown($event, item, idx)"
-        @click="onListRowClick($event, item, idx)"
+        :data-index="entry.index"
+        :data-select-index="entry.index"
+        @pointerdown="onListPointerDown($event, entry.item, entry.index)"
+        @click="onListRowClick($event, entry.item, entry.index)"
       >
         <button
           v-if="selectionMode"
           class="list-pick"
           type="button"
-          :disabled="isItemDisabled(item)"
-          :aria-pressed="isItemSelected(item, idx) ? 'true' : 'false'"
-          :aria-label="isItemSelected(item, idx) ? '取消选择' : '选择项目'"
+          :disabled="isItemDisabled(entry.item)"
+          :aria-pressed="isItemSelected(entry.item, entry.index) ? 'true' : 'false'"
+          :aria-label="isItemSelected(entry.item, entry.index) ? '取消选择' : '选择项目'"
           @pointerdown.stop
-          @click.stop="onItemSelectionButtonClick(item, idx)"
+          @click.stop="onItemSelectionButtonClick(entry.item, entry.index)"
         >
-          <span v-if="isItemSelected(item, idx)" class="list-pick__mark">✓</span>
+          <span v-if="isItemSelected(entry.item, entry.index)" class="list-pick__mark">✓</span>
         </button>
         <div class="list-thumb-wrap">
-          <div v-if="!resolvedUrl(item)" class="list-thumb-skeleton" />
+          <div v-if="!resolvedUrl(entry.item)" class="list-thumb-skeleton" />
           <img
             v-else
-            :src="resolvedUrl(item)"
+            :src="resolvedUrl(entry.item)"
             class="list-thumb-img"
-            :alt="item.name || ''"
-            @load="onImgLoad(item, $event)"
+            :alt="entry.item.name || ''"
+            @load="onImgLoad(entry.item, $event)"
           />
         </div>
         <div class="list-main">
           <div class="list-title-row">
-            <span v-if="item.type === 'album'" class="list-type-pill">ALB</span>
-            <span class="list-name">{{ item.name || item.full_filename || '未知文件' }}</span>
+            <span v-if="entry.item.type === 'album'" class="list-type-pill">ALB</span>
+            <span class="list-name">{{ entry.item.name || entry.item.full_filename || '未知文件' }}</span>
           </div>
         </div>
       </div>
@@ -170,9 +175,48 @@
 
     <div v-if="selectionMode" class="selection-island">
       <span class="selection-island__count">{{ selectionSummaryText }}</span>
-      <button class="selection-island__btn" type="button" @click="selectAllOfCurrentType">全选</button>
+      <button
+        class="selection-island__btn"
+        type="button"
+        :disabled="!selectedCount"
+        @click="openSelectionDetailsFromIsland"
+      >详情</button>
+      <div
+        ref="selectionIslandMenu"
+        class="selection-island__menu-wrap"
+        :class="{ 'is-open': selectAllMenuOpen }"
+      >
+        <button
+          class="selection-island__btn"
+          type="button"
+          :aria-expanded="hasMixedSelectableTypes ? (selectAllMenuOpen ? 'true' : 'false') : 'false'"
+          @click="handleSelectAllButtonClick"
+        >全选</button>
+        <div v-if="hasMixedSelectableTypes" class="selection-island__submenu">
+          <button class="selection-island__submenu-btn" type="button" @click="onSelectAllTypeClick('album')">相册</button>
+          <button class="selection-island__submenu-btn" type="button" @click="onSelectAllTypeClick('image')">图片</button>
+        </div>
+      </div>
       <button class="selection-island__btn" type="button" @click="clearSelection">取消选择</button>
     </div>
+
+    <SelectionDetailOverlay
+      :visible="selectionDetailsOpen"
+      :layer-style="selectionDetailsLayerStyle"
+      :panel-style="selectionDetailsPanelStyle"
+      :preview-items="selectionDetailPreviewItems"
+      :is-multi="selectionDetailPreviewItems.length > 1"
+      :name-field="selectionDetailNameField"
+      :tags-field="selectionDetailTagsField"
+      :size-field="selectionDetailSizeField"
+      :imported-field="selectionDetailImportedField"
+      :created-field="selectionDetailCreatedField"
+      :can-open-original="canOpenOriginalFromDetails"
+      @close="closeSelectionDetails"
+      @analysis="onReservedAnalysisClick"
+      @delete="onReservedDeleteClick"
+      @open-original="openOriginalFromDetails"
+    />
   </section>
 </template>
 
@@ -180,6 +224,7 @@
 import LoadingSpinner from '../components/LoadingSpinner.vue'
 import BreadcrumbHeader from '../components/BreadcrumbHeader.vue'
 import MediaItemCard from '../components/MediaItemCard.vue'
+import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
 
 const API_BASE = 'http://127.0.0.1:8000'
 const POLL_MS = 80
@@ -187,10 +232,18 @@ const RADIUS = 50
 const DEBOUNCE_MS = 300
 const LONG_PRESS_MS = 220
 const TAG_BATCH_SIZE = 120
+const LIST_ROW_HEIGHT = 62
+const LIST_OVERSCAN_ROWS = 12
+const SELECTION_INFO_HEIGHT = 56
+const SELECTION_OVERSCAN_ROWS = 2
+const SELECTION_LANDSCAPE_COLS = 5
+const SELECTION_PORTRAIT_COLS = 3
+const SELECTION_LANDSCAPE_GAP = 16
+const SELECTION_PORTRAIT_GAP = 12
 
 export default {
   name: 'BrowsePage',
-  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard },
+  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, SelectionDetailOverlay },
 
   data() {
     return {
@@ -221,6 +274,26 @@ export default {
       tagNameMap: {},
       tagsLoading: false,
       tagFetchSerial: 0,
+      scrollTop: typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0,
+      viewportHeight: typeof window !== 'undefined' ? window.innerHeight : 0,
+      virtualStartIndex: 0,
+      virtualEndIndex: 0,
+      virtualAnchorIndex: 0,
+      virtualContainerTop: 0,
+      selectionRowHeight: 0,
+      scrollFrameId: null,
+      selectionDetailsOpen: false,
+      selectionDetailsBounds: {
+        top: '0px',
+        right: '0px',
+        bottom: '0px',
+        left: '0px',
+      },
+      selectionDetailsHostWidth: 0,
+      selectionDetailsHostHeight: 0,
+      scrollLockState: null,
+      selectionDetailFetchSerial: 0,
+      selectAllMenuOpen: false,
     }
   },
 
@@ -280,6 +353,77 @@ export default {
     totalCount() {
       return this.items.length
     },
+    isPhotoGridMode() {
+      return this.viewMode === 'grid' && !this.selectionMode
+    },
+    isSelectionGridMode() {
+      return this.selectionMode && this.viewMode === 'grid'
+    },
+    isVirtualizedMode() {
+      return this.isSelectionGridMode || this.viewMode === 'list'
+    },
+    photoGridRowCount() {
+      return this.isPhotoGridMode ? this.justifiedRows.length : 0
+    },
+    selectionColumnCount() {
+      if (typeof window === 'undefined') return SELECTION_PORTRAIT_COLS
+      return window.matchMedia('(orientation: landscape)').matches
+        ? SELECTION_LANDSCAPE_COLS
+        : SELECTION_PORTRAIT_COLS
+    },
+    selectionGridGapPx() {
+      return this.selectionColumnCount === SELECTION_LANDSCAPE_COLS
+        ? SELECTION_LANDSCAPE_GAP
+        : SELECTION_PORTRAIT_GAP
+    },
+    effectiveSelectionRowHeight() {
+      if (this.selectionRowHeight > 0) return this.selectionRowHeight
+
+      const width = this.containerWidth || (typeof window !== 'undefined' ? window.innerWidth - 48 : 800)
+      const totalGap = this.selectionGridGapPx * Math.max(0, this.selectionColumnCount - 1)
+      const cardWidth = Math.max(0, (width - totalGap) / this.selectionColumnCount)
+      return Math.max(SELECTION_INFO_HEIGHT + 80, Math.round(cardWidth + SELECTION_INFO_HEIGHT + 2))
+    },
+    visibleSelectionEntries() {
+      const start = this.isSelectionGridMode ? this.virtualStartIndex : 0
+      const end = this.isSelectionGridMode ? this.virtualEndIndex : this.items.length
+      return this.items.slice(start, end).map((item, offset) => ({ item, index: start + offset }))
+    },
+    selectionGridVirtualStyle() {
+      if (!this.isSelectionGridMode) return null
+
+      const totalRows = Math.ceil(this.items.length / this.selectionColumnCount)
+      const startRow = Math.floor(this.virtualStartIndex / this.selectionColumnCount)
+      const endRow = Math.ceil(this.virtualEndIndex / this.selectionColumnCount)
+      const visibleRows = Math.max(0, endRow - startRow)
+      const rowHeight = this.effectiveSelectionRowHeight
+      const gap = this.selectionGridGapPx
+      const totalHeight = totalRows
+        ? totalRows * rowHeight + Math.max(0, totalRows - 1) * gap
+        : 0
+      const paddingTop = startRow * (rowHeight + gap)
+      const renderedHeight = visibleRows
+        ? visibleRows * rowHeight + Math.max(0, visibleRows - 1) * gap
+        : 0
+
+      return {
+        paddingTop: `${paddingTop}px`,
+        paddingBottom: `${Math.max(0, totalHeight - paddingTop - renderedHeight)}px`,
+      }
+    },
+    visibleListEntries() {
+      const start = this.viewMode === 'list' ? this.virtualStartIndex : 0
+      const end = this.viewMode === 'list' ? this.virtualEndIndex : this.items.length
+      return this.items.slice(start, end).map((item, offset) => ({ item, index: start + offset }))
+    },
+    listViewVirtualStyle() {
+      if (this.viewMode !== 'list') return null
+
+      return {
+        paddingTop: `${this.virtualStartIndex * LIST_ROW_HEIGHT}px`,
+        paddingBottom: `${Math.max(0, (this.items.length - this.virtualEndIndex) * LIST_ROW_HEIGHT)}px`,
+      }
+    },
     justifiedRows() {
       const width = this.containerWidth || (typeof window !== 'undefined' ? window.innerWidth - 48 : 800)
       const gap = 4
@@ -331,6 +475,106 @@ export default {
       if (this.selectionTypeLock === 'image') return `已选 ${this.selectedCount} 张图片`
       return `已选 ${this.selectedCount} 项`
     },
+    availableSelectionTypes() {
+      const types = new Set()
+      for (const item of this.items) {
+        if (item?.type === 'album' || item?.type === 'image') {
+          types.add(item.type)
+        }
+      }
+      return Array.from(types)
+    },
+    hasMixedSelectableTypes() {
+      return this.availableSelectionTypes.includes('album') && this.availableSelectionTypes.includes('image')
+    },
+    selectedEntries() {
+      const entries = []
+      for (let index = 0; index < this.items.length; index++) {
+        const item = this.items[index]
+        if (this.isItemSelected(item, index)) {
+          entries.push({ item, index })
+        }
+      }
+      return entries
+    },
+    selectionDetailPreviewItems() {
+      return this.selectedEntries.map(({ item, index }) => ({
+        key: this.itemKey(item, index),
+        name: this.detailNameText(item),
+        type: item?.type || 'image',
+        previewUrl: this.detailPreviewUrl(item),
+        aspectRatio: this.detailAspectRatio(item),
+      }))
+    },
+    selectionDetailsLayerStyle() {
+      return this.selectionDetailsBounds
+    },
+    selectionDetailsPanelStyle() {
+      const hostWidth = this.selectionDetailsHostWidth || (typeof window !== 'undefined' ? window.innerWidth : 0)
+      const hostHeight = this.selectionDetailsHostHeight || (typeof window !== 'undefined' ? window.innerHeight : 0)
+      if (!hostWidth || !hostHeight) return null
+
+      const availableWidth = Math.max(0, Math.floor(hostWidth - 12))
+      const availableHeight = Math.max(0, Math.floor(hostHeight - 12))
+      const isPortraitLike = hostWidth <= 960 || hostWidth < hostHeight
+
+      if (isPortraitLike) {
+        const panelWidth = Math.min(
+          availableWidth,
+          Math.max(Math.min(availableWidth, 320), Math.floor(hostWidth * 0.98)),
+        )
+        const desiredHeight = Math.floor(hostHeight * 0.96)
+        const panelHeight = Math.min(
+          availableHeight,
+          Math.max(Math.min(availableHeight, 360), desiredHeight),
+        )
+        return {
+          width: `${panelWidth}px`,
+          maxWidth: `${availableWidth}px`,
+          height: `${panelHeight}px`,
+          maxHeight: `${availableHeight}px`,
+        }
+      }
+
+      const panelWidth = Math.min(
+        1180,
+        availableWidth,
+        Math.max(Math.min(availableWidth, 760), Math.floor(hostWidth * 0.8)),
+      )
+      const panelHeight = Math.min(
+        availableHeight,
+        Math.max(Math.min(availableHeight, 460), Math.round(panelWidth * 0.58)),
+      )
+      return {
+        width: `${panelWidth}px`,
+        height: `${panelHeight}px`,
+        maxWidth: `${availableWidth}px`,
+        maxHeight: `${availableHeight}px`,
+      }
+    },
+    selectionDetailNameField() {
+      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailNameText(item)))
+    },
+    selectionDetailTagsField() {
+      return this.buildDetailField(
+        this.selectedEntries.map(({ item }) => this.detailTagTextForItem(item)),
+        { emptyText: '' },
+      )
+    },
+    selectionDetailSizeField() {
+      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailSizeText(item)))
+    },
+    selectionDetailImportedField() {
+      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailImportedText(item)))
+    },
+    selectionDetailCreatedField() {
+      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailCreatedText(item)))
+    },
+    canOpenOriginalFromDetails() {
+      if (this.selectedEntries.length !== 1) return false
+      const entry = this.selectedEntries[0]
+      return entry?.item?.type === 'image' && Number.isInteger(entry?.item?.id)
+    },
   },
 
   watch: {
@@ -338,9 +582,8 @@ export default {
       handler() { this.loadData() },
       deep: true,
     },
-    justifiedRows(newVal, oldVal) {
-      if (this.selectionMode) return
-      if (newVal.length !== oldVal.length) {
+    photoGridRowCount(newVal, oldVal) {
+      if (newVal !== oldVal) {
         this.refreshObservedGrid()
       }
     },
@@ -348,12 +591,26 @@ export default {
       if (this.selectionMode) return
       this.refreshObservedGrid()
     },
+    selectionMode(nextValue) {
+      if (!nextValue) {
+        this.closeSelectionDetails()
+        this.closeSelectAllMenu()
+      }
+    },
+    selectedCount(nextValue) {
+      if (!nextValue) {
+        this.closeSelectionDetails()
+        this.closeSelectAllMenu()
+      }
+    },
   },
 
   created() {
     this.loadData()
     window.addEventListener('resize', this.onResize)
+    window.addEventListener('scroll', this.onWindowScroll, { passive: true })
     window.addEventListener('keydown', this.onWindowKeydown)
+    window.addEventListener('pointerdown', this.onWindowPointerDown)
   },
 
   beforeUnmount() {
@@ -361,8 +618,15 @@ export default {
     this.teardownResizeObserver()
     this.stopPoll()
     this.clearPointerGesture()
+    this.unlockPageScroll()
     window.removeEventListener('resize', this.onResize)
+    window.removeEventListener('scroll', this.onWindowScroll)
     window.removeEventListener('keydown', this.onWindowKeydown)
+    window.removeEventListener('pointerdown', this.onWindowPointerDown)
+    if (this.scrollFrameId) {
+      cancelAnimationFrame(this.scrollFrameId)
+      this.scrollFrameId = null
+    }
   },
 
   methods: {
@@ -373,11 +637,20 @@ export default {
       this.cacheUrls = {}
       this.imgDimensions = {}
       this.lastCenter = -1
+      this.selectionRowHeight = 0
       this.albumInfo = null
+      this.closeSelectionDetails()
+      this.closeSelectAllMenu()
       this.clearSelection()
       this.clearPointerGesture()
       this.tagFetchSerial += 1
       this.tagsLoading = false
+      this.virtualStartIndex = 0
+      this.virtualEndIndex = 0
+      this.virtualAnchorIndex = 0
+      this.virtualContainerTop = 0
+      this.scrollTop = typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0
+      this.viewportHeight = typeof window !== 'undefined' ? window.innerHeight : this.viewportHeight
       this.teardownObserver()
       this.teardownResizeObserver()
       this.stopPoll()
@@ -446,6 +719,8 @@ export default {
       }
 
       this.items = nextItems
+      this.virtualStartIndex = 0
+      this.virtualEndIndex = nextItems.length
       this.cacheUrls = nextCacheUrls
       this.imgDimensions = nextDimensions
     },
@@ -483,6 +758,263 @@ export default {
       }
     },
 
+    openOriginalFromDetails() {
+      if (!this.canOpenOriginalFromDetails) return
+      const target = this.selectedEntries[0]?.item
+      if (!target?.id) return
+      fetch(`${API_BASE}/api/images/${target.id}/open`).catch(() => {})
+    },
+
+    openSelectionDetailsFromIsland() {
+      if (!this.selectedCount) return
+      this.openSelectionDetails()
+    },
+
+    openSelectionDetails() {
+      if (!this.selectedCount) return
+      this.updateSelectionDetailsBounds()
+      this.selectionDetailsOpen = true
+      this.lockPageScroll()
+      this.$nextTick(() => {
+        this.updateSelectionDetailsBounds()
+      })
+      this.ensureTagLabelsLoaded(true)
+      this.fetchSelectionDetailMetadata()
+    },
+
+    closeSelectionDetails() {
+      this.selectionDetailsOpen = false
+      this.unlockPageScroll()
+    },
+
+    updateSelectionDetailsBounds() {
+      if (typeof window === 'undefined') return
+      const host = (this.$el && typeof this.$el.closest === 'function')
+        ? (this.$el.closest('main') || this.$el)
+        : this.$el
+      if (!host || typeof host.getBoundingClientRect !== 'function') return
+
+      const rect = host.getBoundingClientRect()
+      const visibleTop = Math.max(0, Math.round(rect.top))
+      const visibleBottom = Math.max(0, Math.round(window.innerHeight - rect.bottom))
+      const visibleLeft = Math.max(0, Math.round(rect.left))
+      const visibleRight = Math.max(0, Math.round(window.innerWidth - rect.right))
+
+      const visibleWidth = Math.max(0, window.innerWidth - visibleLeft - visibleRight)
+      const visibleHeight = Math.max(0, window.innerHeight - visibleTop - visibleBottom)
+
+      this.selectionDetailsHostWidth = visibleWidth
+      this.selectionDetailsHostHeight = visibleHeight
+      this.selectionDetailsBounds = {
+        top: `${visibleTop}px`,
+        right: `${visibleRight}px`,
+        bottom: `${visibleBottom}px`,
+        left: `${visibleLeft}px`,
+      }
+    },
+
+    lockPageScroll() {
+      if (typeof window === 'undefined' || this.scrollLockState) return
+
+      const root = document.documentElement
+      const body = document.body
+      const scrollY = window.scrollY || window.pageYOffset || 0
+      const scrollbarWidth = Math.max(0, window.innerWidth - root.clientWidth)
+
+      this.scrollLockState = {
+        scrollY,
+        bodyOverflow: body.style.overflow,
+        bodyPosition: body.style.position,
+        bodyTop: body.style.top,
+        bodyLeft: body.style.left,
+        bodyRight: body.style.right,
+        bodyWidth: body.style.width,
+        bodyPaddingRight: body.style.paddingRight,
+        rootOverflow: root.style.overflow,
+        rootOverscrollBehavior: root.style.overscrollBehavior,
+      }
+
+      root.style.overflow = 'hidden'
+      root.style.overscrollBehavior = 'none'
+      body.style.overflow = 'hidden'
+      body.style.position = 'fixed'
+      body.style.top = `-${scrollY}px`
+      body.style.left = '0'
+      body.style.right = '0'
+      body.style.width = '100%'
+      if (scrollbarWidth > 0) {
+        body.style.paddingRight = `${scrollbarWidth}px`
+      }
+    },
+
+    unlockPageScroll() {
+      if (typeof window === 'undefined' || !this.scrollLockState) return
+
+      const root = document.documentElement
+      const body = document.body
+      const state = this.scrollLockState
+
+      root.style.overflow = state.rootOverflow
+      root.style.overscrollBehavior = state.rootOverscrollBehavior
+      body.style.overflow = state.bodyOverflow
+      body.style.position = state.bodyPosition
+      body.style.top = state.bodyTop
+      body.style.left = state.bodyLeft
+      body.style.right = state.bodyRight
+      body.style.width = state.bodyWidth
+      body.style.paddingRight = state.bodyPaddingRight
+
+      this.scrollLockState = null
+      window.scrollTo({ top: state.scrollY, behavior: 'instant' })
+    },
+
+    detailNameText(item) {
+      return item?.name || item?.full_filename || '未命名'
+    },
+
+    detailPreviewUrl(item) {
+      return this.resolvedUrl(item)
+    },
+
+    detailAspectRatio(item) {
+      const width = Number(item?.width)
+      const height = Number(item?.height)
+      if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+        return '4 / 3'
+      }
+      return `${width} / ${height}`
+    },
+
+    itemHasDetailMetadata(item) {
+      if (!item || item.type !== 'image') return true
+      return ['file_size', 'imported_at', 'file_created_at'].every(field => (
+        Object.prototype.hasOwnProperty.call(item, field)
+      ))
+    },
+
+    async fetchSelectionDetailMetadata() {
+      const imageIds = this.selectedEntries
+        .map(({ item }) => item)
+        .filter(item => item?.type === 'image' && Number.isInteger(item?.id) && !this.itemHasDetailMetadata(item))
+        .map(item => item.id)
+
+      if (!imageIds.length) return
+
+      const requestSerial = ++this.selectionDetailFetchSerial
+
+      try {
+        const res = await fetch(`${API_BASE}/api/images/meta?ids=${imageIds.join(',')}`)
+        if (!res.ok) return
+
+        const data = await res.json()
+        if (requestSerial !== this.selectionDetailFetchSerial) return
+
+        const metaMap = new Map(
+          (data.items || []).map(meta => [meta.id, meta])
+        )
+        if (!metaMap.size) return
+
+        this.items = this.items.map(item => {
+          if (item?.type !== 'image' || !Number.isInteger(item?.id)) return item
+          const meta = metaMap.get(item.id)
+          if (!meta) return item
+          return {
+            ...item,
+            ...meta,
+            tags: Array.isArray(meta.tags) ? meta.tags : (item.tags || []),
+            name: meta.name || item.name,
+          }
+        })
+      } catch {
+        // ignore metadata hydration failures and keep current values visible
+      }
+    },
+
+    buildDetailField(values, options = {}) {
+      const emptyText = Object.prototype.hasOwnProperty.call(options, 'emptyText')
+        ? options.emptyText
+        : '—'
+      const normalized = Array.isArray(values)
+        ? values.map(value => (value == null ? '' : String(value).trim()))
+        : []
+
+      if (!normalized.length) {
+        return {
+          text: emptyText,
+          isVarious: false,
+          isEmpty: !emptyText,
+        }
+      }
+
+      const first = normalized[0]
+      const allSame = normalized.every(value => value === first)
+      if (!allSame) {
+        return {
+          text: 'various',
+          isVarious: true,
+          isEmpty: false,
+        }
+      }
+
+      const isEmpty = first.length === 0
+      return {
+        text: isEmpty ? emptyText : first,
+        isVarious: false,
+        isEmpty,
+      }
+    },
+
+    formatDateTime(value) {
+      if (!value) return ''
+      const date = value instanceof Date ? value : new Date(value)
+      if (Number.isNaN(date.getTime())) return ''
+
+      const pad = segment => String(segment).padStart(2, '0')
+      return [
+        `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+        `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
+      ].join(' ')
+    },
+
+    formatFileSizeMb(bytesValue) {
+      const bytes = Number(bytesValue)
+      if (!Number.isFinite(bytes) || bytes < 0) return ''
+      const megaBytes = bytes / (1024 * 1024)
+      if (!Number.isFinite(megaBytes)) return ''
+      const formatted = megaBytes >= 100
+        ? megaBytes.toFixed(1)
+        : megaBytes.toFixed(2)
+      return formatted.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
+    },
+
+    detailSizeText(item) {
+      if (!item || item.type !== 'image') return ''
+
+      const width = Number(item?.width)
+      const height = Number(item?.height)
+      const parts = []
+      if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+        parts.push(`${width} × ${height} px`)
+      }
+
+      const fileSizeMb = this.formatFileSizeMb(item?.file_size)
+      if (fileSizeMb) {
+        parts.push(`${fileSizeMb} MB`)
+      }
+
+      return parts.join(' · ')
+    },
+
+    detailImportedText(item) {
+      if (!item || item.type !== 'image') return ''
+      return this.formatDateTime(item.imported_at)
+    },
+
+    detailCreatedText(item) {
+      if (!item || item.type !== 'image') return ''
+      return this.formatDateTime(item.file_created_at)
+    },
+
     goBackOneLevel() {
       if (this.isAlbumMode) {
         const segments = this.albumPath.split('/').filter(Boolean)
@@ -508,12 +1040,135 @@ export default {
     },
 
     onResize() {
+      this.viewportHeight = typeof window !== 'undefined' ? window.innerHeight : this.viewportHeight
       if (this.$refs.itemGrid) {
         this.containerWidth = this.$refs.itemGrid.offsetWidth
+        if (this.isVirtualizedMode) {
+          this.syncVirtualWindow(true)
+          if (this.isSelectionGridMode) {
+            this.measureSelectionRowHeight()
+          }
+        }
+      }
+      if (this.selectionDetailsOpen) {
+        this.updateSelectionDetailsBounds()
+      }
+    },
+
+    onWindowScroll() {
+      if (!this.isVirtualizedMode && !this.selectionDetailsOpen) return
+      if (this.scrollFrameId) return
+
+      this.scrollFrameId = window.requestAnimationFrame(() => {
+        this.scrollFrameId = null
+        if (this.isVirtualizedMode) {
+          this.scrollTop = window.scrollY || window.pageYOffset || 0
+          this.syncVirtualWindow()
+        }
+        if (this.selectionDetailsOpen) {
+          this.updateSelectionDetailsBounds()
+        }
+      })
+    },
+
+    queueCacheTrigger(centerIdx) {
+      if (!Number.isInteger(centerIdx) || centerIdx < 0) return
+      clearTimeout(this.debounceTimer)
+      this.debounceTimer = setTimeout(() => {
+        if (centerIdx !== this.lastCenter) {
+          this.lastCenter = centerIdx
+          this.triggerCacheAt(centerIdx)
+        }
+      }, DEBOUNCE_MS)
+    },
+
+    syncVirtualWindow(force = false) {
+      if (!this.$refs.itemGrid) return
+
+      this.scrollTop = window.scrollY || window.pageYOffset || 0
+      this.viewportHeight = window.innerHeight || this.viewportHeight
+      this.containerWidth = this.$refs.itemGrid.offsetWidth
+      const rect = this.$refs.itemGrid.getBoundingClientRect()
+      this.virtualContainerTop = rect.top + this.scrollTop
+
+      if (!this.isVirtualizedMode) {
+        this.virtualStartIndex = 0
+        this.virtualEndIndex = this.items.length
+        this.virtualAnchorIndex = this.items.length ? 0 : -1
+        return
+      }
+
+      const viewportTop = Math.max(0, this.scrollTop - this.virtualContainerTop)
+      const viewportBottom = viewportTop + this.viewportHeight
+      let startIndex = 0
+      let endIndex = this.items.length
+      let anchorIndex = this.items.length ? 0 : -1
+
+      if (this.viewMode === 'list') {
+        const firstVisibleIndex = Math.min(
+          this.items.length - 1,
+          Math.max(0, Math.floor(viewportTop / LIST_ROW_HEIGHT)),
+        )
+        anchorIndex = firstVisibleIndex
+        startIndex = Math.max(0, firstVisibleIndex - LIST_OVERSCAN_ROWS)
+        endIndex = Math.min(
+          this.items.length,
+          Math.ceil(viewportBottom / LIST_ROW_HEIGHT) + LIST_OVERSCAN_ROWS,
+        )
+      } else if (this.isSelectionGridMode) {
+        const rowSpan = this.effectiveSelectionRowHeight + this.selectionGridGapPx
+        const totalRows = Math.ceil(this.items.length / this.selectionColumnCount)
+        const firstVisibleRow = Math.min(
+          Math.max(0, Math.floor(viewportTop / rowSpan)),
+          Math.max(0, totalRows - 1),
+        )
+        const endVisibleRow = Math.min(
+          totalRows,
+          Math.ceil(viewportBottom / rowSpan) + SELECTION_OVERSCAN_ROWS,
+        )
+        anchorIndex = Math.min(this.items.length - 1, firstVisibleRow * this.selectionColumnCount)
+        startIndex = Math.max(0, (firstVisibleRow - SELECTION_OVERSCAN_ROWS) * this.selectionColumnCount)
+        endIndex = Math.min(this.items.length, endVisibleRow * this.selectionColumnCount)
+      }
+
+      const rangeChanged =
+        force ||
+        startIndex !== this.virtualStartIndex ||
+        endIndex !== this.virtualEndIndex ||
+        anchorIndex !== this.virtualAnchorIndex
+
+      if (!rangeChanged) return
+
+      this.virtualStartIndex = startIndex
+      this.virtualEndIndex = endIndex
+      this.virtualAnchorIndex = anchorIndex
+      this.queueCacheTrigger(anchorIndex)
+
+      if (this.isSelectionGridMode) {
+        this.$nextTick(() => {
+          this.measureSelectionRowHeight()
+        })
+      }
+    },
+
+    measureSelectionRowHeight() {
+      if (!this.isSelectionGridMode || !this.$refs.itemGrid) return
+      const sample = this.$refs.itemGrid.querySelector('.selection-wrap')
+      if (!sample) return
+
+      const nextHeight = Math.round(sample.getBoundingClientRect().height)
+      if (nextHeight > 0 && Math.abs(nextHeight - this.selectionRowHeight) > 1) {
+        this.selectionRowHeight = nextHeight
+        this.syncVirtualWindow(true)
       }
     },
 
     onWindowKeydown(event) {
+      if (this.selectionDetailsOpen && event.key === 'Escape') {
+        event.preventDefault()
+        this.closeSelectionDetails()
+        return
+      }
       if (!this.selectionMode) return
       const key = event.key.toLowerCase()
       if ((event.ctrlKey || event.metaKey) && key === 'a') {
@@ -600,6 +1255,7 @@ export default {
       if (!['grid', 'list'].includes(mode)) return
       const modeChanged = this.viewMode !== mode
       const wasSelecting = this.selectionMode
+      this.closeSelectAllMenu()
 
       this.viewMode = mode
 
@@ -618,6 +1274,7 @@ export default {
     toggleSelectionMode(forceValue = null) {
       const nextValue = typeof forceValue === 'boolean' ? forceValue : !this.selectionMode
       if (nextValue === this.selectionMode) return
+      this.closeSelectAllMenu()
 
       if (nextValue) {
         this.viewModeBeforeSelection = this.viewMode
@@ -656,6 +1313,8 @@ export default {
       this.selectedMap = {}
       this.selectionTypeLock = null
       this.selectionAnchorIndex = null
+      this.closeSelectionDetails()
+      this.closeSelectAllMenu()
     },
 
     selectOnlyIndex(index) {
@@ -751,8 +1410,7 @@ export default {
       }
     },
 
-    selectAllOfCurrentType() {
-      const type = this.selectionTypeLock || this.items[0]?.type
+    selectAllOfType(type) {
       if (!type) return
       const next = {}
       let anchorIndex = null
@@ -765,6 +1423,41 @@ export default {
       this.selectedMap = next
       this.selectionTypeLock = type
       this.selectionAnchorIndex = anchorIndex
+      this.closeSelectAllMenu()
+    },
+
+    selectAllOfCurrentType() {
+      const type = this.selectionTypeLock
+        || (this.availableSelectionTypes.length === 1
+          ? this.availableSelectionTypes[0]
+          : (this.availableSelectionTypes.includes('image') ? 'image' : this.availableSelectionTypes[0]))
+      this.selectAllOfType(type)
+    },
+
+    handleSelectAllButtonClick() {
+      if (!this.hasMixedSelectableTypes) {
+        this.selectAllOfCurrentType()
+        return
+      }
+
+      this.selectAllMenuOpen = !this.selectAllMenuOpen
+    },
+
+    onSelectAllTypeClick(type) {
+      this.selectAllOfType(type)
+    },
+
+    closeSelectAllMenu() {
+      this.selectAllMenuOpen = false
+    },
+
+    onWindowPointerDown(event) {
+      if (!this.selectAllMenuOpen) return
+      const host = this.$refs.selectionIslandMenu
+      if (host && typeof host.contains === 'function' && host.contains(event.target)) {
+        return
+      }
+      this.closeSelectAllMenu()
     },
 
     onSelectionPointerDown(event, item, index) {
@@ -987,6 +1680,29 @@ export default {
       return '无标签'
     },
 
+    detailTagTextForItem(item) {
+      if (item?.type !== 'image') return ''
+      const ids = Array.isArray(item?.tags)
+        ? item.tags.filter(id => Number.isInteger(id))
+        : []
+      if (!ids.length) return ''
+
+      const names = []
+      let allResolved = true
+      for (const id of ids) {
+        if (!Object.prototype.hasOwnProperty.call(this.tagNameMap, id)) {
+          allResolved = false
+          continue
+        }
+        const label = this.tagNameMap[id]
+        if (label) names.push(label)
+      }
+
+      if (names.length) return names.join(' · ')
+      if (!allResolved && this.tagsLoading) return '加载标签中...'
+      return ''
+    },
+
     collectMissingTagIds() {
       const result = []
       const seen = new Set()
@@ -1004,8 +1720,8 @@ export default {
       return result
     },
 
-    async ensureTagLabelsLoaded() {
-      if (this.selectionInfoMode !== 'tags') return
+    async ensureTagLabelsLoaded(force = false) {
+      if (!force && this.selectionInfoMode !== 'tags') return
       const missingIds = this.collectMissingTagIds()
       if (!missingIds.length) return
 
@@ -1043,8 +1759,29 @@ export default {
       }
     },
 
-    onReservedDetailsClick() {
-      // reserved for future menu
+    onReservedDetailsClick(item, index) {
+      if (!item) return
+      const alreadySelected = this.isItemSelected(item, index)
+
+      if (!this.selectedCount) {
+        this.selectOnlyIndex(index)
+      } else if (this.selectedCount === 1) {
+        if (!alreadySelected) {
+          this.selectOnlyIndex(index)
+        }
+      } else if (!alreadySelected) {
+        this.selectOnlyIndex(index)
+      }
+
+      this.openSelectionDetails()
+    },
+
+    onReservedAnalysisClick() {
+      // reserved for future filename-based tag analysis
+    },
+
+    onReservedDeleteClick() {
+      // reserved for future delete action
     },
 
     idsAround(centerIdx) {
@@ -1113,14 +1850,20 @@ export default {
         this.teardownResizeObserver()
         if (!this.$refs.itemGrid) return
         this.containerWidth = this.$refs.itemGrid.offsetWidth
-        this.triggerCacheAt(0)
-        this.setupObserver()
+        this.syncVirtualWindow(true)
+        if (this.isPhotoGridMode) {
+          this.triggerCacheAt(0)
+          this.setupObserver()
+        }
         this.setupResizeObserver()
+        if (this.isSelectionGridMode) {
+          this.measureSelectionRowHeight()
+        }
       })
     },
 
     setupObserver() {
-      if (!this.$refs.itemGrid) return
+      if (!this.$refs.itemGrid || !this.isPhotoGridMode) return
       this.observer = new IntersectionObserver(
         (entries) => {
           const visible = entries
@@ -1164,6 +1907,12 @@ export default {
         requestAnimationFrame(() => {
           if (this.$refs.itemGrid) {
             this.containerWidth = this.$refs.itemGrid.offsetWidth
+            if (this.isVirtualizedMode) {
+              this.syncVirtualWindow(true)
+              if (this.isSelectionGridMode) {
+                this.measureSelectionRowHeight()
+              }
+            }
           }
         })
       })
@@ -1181,7 +1930,10 @@ export default {
 </script>
 
 <style scoped lang="css">
-.page { @apply flex flex-col gap-6; }
+.page {
+  @apply flex flex-col gap-6;
+  position: relative;
+}
 
 .vm-btns {
   display: flex;
@@ -1480,6 +2232,53 @@ export default {
   white-space: nowrap;
 }
 
+.selection-island__menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.selection-island__submenu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 0.55rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.42rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 34px rgba(15, 23, 42, 0.12);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.selection-island__menu-wrap.is-open .selection-island__submenu {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.selection-island__submenu-btn {
+  border: 0;
+  border-radius: 10px;
+  padding: 0.48rem 0.72rem;
+  background: transparent;
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.selection-island__submenu-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
 .selection-island__btn {
   border: 0;
   border-radius: 12px;
@@ -1495,6 +2294,16 @@ export default {
 .selection-island__btn:hover {
   background: #e2e8f0;
   color: #0f172a;
+}
+
+.selection-island__btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.selection-island__btn:disabled:hover {
+  background: transparent;
+  color: #334155;
 }
 
 @media (orientation: landscape) {
@@ -1517,6 +2326,16 @@ export default {
     bottom: 0.9rem;
     justify-content: space-between;
     flex-wrap: wrap;
+  }
+
+  .selection-island__menu-wrap {
+    display: flex;
+    flex: 1 1 100%;
+  }
+
+  .selection-island__submenu {
+    left: 0;
+    right: 0;
   }
 }
 </style>

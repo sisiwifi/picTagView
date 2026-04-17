@@ -254,8 +254,14 @@
 - thumb_url 表示 temp 预览图路径。
 - cache_thumb_url 表示按需生成的 cache 预览图路径。
 - BrowsePage 的普通模式与选择模式都应优先显示 cache/temp 缩略图；若缓存尚未生成，则显示骨架占位并沿用 `/api/thumbnails/cache` 的异步生成链路，而不是把原图当作常态展示源。
+- `/api/dates/*` 与 `/api/albums/*` 的图片条目现在还会返回 `file_size`、`imported_at`、`file_created_at`，供选择模式详情浮层直接展示，不需要额外请求单图详情接口。
+- `GET /api/images/meta?ids=1,2,3` 用于按需回填图片元数据；当前主要供 BrowsePage 在详情浮层打开时，为旧列表数据或缺字段条目补齐 `file_size`、`imported_at`、`file_created_at`、`tags` 与缩略图地址。
 - BrowsePage 的“大缩略图”照片墙应优先消费 `/api/dates/*` 与 `/api/albums/*` 返回的 `width` / `height` 初始化布局；前端 `onload` 只作为缺失元数据时的兜底修正，不应再把图片实际加载当作首选布局来源。
+- BrowsePage 当前仅对列表模式与选择模式启用窗口化渲染，借此减少 DOM 数量与选择态下的重排压力；“大缩略图”照片墙保持原有全量渲染与滚动锚点策略不变。
 - BrowsePage 的选择逻辑现已扩展到列表显示：列表模式可通过长按进入选择态，并继续使用与卡片选择界面相同的 Ctrl/Shift、多选与统一选择符号；该行为仅是前端交互扩展，不新增后端接口。
+- BrowsePage 选择模式的详情浮层只使用 cache/temp 缩略图做预览，不把原图当作弹层内展示源；弹层尺寸由主视图区当前可视宽高共同约束，左侧图片区内的缩略图按原图比例自适应显示；多选时左侧预览列表需可滚动且隐藏滚动条，右下保留删除占位按钮；“查看原图”动作继续复用 `/api/images/{image_id}/open`。
+- BrowsePage 详情浮层打开时会锁定页面滚动，避免滚轮、空白区拖动或中键自动滚动穿透到底层页面。
+- BrowsePage 操作岛中的“全选”在同时存在相册与图片时应通过点击展开二级按钮，不依赖 hover，这样桌面与移动端都能稳定选择“相册 / 图片”两类全选动作。
 - 相册导航使用 public_id，不依赖数据库自增主键。
 - 软删除可见性由 path_soft_delete.target_path 判定（路径级可见性）。
 - BrowsePage 选择模式默认只使用浏览接口返回的 `tags` id 列表；真正的 Tag 名称解析通过 `/api/tags?ids=...` 按需批量完成，不在 `/api/dates/*` 与 `/api/albums/*` 内联展开。
