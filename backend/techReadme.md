@@ -26,8 +26,8 @@
 - 业务按职责拆分到子路由模块：
   - `app/api/routers/basic.py`：`GET /`、`POST /api/import`、`GET /api/images/count`、`POST /api/admin/refresh`
   - `app/api/routers/dates.py`：`GET /api/dates`、`GET /api/dates/{date_group}/items`
-  - `app/api/routers/albums.py`：`GET /api/albums/by-path/{album_path:path}`、`GET /api/albums/{album_id}`
-  - `app/api/routers/images.py`：`GET /api/images/{image_id}/open`
+  - `app/api/routers/albums.py`：`GET /api/albums/by-path/{album_path:path}`、`GET /api/albums/open-by-path/{album_path:path}`、`GET /api/albums/{album_id}`
+  - `app/api/routers/images.py`：`GET /api/images/meta`、`GET /api/images/{image_id}/open`
   - `app/api/routers/system.py`：`/api/system/*` 相关接口
   - `app/api/routers/cache.py`：`DELETE /api/cache`、`/api/thumbnails/cache*`
 - 共享查询与路径工具在 `app/api/common.py`：软删除过滤、缩略图 URL 解析、存储路径解析。
@@ -36,6 +36,7 @@
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的条目模型新增 `sort_ts`（Unix 秒级时间戳，可为空）。
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的图片条目现同时返回 `tags`（Tag ID 整数列表）；接口仍只返回 ID，不在主查询中联表展开 Tag 名称。
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的图片条目现同时返回 `width` / `height`；相册条目则返回封面图对应的 `width` / `height`。
+- `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的相册条目现同时返回 `photo_count` / `created_at`，供选择详情浮层展示相册图片数量与创建时间。
 - `sort_ts` 生成规则：
   - 图片条目：优先 `file_created_at`，回退 `imported_at`，再回退 `created_at`。
   - 相册条目：优先 `updated_at`，回退 `created_at`。
@@ -54,7 +55,7 @@
   - 页面右下角显示半透明操作岛，提供已选计数、“详情”“全选”“取消选择”；若当前视图同时存在相册与图片，点击“全选”会向上展开“相册 / 图片”两个快捷入口，再次点击空白处收起，兼顾桌面与移动端。
   - 卡片右下角的 `...` 按钮与操作岛“详情”按钮都会打开主内容区内的二级详情浮层；浮层遮罩不覆盖左侧 Sidebar，可通过右上角文字关闭按钮或点击空白处关闭。
   - 详情浮层尺寸由主内容区当前可视宽度与可视高度共同约束，不再受整页内容高度或单张图片视觉尺寸反推；左侧图片区内部按原图比例自适应展示缩略图，多选时左侧改为隐藏滚动条且可滚动的比例缩略图列表。
-  - 详情浮层单选时展示 cache/temp 缩略图与文件元数据，多选时同值字段直接显示，异值字段统一渲染为斜体 `various`；动作区底部保持“删除”占位按钮可见。
+  - 详情浮层单选时展示 cache/temp 缩略图与文件元数据，多选时同值字段直接显示，异值字段统一渲染为斜体 `various`；动作区底部保持“删除”占位按钮可见。若当前选中的是相册，则“尺寸”栏切换为“图片数量”并展示 `photo_count`，创建时间改读相册 `created_at`，主按钮文案改为“查看相册”。
   - 打开详情浮层时会锁定页面滚动，并拦截中键自动滚动对底层页面的影响；关闭后恢复原有滚动位置。
   - 若条目是在旧响应下加载、缺失 `file_size/imported_at/file_created_at`，前端会额外调用 `/api/images/meta?ids=...` 补齐当前选中图片的详情字段。
 - 列表模式交互补充：
@@ -77,6 +78,7 @@
   - 组件复用策略：两个 browse 路由共享 `meta.reuseKey = 'browse'`，App.vue 使用 `:key="route.meta?.reuseKey || route.name"` 避免组件销毁重建，消除跨层级导航闪动。
   - 返回按钮语义统一为"目录上一级"：在相册内返回上一级相册或月份列表，月份列表返回日期总览。
   - CalendarOverview 为纯月份网格页面，不再内含详情子视图。
+  - CalendarOverview 的月份网格按页面方向切换列数：横向（`orientation: landscape`）固定 6 列，纵向（`orientation: portrait`）固定 3 列，不再使用最小宽度断点控制。
   - 侧边栏 `/calendar` 高亮规则：路径以 `/calendar` 开头即激活。
   - sessionStorage `pendingAlbumTitle` 机制已移除，标题由 URL 路径段或 API 响应即时提供。
 - **页面切换过渡动画**：

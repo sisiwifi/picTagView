@@ -44,6 +44,8 @@ class DateItem(BaseModel):
     file_size: Optional[int] = None
     imported_at: Optional[datetime] = None
     file_created_at: Optional[datetime] = None
+    photo_count: Optional[int] = None
+    created_at: Optional[datetime] = None
 
 
 class DateItemsResponse(BaseModel):
@@ -133,6 +135,8 @@ class AlbumItem(BaseModel):
     file_size: Optional[int] = None
     imported_at: Optional[datetime] = None
     file_created_at: Optional[datetime] = None
+    photo_count: Optional[int] = None
+    created_at: Optional[datetime] = None
 
 
 class AlbumInfo(BaseModel):

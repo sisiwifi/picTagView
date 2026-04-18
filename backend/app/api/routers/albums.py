@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
@@ -12,7 +15,7 @@ from app.api.common import (
     thumb_url,
 )
 from app.api.schemas import AlbumDetailResponse, AlbumInfo, AlbumItem, BreadcrumbItem
-from app.core.config import CACHE_DIR, TEMP_DIR
+from app.core.config import CACHE_DIR, MEDIA_DIR, TEMP_DIR
 from app.db.session import get_session
 from app.models.album import Album
 from app.models.album_image import AlbumImage
@@ -101,6 +104,8 @@ def _build_album_response(album: Album, session) -> AlbumDetailResponse:
             public_id=sa.public_id,
             album_path=sa.path,
             sort_ts=_to_unix_ts(sa.updated_at or sa.created_at),
+            photo_count=sa.photo_count,
+            created_at=sa.created_at,
         ))
     sub_items.sort(key=lambda item: _item_sort_key(item.name))
 
@@ -161,6 +166,30 @@ def album_by_path(album_path: str) -> AlbumDetailResponse:
         if not album:
             raise HTTPException(status_code=404, detail="Album not found")
         return _build_album_response(album, session)
+
+
+@router.get("/api/albums/open-by-path/{album_path:path}")
+def open_album_by_path(album_path: str) -> dict:
+    target = (MEDIA_DIR / album_path).resolve()
+    media_root = MEDIA_DIR.resolve()
+
+    try:
+        target.relative_to(media_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Album path is invalid") from exc
+
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(status_code=404, detail="Album directory not found")
+
+    if sys.platform == "win32":
+        os.startfile(str(target))
+        return {"status": "ok", "mode": "system", "path": str(target)}
+    if sys.platform == "darwin":
+        subprocess.run(["open", str(target)], check=False)
+    else:
+        subprocess.run(["xdg-open", str(target)], check=False)
+
+    return {"status": "ok", "mode": "system", "path": str(target)}
 
 
 @router.get("/api/albums/{album_id}", response_model=AlbumDetailResponse)

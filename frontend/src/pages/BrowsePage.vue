@@ -209,13 +209,15 @@
       :name-field="selectionDetailNameField"
       :tags-field="selectionDetailTagsField"
       :size-field="selectionDetailSizeField"
+      :size-label="selectionDetailSizeLabel"
       :imported-field="selectionDetailImportedField"
       :created-field="selectionDetailCreatedField"
-      :can-open-original="canOpenOriginalFromDetails"
+      :primary-action-label="selectionDetailPrimaryActionLabel"
+      :can-open-primary-action="canOpenPrimaryActionFromDetails"
       @close="closeSelectionDetails"
       @analysis="onReservedAnalysisClick"
       @delete="onReservedDeleteClick"
-      @open-original="openOriginalFromDetails"
+      @open-primary="openPrimaryFromDetails"
     />
   </section>
 </template>
@@ -564,16 +566,28 @@ export default {
     selectionDetailSizeField() {
       return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailSizeText(item)))
     },
+    selectionDetailSizeLabel() {
+      return this.selectionDetailType === 'album' ? '图片数量' : '尺寸'
+    },
     selectionDetailImportedField() {
       return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailImportedText(item)))
     },
     selectionDetailCreatedField() {
       return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailCreatedText(item)))
     },
-    canOpenOriginalFromDetails() {
+    selectionDetailType() {
+      return this.selectedEntries[0]?.item?.type || null
+    },
+    selectionDetailPrimaryActionLabel() {
+      return this.selectionDetailType === 'album' ? '查看相册' : '查看原图'
+    },
+    canOpenPrimaryActionFromDetails() {
       if (this.selectedEntries.length !== 1) return false
       const entry = this.selectedEntries[0]
-      return entry?.item?.type === 'image' && Number.isInteger(entry?.item?.id)
+      if (entry?.item?.type === 'image') {
+        return Number.isInteger(entry?.item?.id)
+      }
+      return entry?.item?.type === 'album' && typeof entry?.item?.album_path === 'string' && entry.item.album_path.length > 0
     },
   },
 
@@ -758,10 +772,18 @@ export default {
       }
     },
 
-    openOriginalFromDetails() {
-      if (!this.canOpenOriginalFromDetails) return
+    openPrimaryFromDetails() {
+      if (!this.canOpenPrimaryActionFromDetails) return
       const target = this.selectedEntries[0]?.item
-      if (!target?.id) return
+      if (!target) return
+
+      if (target.type === 'album') {
+        if (!target.album_path) return
+        fetch(`${API_BASE}/api/albums/open-by-path/${encodeURI(target.album_path)}`).catch(() => {})
+        return
+      }
+
+      if (!target.id) return
       fetch(`${API_BASE}/api/images/${target.id}/open`).catch(() => {})
     },
 
@@ -988,7 +1010,22 @@ export default {
     },
 
     detailSizeText(item) {
-      if (!item || item.type !== 'image') return ''
+      if (!item) return ''
+
+      if (item.type === 'album') {
+        const photoCount = Number(item?.photo_count)
+        if (Number.isFinite(photoCount) && photoCount >= 0) {
+          return `${photoCount} 张`
+        }
+
+        const fallbackCount = Number(item?.count)
+        if (Number.isFinite(fallbackCount) && fallbackCount >= 0) {
+          return `${fallbackCount} 张`
+        }
+        return ''
+      }
+
+      if (item.type !== 'image') return ''
 
       const width = Number(item?.width)
       const height = Number(item?.height)
@@ -1011,7 +1048,11 @@ export default {
     },
 
     detailCreatedText(item) {
-      if (!item || item.type !== 'image') return ''
+      if (!item) return ''
+      if (item.type === 'album') {
+        return this.formatDateTime(item.created_at)
+      }
+      if (item.type !== 'image') return ''
       return this.formatDateTime(item.file_created_at)
     },
 

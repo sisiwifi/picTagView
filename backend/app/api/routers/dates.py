@@ -232,6 +232,8 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     public_id=album.public_id,
                     album_path=album.path,
                     sort_ts=_to_unix_ts(album.updated_at or album.created_at),
+                    photo_count=album.photo_count,
+                    created_at=album.created_at,
                 )
             )
         album_items.sort(key=lambda item: _item_sort_key(item.name))

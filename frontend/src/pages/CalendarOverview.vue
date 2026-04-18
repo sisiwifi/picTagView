@@ -176,11 +176,16 @@ export default {
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1.25rem;
 }
-@media (min-width: 768px) {
-  .card-grid { grid-template-columns: repeat(6, 1fr); }
+
+@media (orientation: landscape) {
+  .card-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+}
+
+@media (orientation: portrait) {
+  .card-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 .month-card { aspect-ratio: 1 / 1; }

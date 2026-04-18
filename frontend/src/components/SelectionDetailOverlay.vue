@@ -94,7 +94,7 @@
           </div>
 
           <div class="detail-field">
-            <span class="detail-field__label">尺寸</span>
+            <span class="detail-field__label">{{ sizeLabel }}</span>
             <div class="detail-field__value">
               <em v-if="sizeField.isVarious" class="detail-field__various">various</em>
               <span v-else class="detail-field__text">{{ sizeField.text || '—' }}</span>
@@ -121,10 +121,10 @@
             <button
               class="detail-panel__action"
               type="button"
-              :disabled="!canOpenOriginal"
-              @click="$emit('open-original')"
+              :disabled="!canOpenPrimaryAction"
+              @click="$emit('open-primary')"
             >
-              查看原图
+              {{ primaryActionLabel }}
             </button>
             <button
               class="detail-panel__action detail-panel__action--danger"
@@ -161,6 +161,7 @@ export default {
       type: Object,
       default: () => ({ text: '', isVarious: false, isEmpty: false }),
     },
+    sizeLabel: { type: String, default: '尺寸' },
     importedField: {
       type: Object,
       default: () => ({ text: '', isVarious: false, isEmpty: false }),
@@ -169,9 +170,10 @@ export default {
       type: Object,
       default: () => ({ text: '', isVarious: false, isEmpty: false }),
     },
-    canOpenOriginal: { type: Boolean, default: false },
+    primaryActionLabel: { type: String, default: '查看原图' },
+    canOpenPrimaryAction: { type: Boolean, default: false },
   },
-  emits: ['analysis', 'close', 'delete', 'open-original'],
+  emits: ['analysis', 'close', 'delete', 'open-primary'],
   computed: {
     primaryPreview() {
       return this.previewItems[0] || null
