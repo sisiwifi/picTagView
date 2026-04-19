@@ -82,14 +82,14 @@
 
           <div class="detail-field detail-field--tags">
             <span class="detail-field__label">标签</span>
-            <div class="detail-field__tag-row">
+            <div class="detail-field__tag-row" :class="{ 'detail-field__tag-row--single': !showAnalysisButton }">
               <div class="detail-field__value detail-field__value--tags">
                 <em v-if="tagsField.isVarious" class="detail-field__various">various</em>
                 <span v-else-if="tagsField.isEmpty" class="detail-field__placeholder"></span>
                 <span v-else class="detail-field__text">{{ tagsField.text }}</span>
               </div>
 
-              <button class="detail-field__ghost" type="button" @click="$emit('analysis')">分析</button>
+              <button v-if="showAnalysisButton" class="detail-field__ghost" type="button" @click="$emit('analysis')">分析</button>
             </div>
           </div>
 
@@ -131,7 +131,7 @@
               type="button"
               @click="$emit('delete')"
             >
-              删除
+              {{ dangerActionLabel }}
             </button>
           </div>
         </div>
@@ -172,6 +172,8 @@ export default {
     },
     primaryActionLabel: { type: String, default: '查看原图' },
     canOpenPrimaryAction: { type: Boolean, default: false },
+    dangerActionLabel: { type: String, default: '删除' },
+    showAnalysisButton: { type: Boolean, default: true },
   },
   emits: ['analysis', 'close', 'delete', 'open-primary'],
   computed: {
@@ -429,6 +431,10 @@ export default {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.75rem;
   align-items: end;
+}
+
+.detail-field__tag-row--single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .detail-field__ghost {

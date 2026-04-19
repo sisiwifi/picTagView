@@ -19,7 +19,7 @@ class ImageAsset(SQLModel, table=True):
     date_group: Optional[str] = Field(default=None, index=True)
     file_created_at: Optional[datetime] = Field(default=None, index=True)
     imported_at: datetime = Field(default_factory=datetime.now, index=True)
-    # 软删除已迁移到独立表 path_soft_delete，此处不再存储 deleted_at
+    # 用户删除已迁移到 trash + TrashEntry，此处不再存储 deleted_at
     width: Optional[int] = Field(default=None)
     height: Optional[int] = Field(default=None)
     file_size: Optional[int] = Field(default=None)

@@ -17,8 +17,8 @@ def init_db() -> None:
     # Import all models so SQLModel.metadata knows every table before create_all.
     from app.models.album import Album          # noqa: F401
     from app.models.album_image import AlbumImage  # noqa: F401
-    from app.models.soft_delete import PathSoftDelete  # noqa: F401
     from app.models.tag import Tag              # noqa: F401
+    from app.models.trash_entry import TrashEntry  # noqa: F401
     SQLModel.metadata.create_all(engine)
     _migrate_db()
     _db_initialized = True

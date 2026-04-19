@@ -7,10 +7,9 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import col, select
 
 from app.api.common import (
-    album_visible,
-    asset_visible,
-    build_soft_delete_maps,
+    album_media_predicate,
     cache_thumb_url,
+    pick_asset_media_path,
     resolve_stored_path,
     thumb_url,
 )
@@ -36,10 +35,6 @@ def _to_unix_ts(dt: datetime | None) -> int | None:
 
 def _build_album_response(album: Album, session) -> AlbumDetailResponse:
     """Shared logic for building album detail response."""
-    image_deleted, album_deleted = build_soft_delete_maps(session)
-    if not album_visible(album, album_deleted):
-        raise HTTPException(status_code=404, detail="Album not found")
-
     parent_public_id = None
     ancestors: list[BreadcrumbItem] = []
     cur = album
@@ -57,7 +52,6 @@ def _build_album_response(album: Album, session) -> AlbumDetailResponse:
         .where(Album.parent_id == album.id)
         .order_by(col(Album.title))
     ).all()
-    sub_albums = [sa for sa in sub_albums if album_visible(sa, album_deleted)]
 
     sub_items: list[AlbumItem] = []
     for sa in sub_albums:
@@ -122,7 +116,8 @@ def _build_album_response(album: Album, session) -> AlbumDetailResponse:
 
     image_items: list[AlbumItem] = []
     for asset in album_assets:
-        if not asset_visible(asset, image_deleted):
+        media_index, media_rel_path = pick_asset_media_path(asset, album_media_predicate(album.path))
+        if media_index is None or not media_rel_path:
             continue
         thumb = thumb_url(asset)
         cache_thumb = cache_thumb_url(asset)
@@ -139,6 +134,8 @@ def _build_album_response(album: Album, session) -> AlbumDetailResponse:
             file_size=asset.file_size,
             imported_at=asset.imported_at,
             file_created_at=asset.file_created_at,
+            media_index=media_index,
+            media_rel_path=media_rel_path,
         ))
     image_items.sort(key=lambda item: _item_sort_key(item.name))
 

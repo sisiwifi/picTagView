@@ -9,8 +9,34 @@
     </div>
 
     <header class="page-header">
-      <h2 class="page-title">设置</h2>
-      <p class="page-subtitle">个性化与系统管理</p>
+      <div class="page-header__main">
+        <h2 class="page-title">设置</h2>
+        <p class="page-subtitle">个性化与系统管理</p>
+      </div>
+      <button class="page-header__action trash-launch" type="button" @click="$router.push('/trash')">
+        <span class="trash-launch__icon" aria-hidden="true">
+          <svg viewBox="0 0 48 48" fill="none">
+            <rect x="6" y="8" width="36" height="32" rx="12" fill="url(#trash-launch-bg)" />
+            <path d="M17 20H31" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+            <path d="M19 16.5H29" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+            <path d="M20.5 22.5V31.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+            <path d="M27.5 22.5V31.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+            <path d="M15.5 18.5L17.8 14.5L22 16.7" stroke="#047857" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M32.5 29.5L30.2 33.5L26 31.3" stroke="#0f766e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            <defs>
+              <linearGradient id="trash-launch-bg" x1="10" y1="10" x2="38" y2="38" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#ecfccb" />
+                <stop offset="1" stop-color="#fef3c7" />
+              </linearGradient>
+            </defs>
+          </svg>
+        </span>
+        <span class="trash-launch__copy">
+          <span class="trash-launch__title">回收站</span>
+          <span class="trash-launch__subtitle">查看已删除项目</span>
+        </span>
+        <span class="trash-launch__arrow" aria-hidden="true">→</span>
+      </button>
     </header>
 
     <!-- 外观 -->
@@ -689,9 +715,93 @@ export default {
   @apply bg-red-50 text-red-700 border-red-300;
 }
 
-.page-header { @apply flex flex-col gap-1; }
+.page-header { @apply flex items-end justify-between gap-4; }
+.page-header__main { @apply flex flex-col gap-1; }
 .page-title { @apply text-2xl font-semibold text-slate-900 m-0; }
 .page-subtitle { @apply text-sm text-slate-500 m-0; }
+.page-header__action {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.trash-launch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.9rem;
+  min-height: 76px;
+  min-width: 252px;
+  padding: 0.8rem 1rem;
+  border: 1px solid rgba(16, 185, 129, 0.18);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at top left, rgba(220, 252, 231, 0.95), transparent 55%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(255, 247, 237, 0.98));
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.trash-launch:hover {
+  transform: translateY(-2px);
+  border-color: rgba(13, 148, 136, 0.24);
+  box-shadow: 0 18px 34px rgba(15, 23, 42, 0.12);
+}
+
+.trash-launch__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.8);
+  color: #0f766e;
+  flex-shrink: 0;
+}
+
+.trash-launch__icon svg {
+  width: 36px;
+  height: 36px;
+}
+
+.trash-launch__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.trash-launch__title {
+  color: #0f172a;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.trash-launch__subtitle {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.trash-launch__arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #0f766e;
+  font-size: 1rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
 
 .settings-card {
   @apply bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col gap-4;
@@ -704,6 +814,17 @@ export default {
 }
 .setting-info { @apply flex flex-col gap-0.5; }
 .setting-label { @apply text-sm font-medium text-slate-700; }
+
+@media (max-width: 640px) {
+  .page-header {
+    @apply flex-col items-stretch;
+  }
+
+  .trash-launch {
+    width: 100%;
+    min-width: 0;
+  }
+}
 .setting-desc { @apply text-xs text-slate-400; }
 
 .viewer-current {
@@ -821,6 +942,7 @@ export default {
 }
 
 .thumb-size-input[type='number'] {
+  appearance: textfield;
   -moz-appearance: textfield;
 }
 

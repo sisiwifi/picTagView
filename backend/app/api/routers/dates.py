@@ -6,10 +6,9 @@ from sqlalchemy import exists
 from sqlmodel import col, select
 
 from app.api.common import (
-    album_visible,
-    asset_visible,
-    build_soft_delete_maps,
     cache_thumb_url,
+    date_group_media_predicate,
+    pick_asset_media_path,
     resolve_stored_path,
     thumb_url,
 )
@@ -41,8 +40,7 @@ def dates_view() -> DateViewResponse:
             .where(ImageAsset.date_group != None)  # noqa: E711
             .order_by(col(ImageAsset.id))
         ).all()
-        image_deleted, album_deleted = build_soft_delete_maps(session)
-        assets = [asset for asset in all_assets if asset_visible(asset, image_deleted)]
+        assets = all_assets
 
         # Build set of image IDs that belong to any album via album_image table
         album_image_ids: set[int] = set(
@@ -61,7 +59,6 @@ def dates_view() -> DateViewResponse:
             .where(Album.parent_id == None)  # noqa: E711
             .where(Album.date_group != None)  # noqa: E711
         ).all()
-        top_albums = [album for album in top_albums if album_visible(album, album_deleted)]
 
         album_map: dict[str, list[Album]] = defaultdict(list)
         for album in top_albums:
@@ -139,8 +136,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
             .where(ImageAsset.date_group == date_group)
             .order_by(col(ImageAsset.id))
         ).all()
-        image_deleted, album_deleted = build_soft_delete_maps(session)
-        assets = [asset for asset in all_assets if asset_visible(asset, image_deleted)]
+        assets = all_assets
 
         # Build set of image IDs that belong to any album via album_image table
         album_image_ids: set[int] = set(
@@ -156,7 +152,8 @@ def date_group_items(date_group: str) -> DateItemsResponse:
         for asset in assets:
             if asset.id is not None and asset.id in album_image_ids:
                 continue
-            if not asset.media_path:
+            media_index, media_rel_path = pick_asset_media_path(asset, date_group_media_predicate(date_group))
+            if media_index is None or not media_rel_path:
                 continue
             thumb = thumb_url(asset)
             cache_thumb = cache_thumb_url(asset)
@@ -174,6 +171,8 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     file_size=asset.file_size,
                     imported_at=asset.imported_at,
                     file_created_at=asset.file_created_at,
+                    media_index=media_index,
+                    media_rel_path=media_rel_path,
                 )
             )
         direct_items.sort(key=lambda item: _item_sort_key(item.name))
@@ -184,7 +183,6 @@ def date_group_items(date_group: str) -> DateItemsResponse:
             .where(Album.parent_id == None)  # noqa: E711
             .order_by(col(Album.title))
         ).all()
-        top_albums = [album for album in top_albums if album_visible(album, album_deleted)]
 
         album_items: list[DateItem] = []
         for album in top_albums:

@@ -154,6 +154,35 @@ def _compute_hash_only(
         return key, None, str(exc), None, None, None
 
 
+def _compute_hash_only_from_path(
+    args: Tuple[str, str],
+) -> Tuple[str, Optional[str], Optional[str], Optional[str], Optional[int], Optional[int]]:
+    """
+    Worker (ProcessPoolExecutor): SHA-256 + quick hash + image dimensions from disk path.
+    args = (key, file_path_str)
+    returns (key, file_hash, error_str, quick_hash, width, height)
+    """
+    key, file_path_str = args
+    try:
+        import cv2
+        import numpy as np
+
+        content = Path(file_path_str).read_bytes()
+        file_hash = hashlib.sha256(content).hexdigest()
+        qh = _quick_hash(content)
+
+        arr = np.frombuffer(content, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is not None:
+            img_h, img_w = img.shape[:2]
+        else:
+            img_w, img_h = None, None
+
+        return key, file_hash, None, qh, img_w, img_h
+    except Exception as exc:
+        return key, None, str(exc), None, None, None
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def process_from_paths(
@@ -225,6 +254,26 @@ def process_hash_only_from_bytes(
 
     with ThreadPoolExecutor(max_workers=n) as pool:
         futures = {pool.submit(_compute_hash_only, (key, content)): key for key, content in entries}
+        for fut in as_completed(futures):
+            key, file_hash, error, qh, w, h = fut.result()
+            results[key] = (file_hash, None, error, qh, w, h)
+
+    return results
+
+
+def process_hash_only_from_paths(
+    entries: List[Tuple[str, str]],
+    max_workers: Optional[int] = None,
+) -> Dict[str, Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[int], Optional[int]]]:
+    """Compute SHA-256 + quick hash + dimensions from disk paths using ProcessPoolExecutor."""
+    if not entries:
+        return {}
+
+    n = max_workers or DEFAULT_WORKERS
+    results: Dict[str, Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[int], Optional[int]]] = {}
+
+    with ProcessPoolExecutor(max_workers=n) as pool:
+        futures = {pool.submit(_compute_hash_only_from_path, (key, path)): key for key, path in entries}
         for fut in as_completed(futures):
             key, file_hash, error, qh, w, h = fut.result()
             results[key] = (file_hash, None, error, qh, w, h)

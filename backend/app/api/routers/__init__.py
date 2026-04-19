@@ -5,6 +5,7 @@ from app.api.routers.dates import router as dates_router
 from app.api.routers.images import router as images_router
 from app.api.routers.system import router as system_router
 from app.api.routers.tags import router as tags_router
+from app.api.routers.trash import router as trash_router
 
 __all__ = [
     "albums_router",
@@ -14,4 +15,5 @@ __all__ = [
     "images_router",
     "system_router",
     "tags_router",
+    "trash_router",
 ]

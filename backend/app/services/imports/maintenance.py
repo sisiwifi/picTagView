@@ -2,7 +2,6 @@ import datetime
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import exists, not_
 from sqlmodel import col, select
 
 from app.core.config import CACHE_DIR, MEDIA_DIR, TEMP_DIR
@@ -10,9 +9,9 @@ from app.db.session import get_session, init_db
 from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
-from app.models.soft_delete import PathSoftDelete
+from app.models.trash_entry import TrashEntry
 from app.services.file_scanner import list_image_files
-from app.services.parallel_processor import process_from_paths
+from app.services.parallel_processor import process_from_paths, process_hash_only_from_paths
 
 from .hash_index import rebuild_hash_index
 from .helpers import (
@@ -25,16 +24,6 @@ from .helpers import (
     to_project_relative,
     upsert_thumb,
 )
-
-
-def _ia_not_deleted_for_refresh():
-    return not_(
-        exists(
-            select(PathSoftDelete.id)
-            .where(PathSoftDelete.entity_type == "image")
-            .where(PathSoftDelete.owner_id == ImageAsset.id)
-        )
-    )
 
 
 def _normalize_rel_path(path: str) -> str:
@@ -61,39 +50,6 @@ def _is_album_media_path(rel_path: str) -> bool:
     return len(subdir_chain) > 0
 
 
-def _clear_soft_delete_for_path(session, entity_type: str, owner_id: Optional[int], target_path: str) -> None:
-    normalized = _normalize_rel_path(target_path)
-    rows = session.exec(
-        select(PathSoftDelete)
-        .where(PathSoftDelete.entity_type == entity_type)
-        .where(PathSoftDelete.target_path == normalized)
-    ).all()
-    for row in rows:
-        if owner_id is None or row.owner_id == owner_id:
-            session.delete(row)
-
-
-def _record_soft_delete(session, entity_type: str, owner_id: Optional[int], target_path: str) -> None:
-    normalized = _normalize_rel_path(target_path)
-    exists_row = session.exec(
-        select(PathSoftDelete)
-        .where(PathSoftDelete.entity_type == entity_type)
-        .where(PathSoftDelete.owner_id == owner_id)
-        .where(PathSoftDelete.target_path == normalized)
-    ).first()
-    if exists_row:
-        return
-    session.add(
-        PathSoftDelete(
-            entity_type=entity_type,
-            owner_id=owner_id,
-            target_path=normalized,
-            deleted_at=datetime.datetime.now(),
-            created_at=datetime.datetime.now(),
-        )
-    )
-
-
 def _ensure_album_chain(session, subdir_chain: list[str], date_group: str) -> tuple[list[str], list[str]]:
     if not subdir_chain:
         return [], []
@@ -117,8 +73,6 @@ def _ensure_album_chain(session, subdir_chain: list[str], date_group: str) -> tu
             public_ids.append(existing.public_id)
             paths.append(existing.path)
             parent_id = existing.id
-            if existing.id is not None:
-                _clear_soft_delete_for_path(session, "album", existing.id, existing.path)
             continue
 
         album = Album(
@@ -159,7 +113,7 @@ def recalculate_album_counts() -> None:
 
         cover_candidates: dict[str, ImageAsset] = {}
 
-        all_assets = session.exec(select(ImageAsset).where(_ia_not_deleted_for_refresh())).all()
+        all_assets = session.exec(select(ImageAsset)).all()
         for asset in all_assets:
             for path in (asset.album or []):
                 if not isinstance(path, list) or not path:
@@ -206,19 +160,12 @@ def recalculate_album_counts() -> None:
         session.commit()
 
 
-def _reconcile_assets_and_albums() -> tuple[int, int, int, set[str]]:
+def reconcile_library_paths() -> tuple[int, int, int, set[str]]:
     pruned = 0
-    non_album_deduped = 0
     cleaned_paths = 0
     active_album_paths: set[str] = set()
 
     with get_session() as session:
-        deleted_map: dict[int, set[str]] = {}
-        for row in session.exec(select(PathSoftDelete).where(PathSoftDelete.entity_type == "image")).all():
-            if row.owner_id is None or not row.target_path:
-                continue
-            deleted_map.setdefault(row.owner_id, set()).add(_normalize_rel_path(row.target_path))
-
         all_assets = session.exec(select(ImageAsset).order_by(col(ImageAsset.id))).all()
         for asset in all_assets:
             normalized_paths = [
@@ -254,31 +201,9 @@ def _reconcile_assets_and_albums() -> tuple[int, int, int, set[str]]:
                 if rel_path not in unique_live:
                     unique_live.append(rel_path)
 
-            visible_candidates = [
-                path for path in unique_live
-                if path not in deleted_map.get(asset.id or -1, set())
-            ]
-
-            non_album_paths = [path for path in visible_candidates if not _is_album_media_path(path)]
-            if len(non_album_paths) > 1:
-                keep_non_album = sorted(non_album_paths)[0]
-                reduced: list[str] = []
-                for rel_path in unique_live:
-                    if rel_path in non_album_paths and rel_path != keep_non_album:
-                        non_album_deduped += 1
-                        if asset.id is not None:
-                            _record_soft_delete(session, "image", asset.id, rel_path)
-                        continue
-                    reduced.append(rel_path)
-                unique_live = reduced
-                visible_candidates = [
-                    path for path in unique_live
-                    if path not in deleted_map.get(asset.id or -1, set())
-                ]
-
             album_chains: list[list[str]] = []
             date_candidates: list[str] = []
-            for rel_path in visible_candidates:
+            for rel_path in unique_live:
                 parsed = _media_rel_parts(rel_path)
                 if not parsed:
                     continue
@@ -291,9 +216,6 @@ def _reconcile_assets_and_albums() -> tuple[int, int, int, set[str]]:
                     if public_ids and public_ids not in album_chains:
                         album_chains.append(public_ids)
 
-                if asset.id is not None:
-                    _clear_soft_delete_for_path(session, "image", asset.id, rel_path)
-
             asset.media_path = unique_live
             asset.album = album_chains
             if date_candidates:
@@ -305,44 +227,47 @@ def _reconcile_assets_and_albums() -> tuple[int, int, int, set[str]]:
     with get_session() as session:
         all_albums = session.exec(select(Album)).all()
         for album in all_albums:
-            if album.path in active_album_paths:
-                if album.id is not None:
-                    _clear_soft_delete_for_path(session, "album", album.id, album.path)
-            else:
-                _record_soft_delete(session, "album", album.id, album.path)
+            if album.path not in active_album_paths:
+                session.delete(album)
         session.commit()
 
-    return pruned, non_album_deduped, cleaned_paths, active_album_paths
+    return pruned, 0, cleaned_paths, active_album_paths
 
 
-def _ingest_new_media_files_full(active_album_paths: set[str]) -> tuple[int, int]:
-    _ = active_album_paths
-    new_ingested = 0
+def _first_live_media_path(asset: ImageAsset) -> Optional[Path]:
+    for stored_path in asset.media_path or []:
+        if not isinstance(stored_path, str) or not stored_path:
+            continue
+        resolved = resolve_stored_path(stored_path)
+        if resolved and resolved.exists():
+            return resolved
+    return None
+
+
+def ingest_media_entries(
+    entries: list[tuple[str, Path]],
+    generate_thumbs: bool = True,
+) -> tuple[int, int, list[dict[str, str]]]:
+    if not entries:
+        return 0, 0, []
+
+    created = 0
     hash_conflicts = 0
-
-    all_files = [path for path in list_image_files(MEDIA_DIR) if path.is_file()]
-    all_entries = [(_normalize_rel_path(to_project_relative(path)), path) for path in all_files]
-
-    with get_session() as session:
-        known_paths = {
-            _normalize_rel_path(path)
-            for asset in session.exec(select(ImageAsset)).all()
-            for path in (asset.media_path or [])
-            if isinstance(path, str) and path
-        }
-
-    unknown = [(rel_path, path) for rel_path, path in all_entries if rel_path not in known_paths]
-    if not unknown:
-        return new_ingested, hash_conflicts
-
-    proc = process_from_paths([(str(index), str(path)) for index, (_rel, path) in enumerate(unknown)], TEMP_DIR)
+    outcomes: list[dict[str, str]] = []
+    proc_entries = [(str(index), str(path)) for index, (_rel, path) in enumerate(entries)]
+    proc = (
+        process_from_paths(proc_entries, TEMP_DIR)
+        if generate_thumbs
+        else process_hash_only_from_paths(proc_entries)
+    )
 
     with get_session() as session:
-        for index, (rel_path, path) in enumerate(unknown):
+        for index, (rel_path, path) in enumerate(entries):
             result = proc.get(str(index), (None, None, "no result", None, None, None))
             file_hash, thumb_path_str, _error = result[0], result[1], result[2]
             quick_hash, px_w, px_h = result[3], result[4], result[5]
             if not file_hash:
+                outcomes.append({"rel_path": rel_path, "status": "error"})
                 continue
 
             parsed = _media_rel_parts(rel_path)
@@ -366,21 +291,22 @@ def _ingest_new_media_files_full(active_album_paths: set[str]) -> tuple[int, int
                     existing_non_album = [p for p in existing_paths if not _is_album_media_path(p)]
                     if is_non_album and existing_non_album:
                         hash_conflicts += 1
-                        if existing.id is not None:
-                            _record_soft_delete(session, "image", existing.id, rel_path)
-                    else:
-                        existing_paths.append(rel_path)
-                        existing.media_path = existing_paths
+                        outcomes.append({
+                            "rel_path": rel_path,
+                            "status": "skipped",
+                            "reason": "direct-duplicate",
+                        })
+                        continue
+                    existing_paths.append(rel_path)
+                    existing.media_path = existing_paths
 
                 if subdir_chain:
-                    public_ids, album_paths = _ensure_album_chain(session, subdir_chain, date_group)
+                    public_ids, _album_paths = _ensure_album_chain(session, subdir_chain, date_group)
                     existing_album = existing.album or []
                     if public_ids and public_ids not in existing_album:
                         existing_album.append(public_ids)
                     existing.album = existing_album
-                    for album_path in album_paths:
-                        active_album_paths.add(album_path)
-                    # Write album_image mapping for the leaf album
+
                     if public_ids and existing.id is not None:
                         leaf_pid = public_ids[-1]
                         leaf_album = session.exec(select(Album).where(Album.public_id == leaf_pid)).first()
@@ -415,6 +341,7 @@ def _ingest_new_media_files_full(active_album_paths: set[str]) -> tuple[int, int
                 if not existing.date_group:
                     existing.date_group = date_group
                 session.add(existing)
+                outcomes.append({"rel_path": rel_path, "status": "attached"})
                 continue
 
             stat = path.stat()
@@ -427,11 +354,9 @@ def _ingest_new_media_files_full(active_album_paths: set[str]) -> tuple[int, int
                 rel_thumb = to_project_relative(Path(thumb_path_str))
                 new_thumb_list = [required_thumb_entry(rel_thumb)]
 
-            album_public_ids, album_paths = (
+            album_public_ids, _album_paths = (
                 _ensure_album_chain(session, subdir_chain, date_group) if subdir_chain else ([], [])
             )
-            for album_path in album_paths:
-                active_album_paths.add(album_path)
 
             asset = ImageAsset(
                 original_path=rel_path,
@@ -454,16 +379,38 @@ def _ingest_new_media_files_full(active_album_paths: set[str]) -> tuple[int, int
             )
             session.add(asset)
             session.flush()
-            # Write album_image mapping for the leaf album
             if album_public_ids and asset.id is not None:
                 leaf_pid = album_public_ids[-1]
                 leaf_album = session.exec(select(Album).where(Album.public_id == leaf_pid)).first()
                 if leaf_album and leaf_album.id is not None:
                     session.add(AlbumImage(album_id=leaf_album.id, image_id=asset.id))
-            new_ingested += 1
+            created += 1
+            outcomes.append({"rel_path": rel_path, "status": "created"})
 
         session.commit()
 
+    return created, hash_conflicts, outcomes
+
+
+def _ingest_new_media_files_full(active_album_paths: set[str]) -> tuple[int, int]:
+    _ = active_album_paths
+
+    all_files = [path for path in list_image_files(MEDIA_DIR) if path.is_file()]
+    all_entries = [(_normalize_rel_path(to_project_relative(path)), path) for path in all_files]
+
+    with get_session() as session:
+        known_paths = {
+            _normalize_rel_path(path)
+            for asset in session.exec(select(ImageAsset)).all()
+            for path in (asset.media_path or [])
+            if isinstance(path, str) and path
+        }
+
+    unknown = [(rel_path, path) for rel_path, path in all_entries if rel_path not in known_paths]
+    if not unknown:
+        return 0, 0
+
+    new_ingested, hash_conflicts, _outcomes = ingest_media_entries(unknown)
     return new_ingested, hash_conflicts
 
 
@@ -479,7 +426,7 @@ def refresh_library(mode: str = "quick") -> dict[str, int | str]:
     non_album_deduped = 0
     cleaned_paths = 0
 
-    pruned, non_album_deduped, cleaned_paths, active_album_paths = _reconcile_assets_and_albums()
+    pruned, non_album_deduped, cleaned_paths, active_album_paths = reconcile_library_paths()
 
     if mode == "full":
         new_ingested, hash_conflicts = _ingest_new_media_files_full(active_album_paths)
@@ -487,9 +434,12 @@ def refresh_library(mode: str = "quick") -> dict[str, int | str]:
     with get_session() as session:
         live_hashes: set[str] = set()
         for asset in session.exec(select(ImageAsset)).all():
-            media_path = resolve_stored_path(asset.media_path[0] if asset.media_path else None)
-            if asset.file_hash and media_path and media_path.exists():
+            media_path = _first_live_media_path(asset)
+            if asset.file_hash and media_path:
                 live_hashes.add(asset.file_hash)
+        for file_hash in session.exec(select(TrashEntry.file_hash).where(TrashEntry.file_hash != None)).all():  # noqa: E711
+            if isinstance(file_hash, str) and file_hash:
+                live_hashes.add(file_hash)
 
     cache_deleted = 0
     for cache_file in CACHE_DIR.iterdir():
@@ -517,17 +467,17 @@ def refresh_library(mode: str = "quick") -> dict[str, int | str]:
 
         needs_thumb: list[ImageAsset] = []
         for asset in group_rep.values():
-            media_path = resolve_stored_path(asset.media_path[0] if asset.media_path else None)
-            if not media_path or not media_path.exists():
+            media_path = _first_live_media_path(asset)
+            if not media_path:
                 continue
             if not has_required_thumb(asset.thumbs):
                 needs_thumb.append(asset)
 
     if needs_thumb:
         entries = [
-            (str(asset.id), str(resolve_stored_path(asset.media_path[0] if asset.media_path else None)))
+            (str(asset.id), str(_first_live_media_path(asset)))
             for asset in needs_thumb
-            if resolve_stored_path(asset.media_path[0] if asset.media_path else None)
+            if _first_live_media_path(asset)
         ]
         proc = process_from_paths(entries, TEMP_DIR)
     else:
@@ -535,8 +485,8 @@ def refresh_library(mode: str = "quick") -> dict[str, int | str]:
 
     with get_session() as session:
         for asset in remaining:
-            media_path = resolve_stored_path(asset.media_path[0] if asset.media_path else None)
-            if not media_path or not media_path.exists():
+            media_path = _first_live_media_path(asset)
+            if not media_path:
                 continue
 
             db_asset = session.exec(select(ImageAsset).where(ImageAsset.id == asset.id)).first()

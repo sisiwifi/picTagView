@@ -7,6 +7,7 @@ TEMP_DIR = BASE_DIR / "temp"
 CACHE_DIR = DATA_DIR / "cache"
 VIEWER_ICON_DIR = DATA_DIR / "viewer_icons"
 MEDIA_DIR = PROJECT_ROOT / "media"
+TRASH_DIR = PROJECT_ROOT / "trash"
 
 DB_PATH = DATA_DIR / "app.db"
 
@@ -15,3 +16,4 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 VIEWER_ICON_DIR.mkdir(parents=True, exist_ok=True)
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+TRASH_DIR.mkdir(parents=True, exist_ok=True)

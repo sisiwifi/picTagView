@@ -46,6 +46,8 @@ class DateItem(BaseModel):
     file_created_at: Optional[datetime] = None
     photo_count: Optional[int] = None
     created_at: Optional[datetime] = None
+    media_index: Optional[int] = None
+    media_rel_path: Optional[str] = None
 
 
 class DateItemsResponse(BaseModel):
@@ -80,6 +82,7 @@ class ImageMetaItem(BaseModel):
     tags: List[int] = Field(default_factory=list)
     thumb_url: str = ""
     cache_thumb_url: Optional[str] = None
+    media_paths: List[str] = Field(default_factory=list)
 
 
 class ImageMetaResponse(BaseModel):
@@ -137,6 +140,8 @@ class AlbumItem(BaseModel):
     file_created_at: Optional[datetime] = None
     photo_count: Optional[int] = None
     created_at: Optional[datetime] = None
+    media_index: Optional[int] = None
+    media_rel_path: Optional[str] = None
 
 
 class AlbumInfo(BaseModel):
@@ -153,3 +158,56 @@ class AlbumInfo(BaseModel):
 class AlbumDetailResponse(BaseModel):
     album: AlbumInfo
     items: List[AlbumItem]
+
+
+# ── Trash views ───────────────────────────────────────────────────────────────
+
+class TrashTargetRef(BaseModel):
+    type: str
+    image_id: Optional[int] = None
+    media_rel_path: Optional[str] = None
+    album_path: Optional[str] = None
+
+
+class TrashMoveRequest(BaseModel):
+    items: List[TrashTargetRef]
+
+
+class TrashRestoreRequest(BaseModel):
+    entry_ids: List[int]
+
+
+class TrashHardDeleteRequest(BaseModel):
+    entry_ids: List[int]
+
+
+class TrashItem(BaseModel):
+    id: int
+    entry_key: str
+    type: str
+    name: str
+    thumb_url: str = ""
+    cache_thumb_url: Optional[str] = None
+    trash_media_url: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    sort_ts: Optional[int] = None
+    tags: List[int] = Field(default_factory=list)
+    file_size: Optional[int] = None
+    imported_at: Optional[datetime] = None
+    file_created_at: Optional[datetime] = None
+    photo_count: Optional[int] = None
+    created_at: Optional[datetime] = None
+    original_path: Optional[str] = None
+
+
+class TrashListResponse(BaseModel):
+    items: List[TrashItem]
+
+
+class TrashActionResult(BaseModel):
+    moved: int = 0
+    restored: int = 0
+    deleted: int = 0
+    skipped: List[str] = Field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)

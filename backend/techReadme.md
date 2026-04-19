@@ -7,7 +7,7 @@
 - 框架：FastAPI
 - ORM：SQLModel（基于 SQLAlchemy）
 - 数据库：SQLite（文件路径由 `app/core/config.py` 配置）
-- 静态文件：FastAPI `StaticFiles` 挂载 `MEDIA_DIR` 与 `TEMP_DIR`，分别用于原图/缩略图访问
+- 静态文件：FastAPI `StaticFiles` 挂载 `TEMP_DIR`、`CACHE_DIR`、`MEDIA_DIR`、`TRASH_DIR` 与 `VIEWER_ICON_DIR`，分别用于月份封面缩略图、缓存缩略图、原图、回收站预览回退与看图程序图标访问
 - 并行：`concurrent.futures` 的 `ProcessPoolExecutor` + `ThreadPoolExecutor`，用于哈希与缩略图生成
 
 ## 3. 主要模块说明
@@ -16,9 +16,11 @@
 - 入口文件，创建应用 `create_app()`：
   - `init_db()`（初始化/建表/迁移）
   - CORS 配置为 `*`
-  - 挂载 `
-  /thumbnails` -> `TEMP_DIR`
+  - 挂载 `/thumbnails` -> `TEMP_DIR`
+  - 挂载 `/cache` -> `CACHE_DIR`
   - 挂载 `/media` -> `MEDIA_DIR`
+  - 挂载 `/trash-media` -> `TRASH_DIR`
+  - 挂载 `/viewer-icons` -> `VIEWER_ICON_DIR`
   - 注册路由 `app.include_router(api_router)`
 
 ### 3.2 `app/api/routes.py` + `app/api/routers/*`
@@ -28,9 +30,10 @@
   - `app/api/routers/dates.py`：`GET /api/dates`、`GET /api/dates/{date_group}/items`
   - `app/api/routers/albums.py`：`GET /api/albums/by-path/{album_path:path}`、`GET /api/albums/open-by-path/{album_path:path}`、`GET /api/albums/{album_id}`
   - `app/api/routers/images.py`：`GET /api/images/meta`、`GET /api/images/{image_id}/open`
+  - `app/api/routers/trash.py`：`GET /api/trash/items`、`POST /api/trash/move`、`POST /api/trash/restore`、`POST /api/trash/hard-delete`、`DELETE /api/trash`
   - `app/api/routers/system.py`：`/api/system/*` 相关接口
   - `app/api/routers/cache.py`：`DELETE /api/cache`、`/api/thumbnails/cache*`
-- 共享查询与路径工具在 `app/api/common.py`：软删除过滤、缩略图 URL 解析、存储路径解析。
+- 共享查询与路径工具在 `app/api/common.py`：缩略图 URL 解析、存储路径解析、`media_path` 实例选择与路径谓词匹配。
 
 补充（2026-04）：
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的条目模型新增 `sort_ts`（Unix 秒级时间戳，可为空）。
@@ -88,6 +91,11 @@
 - 默认策略：
   - 日期视图详情（非相册视图）默认 `Date` 升序。
   - 相册视图默认 `Alpha` 升序。
+- 回收站交互补充：
+  - 设置页右上角新增更显眼的“回收站”入口，跳转到独立的 `TrashPage`，不复用 BrowsePage 路由状态。
+  - TrashPage header 左侧提供“返回”按钮，右侧项目数前提供“清空回收站”按钮；选择态右下角操作岛提供“详情 / 还原 / 删除 / 全选 / 取消选择”。
+  - TrashPage 详情浮层复用 `SelectionDetailOverlay.vue`，但主动作切换为“还原”，危险动作切换为“删除”，并隐藏普通浏览页才需要的“分析”按钮。
+  - BrowsePage 的“删除到回收站”与 TrashPage 的“还原 / 删除 / 清空回收站”统一改为 `ConfirmationDialog.vue` 居中弹窗确认，不再使用浏览器原生 `confirm/alert`。
 
 ### 3.3 `app/services/import_service.py`（门面）
 - 对外稳定入口：
@@ -128,6 +136,12 @@
     2) 缩略图与元数据修复：补齐代表图所需 400×400 temp 缩略图及缺失元数据
     3) `full` 模式下收编新文件：扫描 `MEDIA_DIR` 中未入库图片，按导入规则做 hash 去重并写回索引
   - 清理 orphan cache（无对应媒体记录的 `*_cache.webp`）
+  - 不再维护用户软删除状态；用户级删除/恢复改由 `TrashEntry + trash/` 承载，`refresh_library()` 仅负责 live `media/` 的对账与收编
+- `reconcile_library_paths()`：
+  - 对现有 `ImageAsset.media_path` 做 live 路径对账，删除完全失效的资产记录
+  - 根据当前 live 路径重建 `Album` 树与 `album_image` 关系
+- `ingest_media_entries(entries)`：
+  - 提供可复用的本地文件重收编入口，供回收站“还原”流程按导入规则重新建库，而不必扫描整个媒体库
 - `recalculate_album_counts()`：重算 `photo_count` / `subtree_photo_count` 与封面；同时清空并完整重建 `album_image` 关联表。
 
 ### 3.3c `app/services/imports/hash_index.py`
@@ -142,6 +156,7 @@
   - 文件时间：`apply_file_times`、`set_windows_creation_time`
   - 缩略图条目：`required_thumb_entry`、`upsert_thumb`、`has_required_thumb`
   - 媒体基础能力：`quick_hash_from_bytes`、`mime_from_name`、`image_dimensions_from_*`
+  - 目录冲突处理：`unique_dir_dest()`，供回收站还原相册时在目标月份目录下自动追加 `_1`、`_2` 等后缀避免重名覆盖
 
 ### 3.4 `app/services/parallel_processor.py`
 - 图片处理核心，提供两种 API：
@@ -212,17 +227,23 @@
   - `date_group` (str | null): 所有嵌套层级继承顶层的 `date_group`
   - `created_at` / `updated_at`: 时间戳
 
-### 3.5c `app/models/soft_delete.py`
-- 数据模型 `PathSoftDelete`（独立软删除表）：
+### 3.5c `app/models/trash_entry.py`
+- 数据模型 `TrashEntry`（独立回收站表）：
   - `id` (int): 主键
+  - `entry_key` (str): 回收站条目唯一键，用于稳定识别条目与其落盘 payload
   - `entity_type` (str): 目标类型，当前为 `image` 或 `album`
-  - `owner_id` (int | null): 关联的 `ImageAsset.id` 或 `Album.id`
-  - `target_path` (str): 被删除的规范化路径；图片对应具体的 `media_path` 条目，相册对应 `Album.path`
-  - `deleted_at` (datetime): 删除时间戳
+  - `display_name` (str): 前端展示名称
+  - `original_path` (str): 删除前 live 路径；图片对应具体 `media_path` 条目，相册对应 `Album.path`
+  - `original_date_group` (str | null): 删除前所属月份
+  - `trash_path` (str): 实际移动到 `TRASH_DIR` 后的 payload 路径
+  - `preview_path` / `preview_thumb_path` / `preview_cache_path`: 预览与回退缩略图路径
+  - `file_hash` / `width` / `height` / `file_size` / `mime_type`: 预览与恢复辅助元数据
+  - `imported_at` / `file_created_at` / `source_created_at`: 原文件时间信息
+  - `photo_count` (int | null): 相册条目直属或子树图片数快照
+  - `tags` / `metadata_json`: 附加 JSON 元数据
   - `created_at` (datetime): 记录创建时间
 
-说明：当前查询层通过 `path_soft_delete` 过滤可见项，`ImageAsset` 与 `Album` 本身不再保存 `deleted_at` 字段。
-补充：可见性以 `target_path` 为准做路径级判定，不再仅以 `owner_id` 做整实体屏蔽。
+说明：用户删除时，文件或目录会先从 `MEDIA_DIR` 物理移动到 `TRASH_DIR`，再写入 `TrashEntry`。文件夹内为每个条目直接扁平存放为 `trash/<entry_key>__<原名>`，因为 `entry_key` 已足够提供唯一命名空间。普通浏览接口只反映 live `media/` 内容；回收站界面则直接读取 `TrashEntry`。恢复时按导入/刷新规则重新收编，清空回收站或硬删除时才真正移除 `TRASH_DIR` 中的 payload。
 
 ### 3.5d 哈希索引缓存（`.hash_index.json`）
 - 文件位置：`MEDIA_DIR/.hash_index.json`
@@ -345,13 +366,13 @@
 
 ## 3.7 业务数据库汇总
 
-本项目所有持久化数据均存储在同一个 SQLite 文件（路径由 `app/core/config.py` 中的 `DB_PATH` 配置，默认 `backend/db.sqlite`）。
+本项目所有持久化数据均存储在同一个 SQLite 文件（路径由 `app/core/config.py` 中的 `DB_PATH` 配置，默认 `backend/data/app.db`）。
 
 | 表名 | 对应模型 | 主要作用 |
 |---|---|---|
 | `imageasset` | `ImageAsset` (`app/models/image_asset.py`) | 图片媒体资产主表；存储哈希、路径、尺寸、日期分组、缩略图条目、关联 Tag ID 数组等全量元数据 |
 | `album` | `Album` (`app/models/album.py`) | 树形相册结构；存储相册名称、层级路径、封面、照片计数、日期分组 |
-| `pathsoftdelete` | `PathSoftDelete` (`app/models/soft_delete.py`) | 软删除日志表（路径级）；以 `target_path` 为准控制图片或相册的可见性，实体本身不删除 |
+| `trashentry` | `TrashEntry` (`app/models/trash_entry.py`) | 回收站条目表；记录回收站内图片/相册的原路径、trash payload、预览信息与恢复所需元数据 |
 | `album_image` | `AlbumImage` (`app/models/album_image.py`) | 相册-图片显式多对多关联表；通过索引 JOIN 替代全表扫描，加速相册与日期视图查询 |
 | `tag` | `Tag` (`app/models/tag.py`) | 标签库；存储标准化名称、展示名称、分类、使用次数、来源、元信息等，`ImageAsset.tags` 存储该表的 `id` 外键 |
 
@@ -364,6 +385,9 @@
 3. 记录写入数据库并保存到 `MEDIA_DIR`（按 `date_group`/子目录组织）
 4. 前端调用 `/api/dates` 和 `/api/dates/{date_group}/items` 构建图库视图
 5. 管理端 `/api/admin/refresh` 保持一致性（支持 `quick/full`）
+6. 用户从 BrowsePage 删除图片或相册时，请求 `/api/trash/move`，目标会从 `media/` 移入 `trash/` 并生成 `TrashEntry`
+7. TrashPage 通过 `/api/trash/items` 浏览回收站；该接口在返回条目前会先做一次批量轻量对账，清除已丢失 payload 的条目，并成批补齐仍存在条目的预览路径与 temp 缩略图，避免逐条串行修复带来的页面进入延迟
+8. TrashPage 批量“还原”调用 `/api/trash/restore`，“删除”调用 `/api/trash/hard-delete`，“清空回收站”调用 `DELETE /api/trash`；其中图片恢复保留正常缩略图链路，相册恢复优先走轻量哈希收编再按需补预览，以降低等待时间
 
 补充：
 - 设置页可通过 `GET/POST /api/system/cache-thumb-setting` 管理缓存缩略图短边尺寸。
@@ -371,7 +395,7 @@
 - 当尺寸保存成功后，前端会调用 `DELETE /api/cache` 清空 `data/cache/` 与 `temp/`，后续缓存缩略图按新尺寸重新生成。
 
 ## 5. 配置与外部依赖
-- `app/core/config.py`（含 `MEDIA_DIR`, `TEMP_DIR`, `DB_PATH`）
+- `app/core/config.py`（含 `MEDIA_DIR`, `TEMP_DIR`, `CACHE_DIR`, `TRASH_DIR`, `DB_PATH`）
 - `backend/requirements.txt`（依赖）
   - fastapi: REST API 框架
   - uvicorn: ASGI 服务器
@@ -385,16 +409,20 @@
 
 ### 5.1 系统交互与性能要点
 - 导入流程分成 3 个阶段（元数据、时间分组、批次并行/数据库序列）
-- `IMPORT_BATCH_SIZE=20`：避免一次性内存占满，通过分批读取并处理减少压力
+- `IMPORT_BATCH_SIZE=50`：避免一次性内存占满，通过分批读取并处理减少压力
 - 并行调用逻辑
   - `process_from_bytes`（线程池，适合来自前端上传的流式字节）
   - `process_from_paths`（进程池，适合本地磁盘批量扫描）
-- 软删除查询规则
-  - `ImageAsset` 和 `Album` 的可见性由 `path_soft_delete` 决定，而不是各自表内的 `deleted_at`
-  - 恢复操作本质上是删除对应的 `path_soft_delete` 记录
+  - `process_hash_only_from_paths`（进程池，适合回收站相册恢复时只做哈希与尺寸收集，跳过同步缩略图写入）
+- 回收站规则
+  - 普通浏览接口只处理 live `media/` 与数据库中的 `ImageAsset` / `Album` 记录，不再依赖路径级软删除过滤
+  - 删除动作会把 payload 物理移入 `TRASH_DIR` 并写入 `TrashEntry`；新写入条目直接扁平存放在 `trash/` 根下，而不是创建额外的深层 payload 目录
+  - 恢复动作会将 payload 移回 `MEDIA_DIR` 后复用导入链路重新建库；相册重名时通过 `unique_dir_dest()` 自动编号
+  - `GET /api/trash/items` 会执行一次轻量回收站对账：若用户手动删掉了某些 trash payload，则清理对应条目；若只删掉了 temp 预览，则按当前 payload 批量补齐，避免进入页面时逐条强制生成 cache 缩略图
 - 缩略图缓存策略
   - **导入缩略图**（月份封面）：仅对每月代表图生成 `TEMP_DIR/{file_hash}.webp`，400×400 方形裁剪
   - **缓存展示缩略图**（相册内浏览）：按需生成 `CACHE_DIR/{file_hash}_cache.webp`，最短边 600，保持原始比例
+  - 回收站条目会尽量复用现有 `thumb_url` / `cache_thumb_url`；若仅存在 payload，则通过 `/trash-media/...` 提供预览回退
   - 重复上传同 hash 文件时不会重复写缩略图
 - 目录组织：
   - 原图存储：`MEDIA_DIR/<date_group>/[top_subdir/]...`（`YYYY-MM`）
@@ -416,8 +444,12 @@
    - `POST /api/import` 多文件上传（`files` + 可选 `last_modified_json`）
   - `POST /api/admin/refresh?mode=quick|full` 修复库状态（默认 `quick`）
    - `GET /api/images/count` 计数
+  - `GET /api/images/meta?ids=...` 批量读取图片详情字段与 `media_paths`
    - `GET /api/dates` 列出年月分组
-   - `GET /api/dates/{date_group}/items` 列直图/子相册
+  - `GET /api/dates/{date_group}/items` 列出直图/子相册（图片条目含 `media_index` 与 `media_rel_path`）
+  - `GET /api/albums/by-path/{album_path:path}` / `GET /api/albums/open-by-path/{album_path:path}` 相册浏览与在资源管理器打开目录
+  - `GET /api/images/{image_id}/open?path=...` 按指定 `media_path` 实例打开图片
+  - `GET /api/trash/items`、`POST /api/trash/move`、`POST /api/trash/restore`、`POST /api/trash/hard-delete`、`DELETE /api/trash` 回收站相关操作
 
 ## 7. 常见问题与排查
 1. `upload_images` 返回错误或空结果
@@ -441,7 +473,8 @@
 - 媒体目录：`MEDIA_DIR` = 例如 `backend/media`（可配置）
 - 临时缩略图：`TEMP_DIR` = 例如 `backend/temp`
 - 相册缓存缩略图：`CACHE_DIR` = 例如 `backend/data/cache`
-- 数据库路径：`DB_PATH` = 例如 `backend/db.sqlite`
+- 回收站目录：`TRASH_DIR` = 例如项目根的 `trash`
+- 数据库路径：`DB_PATH` = 例如 `backend/data/app.db`
 - `date_group` 规则：`YYYY-MM`（如 `2024-07`），用于前端按年/月分组
 
 ---

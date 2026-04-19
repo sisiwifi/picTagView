@@ -5,6 +5,7 @@ import EmptyPage from '../pages/EmptyPage.vue'
 import CalendarOverview from '../pages/CalendarOverview.vue'
 import BrowsePage from '../pages/BrowsePage.vue'
 import SettingsPage from '../pages/SettingsPage.vue'
+import TrashPage from '../pages/TrashPage.vue'
 
 const routes = [
   {
@@ -45,6 +46,11 @@ const routes = [
     path: '/settings',
     name: 'settings',
     component: SettingsPage
+  },
+  {
+    path: '/trash',
+    name: 'trash',
+    component: TrashPage
   }
 ]
 

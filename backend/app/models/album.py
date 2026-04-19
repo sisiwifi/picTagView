@@ -25,4 +25,4 @@ class Album(SQLModel, table=True):
     date_group: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: Optional[datetime] = Field(default=None)
-    # 软删除已迁移到独立表 path_soft_delete，此处不再存储 deleted_at
+    # 用户删除已迁移到 trash + TrashEntry，此处不再存储 deleted_at

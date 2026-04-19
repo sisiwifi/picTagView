@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router as api_router
-from app.core.config import CACHE_DIR, MEDIA_DIR, TEMP_DIR, VIEWER_ICON_DIR
+from app.core.config import CACHE_DIR, MEDIA_DIR, TEMP_DIR, TRASH_DIR, VIEWER_ICON_DIR
 from app.db.session import init_db
 
 
@@ -26,6 +26,9 @@ def create_app() -> FastAPI:
 
     # Serve original media files at /media/<date_group>/<filename>
     app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
+
+    # Serve trashed media payloads for TrashPage preview fallback.
+    app.mount("/trash-media", StaticFiles(directory=str(TRASH_DIR)), name="trash_media")
 
     # Serve extracted viewer icons at /viewer-icons/<id>.png
     app.mount("/viewer-icons", StaticFiles(directory=str(VIEWER_ICON_DIR)), name="viewer_icons")

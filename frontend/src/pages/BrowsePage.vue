@@ -219,6 +219,18 @@
       @delete="onReservedDeleteClick"
       @open-primary="openPrimaryFromDetails"
     />
+
+    <ConfirmationDialog
+      :visible="confirmDialog.visible"
+      :title="confirmDialog.title"
+      :message="confirmDialog.message"
+      :confirm-label="confirmDialog.confirmLabel"
+      :cancel-label="confirmDialog.cancelLabel"
+      :tone="confirmDialog.tone"
+      :show-cancel="confirmDialog.showCancel"
+      @cancel="closeConfirmDialog"
+      @confirm="handleConfirmDialogConfirm"
+    />
   </section>
 </template>
 
@@ -226,6 +238,7 @@
 import LoadingSpinner from '../components/LoadingSpinner.vue'
 import BreadcrumbHeader from '../components/BreadcrumbHeader.vue'
 import MediaItemCard from '../components/MediaItemCard.vue'
+import ConfirmationDialog from '../components/ConfirmationDialog.vue'
 import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
 
 const API_BASE = 'http://127.0.0.1:8000'
@@ -243,9 +256,22 @@ const SELECTION_PORTRAIT_COLS = 3
 const SELECTION_LANDSCAPE_GAP = 16
 const SELECTION_PORTRAIT_GAP = 12
 
+function createDialogState() {
+  return {
+    visible: false,
+    title: '请确认操作',
+    message: '',
+    confirmLabel: '确认',
+    cancelLabel: '取消',
+    tone: 'danger',
+    showCancel: true,
+    onConfirm: null,
+  }
+}
+
 export default {
   name: 'BrowsePage',
-  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, SelectionDetailOverlay },
+  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, ConfirmationDialog, SelectionDetailOverlay },
 
   data() {
     return {
@@ -296,6 +322,7 @@ export default {
       scrollLockState: null,
       selectionDetailFetchSerial: 0,
       selectAllMenuOpen: false,
+      confirmDialog: createDialogState(),
     }
   },
 
@@ -756,6 +783,12 @@ export default {
       return ''
     },
 
+    openImageTarget(item) {
+      if (!item?.id) return
+      const pathSuffix = item.media_rel_path ? `?path=${encodeURIComponent(item.media_rel_path)}` : ''
+      fetch(`${API_BASE}/api/images/${item.id}/open${pathSuffix}`).catch(() => {})
+    },
+
     openItem(item) {
       if (this.selectionMode) return
       if (item.type === 'album') {
@@ -768,7 +801,7 @@ export default {
           this.$router.push(`${base}/${encodeURIComponent(item.name)}`)
         }
       } else if (item.id) {
-        fetch(`${API_BASE}/api/images/${item.id}/open`).catch(() => {})
+        this.openImageTarget(item)
       }
     },
 
@@ -783,8 +816,7 @@ export default {
         return
       }
 
-      if (!target.id) return
-      fetch(`${API_BASE}/api/images/${target.id}/open`).catch(() => {})
+      this.openImageTarget(target)
     },
 
     openSelectionDetailsFromIsland() {
@@ -1339,7 +1371,7 @@ export default {
       if (item?.type === 'album') {
         return `album:${item.public_id || item.album_path || item.id || index}`
       }
-      return `image:${item?.id || item?.name || index}`
+      return `image:${item?.media_rel_path || item?.id || item?.name || index}`
     },
 
     isItemSelected(item, index) {
@@ -1821,8 +1853,83 @@ export default {
       // reserved for future filename-based tag analysis
     },
 
+    openConfirmDialog(options = {}) {
+      this.confirmDialog = {
+        ...createDialogState(),
+        ...options,
+        visible: true,
+      }
+    },
+
+    closeConfirmDialog() {
+      this.confirmDialog = createDialogState()
+    },
+
+    async handleConfirmDialogConfirm() {
+      const onConfirm = this.confirmDialog.onConfirm
+      this.closeConfirmDialog()
+      if (typeof onConfirm === 'function') {
+        await onConfirm()
+      }
+    },
+
+    moveSelectedToTrash() {
+      if (!this.selectedCount) return
+      const label = this.selectionTypeLock === 'album'
+        ? `确认删除已选中的 ${this.selectedCount} 个相册吗？`
+        : `确认删除已选中的 ${this.selectedCount} 张图片吗？`
+      this.openConfirmDialog({
+        title: '移入回收站',
+        message: `${label}\n原始文件会从 media 中移走，之后可在回收站中还原。`,
+        confirmLabel: '移入回收站',
+        cancelLabel: '取消',
+        tone: 'danger',
+        onConfirm: () => this.executeMoveSelectedToTrash(),
+      })
+    },
+
+    async executeMoveSelectedToTrash() {
+      if (!this.selectedCount) return
+
+      const payload = {
+        items: this.selectedEntries.map(({ item }) => (
+          item.type === 'album'
+            ? { type: 'album', album_path: item.album_path }
+            : { type: 'image', image_id: item.id, media_rel_path: item.media_rel_path }
+        ))
+      }
+
+      const res = await fetch(`${API_BASE}/api/trash/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        this.openConfirmDialog({
+          title: '移入回收站失败',
+          message: `请求未成功完成，服务器返回 HTTP ${res.status}。`,
+          confirmLabel: '知道了',
+          tone: 'danger',
+          showCancel: false,
+        })
+        return
+      }
+
+      const data = await res.json()
+      if (Array.isArray(data.errors) && data.errors.length) {
+        this.openConfirmDialog({
+          title: '移入回收站失败',
+          message: data.errors.join('；'),
+          confirmLabel: '知道了',
+          tone: 'danger',
+          showCancel: false,
+        })
+      }
+      await this.loadData()
+    },
+
     onReservedDeleteClick() {
-      // reserved for future delete action
+      this.moveSelectedToTrash()
     },
 
     idsAround(centerIdx) {

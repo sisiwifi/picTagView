@@ -5,7 +5,7 @@ import sys
 from fastapi import APIRouter, HTTPException, Query
 from sqlmodel import select
 
-from app.api.common import cache_thumb_url, resolve_stored_path, thumb_url
+from app.api.common import cache_thumb_url, normalize_stored_path, resolve_stored_path, thumb_url
 from app.api.schemas import ImageMetaItem, ImageMetaResponse
 from app.db.session import get_session
 from app.models.image_asset import ImageAsset
@@ -61,6 +61,7 @@ def image_meta(ids: str = Query(..., description="Comma-separated image ids")) -
                 tags=asset.tags or [],
                 thumb_url=thumb_url(asset),
                 cache_thumb_url=cache_thumb_url(asset),
+                media_paths=[path for path in (asset.media_path or []) if isinstance(path, str) and path],
             )
         )
 
@@ -68,28 +69,46 @@ def image_meta(ids: str = Query(..., description="Comma-separated image ids")) -
 
 
 @router.get("/api/images/{image_id}/open")
-def open_image(image_id: int) -> dict:
+def open_image(image_id: int, path: str | None = Query(default=None)) -> dict:
     with get_session() as session:
         asset = session.get(ImageAsset, image_id)
     if not asset or not asset.media_path:
         raise HTTPException(status_code=404, detail="Image not found")
-    path = resolve_stored_path(asset.media_path[0] if asset.media_path else None)
-    if not path:
+
+    selected_path = None
+    if path:
+        normalized_query = normalize_stored_path(path)
+        for stored in asset.media_path or []:
+            if not isinstance(stored, str) or not stored:
+                continue
+            if normalize_stored_path(stored) == normalized_query:
+                selected_path = stored
+                break
+        if selected_path is None:
+            raise HTTPException(status_code=404, detail="Image path not found")
+    else:
+        selected_path = next(
+            (stored for stored in (asset.media_path or []) if isinstance(stored, str) and stored),
+            None,
+        )
+
+    path_obj = resolve_stored_path(selected_path)
+    if not path_obj:
         raise HTTPException(status_code=404, detail="File path is invalid")
-    if not path.exists():
+    if not path_obj.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
 
     if sys.platform == "win32":
         preferred_id = get_preferred_viewer_id()
         if preferred_id:
             preferred = resolve_viewer_candidate(preferred_id)
-            if preferred and launch_with_preferred_viewer(preferred.get("command", ""), path):
+            if preferred and launch_with_preferred_viewer(preferred.get("command", ""), path_obj):
                 return {"status": "ok", "mode": "preferred", "viewer_id": preferred_id}
-        os.startfile(str(path))
+        os.startfile(str(path_obj))
         return {"status": "ok", "mode": "system"}
     if sys.platform == "darwin":
-        subprocess.run(["open", str(path)], check=False)
+        subprocess.run(["open", str(path_obj)], check=False)
     else:
-        subprocess.run(["xdg-open", str(path)], check=False)
+        subprocess.run(["xdg-open", str(path_obj)], check=False)
 
     return {"status": "ok", "mode": "system"}

@@ -155,6 +155,19 @@ def unique_dest(dest_dir: Path, filename: str) -> Path:
         index += 1
 
 
+def unique_dir_dest(parent_dir: Path, dirname: str) -> Path:
+    dest = parent_dir / dirname
+    if not dest.exists():
+        return dest
+
+    index = 1
+    while True:
+        candidate = parent_dir / f"{dirname}_{index}"
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
 def min_source_ts_ms(created_ts_ms: Optional[int], modified_ts_ms: Optional[int]) -> Optional[int]:
     values = [
         ts for ts in (created_ts_ms, modified_ts_ms)

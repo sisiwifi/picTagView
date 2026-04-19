@@ -1,0 +1,1313 @@
+<template>
+  <section class="page">
+    <TrashPageHeader
+      :item-count="totalCount"
+      :sort-by="sortBy"
+      :sort-dir="sortDir"
+      :clear-disabled="actionBusy || !totalCount"
+      @back="goBack"
+      @clear-trash="clearTrash"
+      @update:sortBy="onSortModeSelect"
+      @toggle-sort-dir="toggleSortDir"
+    >
+      <div class="vm-btns" role="group" aria-label="视图模式">
+        <button
+          class="vm-btn"
+          :class="{ active: !selectionMode }"
+          title="瀑布流"
+          @click="toggleSelectionMode(false)"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor"/>
+            <rect x="8" y="1" width="5" height="5" rx="1" fill="currentColor"/>
+            <rect x="1" y="8" width="5" height="5" rx="1" fill="currentColor"/>
+            <rect x="8" y="8" width="5" height="5" rx="1" fill="currentColor"/>
+          </svg>
+        </button>
+        <button
+          class="vm-btn"
+          :class="{ active: selectionMode }"
+          :title="selectionMode ? '退出选择模式' : '进入选择模式'"
+          :aria-pressed="selectionMode ? 'true' : 'false'"
+          @click="toggleSelectionMode()"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M3 1L3 11L6 8.5L8 13L9.5 12.3L7.5 7.8L11 7.8Z" fill="currentColor"/>
+          </svg>
+        </button>
+      </div>
+    </TrashPageHeader>
+
+    <p v-if="messageText" class="page-note" :class="messageType === 'error' ? 'page-note--error' : 'page-note--success'">
+      {{ messageText }}
+    </p>
+
+    <LoadingSpinner v-if="loading" />
+
+    <div v-else-if="!items.length" class="empty-hint">
+      <span class="empty-hint__icon">🗑</span>
+      <p>回收站为空。</p>
+    </div>
+
+    <div v-else-if="selectionMode" class="selection-grid">
+      <div
+        v-for="(item, index) in items"
+        :key="itemKey(item, index)"
+        class="selection-wrap"
+        :class="{ 'is-selected': isItemSelected(item, index), 'is-disabled': isItemDisabled(item) }"
+        @pointerdown="onSelectionPointerDown($event, item, index)"
+      >
+        <MediaItemCard
+          :src="resolvedUrl(item)"
+          :alt="item.name || ''"
+          :info-text="item.name || '未命名'"
+          info-title="回收站项目"
+          :item-type="item.type"
+          :selected="isItemSelected(item, index)"
+          :disabled="isItemDisabled(item)"
+          @toggle-select="onItemSelectionButtonClick(item, index)"
+          @toggle-info="noop"
+          @details="openDetailsForItem(item, index)"
+        />
+      </div>
+    </div>
+
+    <div v-else class="photo-grid">
+      <div
+        v-for="(row, rowIndex) in justifiedRows"
+        :key="rowIndex"
+        class="jl-row"
+        :style="{ height: row.height + 'px' }"
+      >
+        <div
+          v-for="item in row.items"
+          :key="item.entry_key || item.id || item._idx"
+          class="photo-wrap"
+          :style="{ width: item.computedWidth + 'px' }"
+        >
+          <div v-if="!resolvedUrl(item)" class="photo-skeleton">
+            <span class="skeleton-label">...</span>
+          </div>
+
+          <div v-else class="photo-card" @click="openDetailsForItem(item, item._idx)">
+            <img
+              :src="resolvedUrl(item)"
+              class="photo-img"
+              loading="lazy"
+              :alt="item.name || ''"
+            />
+            <div v-if="item.type === 'album'" class="album-badge">
+              <span class="badge-icon">📁</span>
+              <span class="badge-name">{{ item.name }}</span>
+              <span class="badge-count">{{ item.photo_count || 0 }} 张</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="selectionMode" class="selection-island">
+      <span class="selection-island__count">{{ selectionSummaryText }}</span>
+      <button class="selection-island__btn" type="button" :disabled="!selectedCount || actionBusy" @click="openSelectionDetails">详情</button>
+      <button class="selection-island__btn" type="button" :disabled="!selectedCount || actionBusy" @click="restoreSelection">还原</button>
+      <button class="selection-island__btn selection-island__btn--danger" type="button" :disabled="!selectedCount || actionBusy" @click="hardDeleteSelection">删除</button>
+      <div
+        ref="selectionIslandMenu"
+        class="selection-island__menu-wrap"
+        :class="{ 'is-open': selectAllMenuOpen }"
+      >
+        <button
+          class="selection-island__btn"
+          type="button"
+          :disabled="!items.length || actionBusy"
+          :aria-expanded="hasMixedSelectableTypes ? (selectAllMenuOpen ? 'true' : 'false') : 'false'"
+          @click="handleSelectAllButtonClick"
+        >全选</button>
+        <div v-if="hasMixedSelectableTypes" class="selection-island__submenu">
+          <button class="selection-island__submenu-btn" type="button" @click="onSelectAllTypeClick('album')">相册</button>
+          <button class="selection-island__submenu-btn" type="button" @click="onSelectAllTypeClick('image')">图片</button>
+        </div>
+      </div>
+      <button class="selection-island__btn" type="button" :disabled="actionBusy" @click="clearSelection">取消选择</button>
+    </div>
+
+    <SelectionDetailOverlay
+      :visible="selectionDetailsOpen"
+      :layer-style="selectionDetailsBounds"
+      :panel-style="selectionDetailsPanelStyle"
+      :preview-items="selectionDetailPreviewItems"
+      :is-multi="selectionDetailPreviewItems.length > 1"
+      :name-field="selectionDetailNameField"
+      :tags-field="selectionDetailTagsField"
+      :size-field="selectionDetailSizeField"
+      :size-label="selectionDetailSizeLabel"
+      :imported-field="selectionDetailImportedField"
+      :created-field="selectionDetailCreatedField"
+      primary-action-label="还原"
+      :can-open-primary-action="selectedCount > 0 && !actionBusy"
+      danger-action-label="删除"
+      :show-analysis-button="false"
+      @close="closeSelectionDetails"
+      @open-primary="restoreSelection"
+      @delete="hardDeleteSelection"
+    />
+
+    <ConfirmationDialog
+      :visible="confirmDialog.visible"
+      :title="confirmDialog.title"
+      :message="confirmDialog.message"
+      :confirm-label="confirmDialog.confirmLabel"
+      :cancel-label="confirmDialog.cancelLabel"
+      :tone="confirmDialog.tone"
+      :show-cancel="confirmDialog.showCancel"
+      @cancel="closeConfirmDialog"
+      @confirm="handleConfirmDialogConfirm"
+    />
+  </section>
+</template>
+
+<script>
+import ConfirmationDialog from '../components/ConfirmationDialog.vue'
+import LoadingSpinner from '../components/LoadingSpinner.vue'
+import MediaItemCard from '../components/MediaItemCard.vue'
+import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
+import TrashPageHeader from '../components/TrashPageHeader.vue'
+
+const API_BASE = 'http://127.0.0.1:8000'
+
+function createDialogState() {
+  return {
+    visible: false,
+    title: '请确认操作',
+    message: '',
+    confirmLabel: '确认',
+    cancelLabel: '取消',
+    tone: 'danger',
+    showCancel: true,
+    onConfirm: null,
+  }
+}
+
+export default {
+  name: 'TrashPage',
+  components: {
+    ConfirmationDialog,
+    LoadingSpinner,
+    MediaItemCard,
+    SelectionDetailOverlay,
+    TrashPageHeader,
+  },
+
+  data() {
+    return {
+      items: [],
+      loading: true,
+      sortBy: 'date',
+      sortDir: 'desc',
+      containerWidth: 0,
+      selectionMode: false,
+      selectedMap: {},
+      selectionTypeLock: null,
+      selectionAnchorIndex: null,
+      selectionDetailsOpen: false,
+      selectionDetailsBounds: {
+        top: '0px',
+        right: '0px',
+        bottom: '0px',
+        left: '0px',
+      },
+      selectionDetailsHostWidth: 0,
+      selectionDetailsHostHeight: 0,
+      scrollLockState: null,
+      messageText: '',
+      messageType: 'success',
+      actionBusy: false,
+      tagNameMap: {},
+      selectAllMenuOpen: false,
+      confirmDialog: createDialogState(),
+    }
+  },
+
+  computed: {
+    totalCount() {
+      return this.items.length
+    },
+
+    justifiedRows() {
+      const width = this.containerWidth || (typeof window !== 'undefined' ? window.innerWidth - 48 : 800)
+      const gap = 4
+      const targetHeight = 420
+      const items = this.items
+      if (!items.length) return []
+
+      const rows = []
+      let rowStart = 0
+      let rowAspectRatio = 0
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        const dims = this.dimensionsForItem(item)
+        rowAspectRatio += dims.w / dims.h
+        const isLast = i === items.length - 1
+        const rowLen = i - rowStart + 1
+        const neededWidth = rowAspectRatio * targetHeight + gap * (rowLen - 1)
+
+        if (neededWidth >= width || isLast) {
+          const totalGap = gap * (rowLen - 1)
+          const actualHeight = (isLast && neededWidth < width)
+            ? targetHeight
+            : Math.round((width - totalGap) / rowAspectRatio)
+          const rowItems = []
+          for (let j = rowStart; j <= i; j++) {
+            const current = items[j]
+            const currentDims = this.dimensionsForItem(current)
+            rowItems.push({
+              ...current,
+              _idx: j,
+              computedWidth: Math.round((currentDims.w / currentDims.h) * actualHeight),
+            })
+          }
+          rows.push({ items: rowItems, height: actualHeight })
+          rowStart = i + 1
+          rowAspectRatio = 0
+        }
+      }
+
+      return rows
+    },
+
+    selectedCount() {
+      return Object.keys(this.selectedMap).length
+    },
+
+    availableSelectionTypes() {
+      const types = new Set()
+      for (const item of this.items) {
+        if (item?.type === 'album' || item?.type === 'image') {
+          types.add(item.type)
+        }
+      }
+      return Array.from(types)
+    },
+
+    hasMixedSelectableTypes() {
+      return this.availableSelectionTypes.includes('album') && this.availableSelectionTypes.includes('image')
+    },
+
+    selectedEntries() {
+      const entries = []
+      for (let index = 0; index < this.items.length; index++) {
+        const item = this.items[index]
+        if (this.isItemSelected(item, index)) {
+          entries.push({ item, index })
+        }
+      }
+      return entries
+    },
+
+    selectionSummaryText() {
+      if (!this.selectedCount) return '已选 0 项'
+      if (this.selectionTypeLock === 'album') return `已选 ${this.selectedCount} 个相册`
+      if (this.selectionTypeLock === 'image') return `已选 ${this.selectedCount} 张图片`
+      return `已选 ${this.selectedCount} 项`
+    },
+
+    selectionDetailPreviewItems() {
+      return this.selectedEntries.map(({ item, index }) => ({
+        key: this.itemKey(item, index),
+        name: item.name || '未命名',
+        type: item.type || 'image',
+        previewUrl: this.resolvedUrl(item),
+        aspectRatio: this.detailAspectRatio(item),
+      }))
+    },
+
+    selectionDetailsPanelStyle() {
+      const hostWidth = this.selectionDetailsHostWidth || (typeof window !== 'undefined' ? window.innerWidth : 0)
+      const hostHeight = this.selectionDetailsHostHeight || (typeof window !== 'undefined' ? window.innerHeight : 0)
+      if (!hostWidth || !hostHeight) return null
+
+      const availableWidth = Math.max(0, Math.floor(hostWidth - 12))
+      const availableHeight = Math.max(0, Math.floor(hostHeight - 12))
+      const isPortraitLike = hostWidth <= 960 || hostWidth < hostHeight
+
+      if (isPortraitLike) {
+        const panelWidth = Math.min(
+          availableWidth,
+          Math.max(Math.min(availableWidth, 320), Math.floor(hostWidth * 0.98)),
+        )
+        const desiredHeight = Math.floor(hostHeight * 0.96)
+        const panelHeight = Math.min(
+          availableHeight,
+          Math.max(Math.min(availableHeight, 360), desiredHeight),
+        )
+        return {
+          width: `${panelWidth}px`,
+          maxWidth: `${availableWidth}px`,
+          height: `${panelHeight}px`,
+          maxHeight: `${availableHeight}px`,
+        }
+      }
+
+      const panelWidth = Math.min(
+        1180,
+        availableWidth,
+        Math.max(Math.min(availableWidth, 760), Math.floor(hostWidth * 0.8)),
+      )
+      const panelHeight = Math.min(
+        availableHeight,
+        Math.max(Math.min(availableHeight, 460), Math.round(panelWidth * 0.58)),
+      )
+      return {
+        width: `${panelWidth}px`,
+        height: `${panelHeight}px`,
+        maxWidth: `${availableWidth}px`,
+        maxHeight: `${availableHeight}px`,
+      }
+    },
+
+    selectionDetailNameField() {
+      return this.buildDetailField(this.selectedEntries.map(({ item }) => item.name || '未命名'))
+    },
+
+    selectionDetailTagsField() {
+      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailTagTextForItem(item)), { emptyText: '' })
+    },
+
+    selectionDetailSizeField() {
+      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailSizeText(item)))
+    },
+
+    selectionDetailSizeLabel() {
+      return this.selectionTypeLock === 'album' ? '图片数量' : '尺寸'
+    },
+
+    selectionDetailImportedField() {
+      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.formatDateTime(item.imported_at)))
+    },
+
+    selectionDetailCreatedField() {
+      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailCreatedText(item)))
+    },
+  },
+
+  watch: {
+    selectedCount(nextValue) {
+      if (!nextValue) {
+        this.closeSelectionDetails()
+        this.closeSelectAllMenu()
+      }
+    },
+  },
+
+  created() {
+    this.loadData()
+    window.addEventListener('resize', this.onResize)
+    window.addEventListener('keydown', this.onWindowKeydown)
+    window.addEventListener('pointerdown', this.onWindowPointerDown)
+  },
+
+  beforeUnmount() {
+    this.unlockPageScroll()
+    window.removeEventListener('resize', this.onResize)
+    window.removeEventListener('keydown', this.onWindowKeydown)
+    window.removeEventListener('pointerdown', this.onWindowPointerDown)
+  },
+
+  methods: {
+    goBack() {
+      if (typeof window !== 'undefined' && window.history.length > 1) {
+        this.$router.back()
+        return
+      }
+      this.$router.push('/settings')
+    },
+
+    async loadData() {
+      this.loading = true
+      this.messageText = ''
+      try {
+        const res = await fetch(`${API_BASE}/api/trash/items`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        this.items = this.sortItems(data.items || [])
+        this.clearSelection()
+        this.$nextTick(() => this.refreshContainerWidth())
+        this.ensureTagLabelsLoaded()
+      } catch (err) {
+        this.items = []
+        this.showMessage('error', err?.message || '加载回收站失败')
+      } finally {
+        this.loading = false
+      }
+    },
+
+    showMessage(type, text) {
+      this.messageType = type
+      this.messageText = text
+    },
+
+    refreshContainerWidth() {
+      if (this.$el && typeof this.$el.getBoundingClientRect === 'function') {
+        this.containerWidth = Math.max(320, Math.floor(this.$el.getBoundingClientRect().width))
+      }
+    },
+
+    onResize() {
+      this.refreshContainerWidth()
+      if (this.selectionDetailsOpen) {
+        this.updateSelectionDetailsBounds()
+      }
+    },
+
+    dimensionsForItem(item) {
+      const width = Number(item?.width)
+      const height = Number(item?.height)
+      if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+        return { w: 4, h: 3 }
+      }
+      return { w: width, h: height }
+    },
+
+    resolvedUrl(item) {
+      if (!item) return ''
+      if (item.cache_thumb_url) return `${API_BASE}${item.cache_thumb_url}`
+      if (item.thumb_url) return `${API_BASE}${item.thumb_url}`
+      if (item.trash_media_url) return `${API_BASE}${item.trash_media_url}`
+      return ''
+    },
+
+    itemDateTs(item) {
+      const ts = Number(item?.sort_ts)
+      return Number.isFinite(ts) ? ts : 0
+    },
+
+    itemAlphaKey(item) {
+      return (item?.name || '').toString()
+    },
+
+    sortItems(items) {
+      const arr = Array.isArray(items) ? [...items] : []
+      const dir = this.sortDir === 'desc' ? -1 : 1
+      const compare = (a, b) => {
+        if (this.sortBy === 'date') {
+          const ta = this.itemDateTs(a)
+          const tb = this.itemDateTs(b)
+          if (ta !== tb) return (ta - tb) * dir
+        } else {
+          const na = this.itemAlphaKey(a)
+          const nb = this.itemAlphaKey(b)
+          const nc = na.localeCompare(nb, undefined, { sensitivity: 'base', numeric: true })
+          if (nc !== 0) return nc * dir
+        }
+        return this.itemAlphaKey(a).localeCompare(this.itemAlphaKey(b), undefined, { sensitivity: 'base', numeric: true }) * dir
+      }
+      const albums = arr.filter(it => it?.type === 'album').sort(compare)
+      const images = arr.filter(it => it?.type !== 'album').sort(compare)
+      return [...albums, ...images]
+    },
+
+    refreshSortResult() {
+      this.items = this.sortItems(this.items)
+      this.clearSelection()
+      this.ensureTagLabelsLoaded()
+    },
+
+    onSortModeSelect(mode) {
+      if (this.sortBy === mode) return
+      this.sortBy = mode
+      this.sortDir = 'asc'
+      this.refreshSortResult()
+    },
+
+    toggleSortDir() {
+      this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc'
+      this.refreshSortResult()
+    },
+
+    toggleSelectionMode(forceValue = null) {
+      const nextValue = typeof forceValue === 'boolean' ? forceValue : !this.selectionMode
+      if (nextValue === this.selectionMode) return
+      this.selectionMode = nextValue
+      if (!nextValue) {
+        this.clearSelection()
+        this.closeSelectAllMenu()
+      }
+    },
+
+    itemKey(item, index) {
+      if (item?.type === 'album') return `album:${item.entry_key || item.id || index}`
+      return `image:${item.entry_key || item.id || index}`
+    },
+
+    isItemSelected(item, index) {
+      return Boolean(this.selectedMap[this.itemKey(item, index)])
+    },
+
+    isItemDisabled(item) {
+      return Boolean(this.selectionTypeLock && item?.type !== this.selectionTypeLock)
+    },
+
+    clearSelection() {
+      this.selectedMap = {}
+      this.selectionTypeLock = null
+      this.selectionAnchorIndex = null
+      this.closeSelectionDetails()
+      this.closeSelectAllMenu()
+    },
+
+    selectAllOfType(type) {
+      if (!type) return
+      const next = {}
+      let anchorIndex = null
+      for (let i = 0; i < this.items.length; i++) {
+        const item = this.items[i]
+        if (!item || item.type !== type) continue
+        next[this.itemKey(item, i)] = true
+        if (anchorIndex === null) anchorIndex = i
+      }
+      this.selectedMap = next
+      this.selectionTypeLock = type
+      this.selectionAnchorIndex = anchorIndex
+      this.closeSelectAllMenu()
+    },
+
+    selectAllOfCurrentType() {
+      const type = this.selectionTypeLock
+        || (this.availableSelectionTypes.length === 1
+          ? this.availableSelectionTypes[0]
+          : (this.availableSelectionTypes.includes('image') ? 'image' : this.availableSelectionTypes[0]))
+      this.selectAllOfType(type)
+    },
+
+    handleSelectAllButtonClick() {
+      if (!this.hasMixedSelectableTypes) {
+        this.selectAllOfCurrentType()
+        return
+      }
+      this.selectAllMenuOpen = !this.selectAllMenuOpen
+    },
+
+    onSelectAllTypeClick(type) {
+      this.selectAllOfType(type)
+    },
+
+    closeSelectAllMenu() {
+      this.selectAllMenuOpen = false
+    },
+
+    selectOnlyIndex(index) {
+      const item = this.items[index]
+      if (!item) return
+      this.selectionTypeLock = item.type
+      this.selectedMap = { [this.itemKey(item, index)]: true }
+      this.selectionAnchorIndex = index
+    },
+
+    addIndexToSelection(index, useAsAnchor = false) {
+      const item = this.items[index]
+      if (!item) return
+      if (this.selectionTypeLock && this.selectionTypeLock !== item.type) return
+      const key = this.itemKey(item, index)
+      this.selectedMap = { ...this.selectedMap, [key]: true }
+      this.selectionTypeLock = item.type
+      if (useAsAnchor || this.selectionAnchorIndex === null) {
+        this.selectionAnchorIndex = index
+      }
+    },
+
+    removeIndexFromSelection(index) {
+      const item = this.items[index]
+      if (!item) return
+      const key = this.itemKey(item, index)
+      const next = { ...this.selectedMap }
+      delete next[key]
+      this.selectedMap = next
+      if (!Object.keys(next).length) {
+        this.selectionTypeLock = null
+        this.selectionAnchorIndex = null
+      }
+    },
+
+    toggleIndexSelection(index) {
+      const item = this.items[index]
+      if (!item || this.isItemDisabled(item)) return
+      if (this.isItemSelected(item, index)) {
+        this.removeIndexFromSelection(index)
+      } else {
+        this.addIndexToSelection(index, true)
+      }
+    },
+
+    applyRangeSelection(targetIndex, additive = false) {
+      const targetItem = this.items[targetIndex]
+      if (!targetItem) return
+      const anchorIndex = this.selectionAnchorIndex === null ? targetIndex : this.selectionAnchorIndex
+      const lockedType = this.selectionTypeLock || targetItem.type
+      const next = additive ? { ...this.selectedMap } : {}
+      for (let i = Math.min(anchorIndex, targetIndex); i <= Math.max(anchorIndex, targetIndex); i++) {
+        const item = this.items[i]
+        if (!item || item.type !== lockedType) continue
+        next[this.itemKey(item, i)] = true
+      }
+      this.selectedMap = next
+      this.selectionTypeLock = lockedType
+      this.selectionAnchorIndex = targetIndex
+    },
+
+    onSelectionPointerDown(event, item, index) {
+      if (!this.selectionMode) return
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      if (this.isItemDisabled(item)) return
+      event.preventDefault()
+      if (event.shiftKey) {
+        this.applyRangeSelection(index, event.ctrlKey || event.metaKey)
+        return
+      }
+      if (event.ctrlKey || event.metaKey) {
+        this.toggleIndexSelection(index)
+        return
+      }
+      this.selectOnlyIndex(index)
+    },
+
+    onItemSelectionButtonClick(item, index) {
+      if (!item || this.isItemDisabled(item)) return
+      if (!this.selectionMode) {
+        this.selectionMode = true
+      }
+      this.toggleIndexSelection(index)
+    },
+
+    openDetailsForItem(item, index) {
+      if (!item) return
+      if (!this.isItemSelected(item, index) || this.selectedCount !== 1) {
+        this.selectOnlyIndex(index)
+      }
+      this.openSelectionDetails()
+    },
+
+    openSelectionDetails() {
+      if (!this.selectedCount) return
+      this.ensureTagLabelsLoaded()
+      this.updateSelectionDetailsBounds()
+      this.closeSelectAllMenu()
+      this.selectionDetailsOpen = true
+      this.lockPageScroll()
+    },
+
+    closeSelectionDetails() {
+      this.selectionDetailsOpen = false
+      this.unlockPageScroll()
+    },
+
+    updateSelectionDetailsBounds() {
+      if (typeof window === 'undefined') return
+      const host = (this.$el && typeof this.$el.closest === 'function')
+        ? (this.$el.closest('main') || this.$el)
+        : this.$el
+      if (!host || typeof host.getBoundingClientRect !== 'function') return
+
+      const rect = host.getBoundingClientRect()
+      const visibleTop = Math.max(0, Math.round(rect.top))
+      const visibleBottom = Math.max(0, Math.round(window.innerHeight - rect.bottom))
+      const visibleLeft = Math.max(0, Math.round(rect.left))
+      const visibleRight = Math.max(0, Math.round(window.innerWidth - rect.right))
+
+      this.selectionDetailsHostWidth = Math.max(0, window.innerWidth - visibleLeft - visibleRight)
+      this.selectionDetailsHostHeight = Math.max(0, window.innerHeight - visibleTop - visibleBottom)
+      this.selectionDetailsBounds = {
+        top: `${visibleTop}px`,
+        right: `${visibleRight}px`,
+        bottom: `${visibleBottom}px`,
+        left: `${visibleLeft}px`,
+      }
+    },
+
+    lockPageScroll() {
+      if (typeof window === 'undefined' || this.scrollLockState) return
+      const root = document.documentElement
+      const body = document.body
+      const scrollY = window.scrollY || window.pageYOffset || 0
+      const scrollbarWidth = Math.max(0, window.innerWidth - root.clientWidth)
+      this.scrollLockState = {
+        scrollY,
+        bodyOverflow: body.style.overflow,
+        bodyPosition: body.style.position,
+        bodyTop: body.style.top,
+        bodyLeft: body.style.left,
+        bodyRight: body.style.right,
+        bodyWidth: body.style.width,
+        bodyPaddingRight: body.style.paddingRight,
+        rootOverflow: root.style.overflow,
+        rootOverscrollBehavior: root.style.overscrollBehavior,
+      }
+      root.style.overflow = 'hidden'
+      root.style.overscrollBehavior = 'none'
+      body.style.overflow = 'hidden'
+      body.style.position = 'fixed'
+      body.style.top = `-${scrollY}px`
+      body.style.left = '0'
+      body.style.right = '0'
+      body.style.width = '100%'
+      if (scrollbarWidth > 0) {
+        body.style.paddingRight = `${scrollbarWidth}px`
+      }
+    },
+
+    unlockPageScroll() {
+      if (typeof window === 'undefined' || !this.scrollLockState) return
+      const root = document.documentElement
+      const body = document.body
+      const state = this.scrollLockState
+      root.style.overflow = state.rootOverflow
+      root.style.overscrollBehavior = state.rootOverscrollBehavior
+      body.style.overflow = state.bodyOverflow
+      body.style.position = state.bodyPosition
+      body.style.top = state.bodyTop
+      body.style.left = state.bodyLeft
+      body.style.right = state.bodyRight
+      body.style.width = state.bodyWidth
+      body.style.paddingRight = state.bodyPaddingRight
+      this.scrollLockState = null
+      window.scrollTo({ top: state.scrollY, behavior: 'instant' })
+    },
+
+    buildDetailField(values, options = {}) {
+      const emptyText = Object.prototype.hasOwnProperty.call(options, 'emptyText') ? options.emptyText : '—'
+      const normalized = Array.isArray(values) ? values.map(value => (value == null ? '' : String(value).trim())) : []
+      if (!normalized.length) {
+        return { text: emptyText, isVarious: false, isEmpty: !emptyText }
+      }
+      const first = normalized[0]
+      const allSame = normalized.every(value => value === first)
+      if (!allSame) {
+        return { text: 'various', isVarious: true, isEmpty: false }
+      }
+      const isEmpty = first.length === 0
+      return { text: isEmpty ? emptyText : first, isVarious: false, isEmpty }
+    },
+
+    detailAspectRatio(item) {
+      const dims = this.dimensionsForItem(item)
+      return `${dims.w} / ${dims.h}`
+    },
+
+    detailTagTextForItem(item) {
+      const tags = Array.isArray(item?.tags) ? item.tags : []
+      if (!tags.length) return ''
+      return tags.map(id => this.tagNameMap[id] || `#${id}`).filter(Boolean).join(', ')
+    },
+
+    detailSizeText(item) {
+      if (item?.type === 'album') {
+        return item?.photo_count != null ? `${item.photo_count} 张` : ''
+      }
+      const width = Number(item?.width)
+      const height = Number(item?.height)
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return ''
+      return `${width} × ${height}`
+    },
+
+    detailCreatedText(item) {
+      if (item?.type === 'album') return this.formatDateTime(item.created_at)
+      return this.formatDateTime(item.file_created_at)
+    },
+
+    formatDateTime(value) {
+      if (!value) return ''
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) return ''
+      const y = date.getFullYear()
+      const m = String(date.getMonth() + 1).padStart(2, '0')
+      const d = String(date.getDate()).padStart(2, '0')
+      const hh = String(date.getHours()).padStart(2, '0')
+      const mm = String(date.getMinutes()).padStart(2, '0')
+      return `${y}-${m}-${d} ${hh}:${mm}`
+    },
+
+    async ensureTagLabelsLoaded() {
+      const tagIds = []
+      for (const { item } of this.selectedEntries) {
+        for (const id of (item?.tags || [])) {
+          if (Number.isInteger(id) && !tagIds.includes(id)) {
+            tagIds.push(id)
+          }
+        }
+      }
+      if (!tagIds.length) return
+      try {
+        const res = await fetch(`${API_BASE}/api/tags?ids=${tagIds.join(',')}&limit=${tagIds.length}`)
+        if (!res.ok) return
+        const data = await res.json()
+        const nextMap = { ...this.tagNameMap }
+        for (const tag of (data.items || [])) {
+          nextMap[tag.id] = tag.display_name || tag.name || `#${tag.id}`
+        }
+        this.tagNameMap = nextMap
+      } catch {
+        // ignore tag load failure in trash detail view
+      }
+    },
+
+    noop() {},
+
+    openConfirmDialog(options = {}) {
+      this.confirmDialog = {
+        ...createDialogState(),
+        ...options,
+        visible: true,
+      }
+    },
+
+    closeConfirmDialog() {
+      this.confirmDialog = createDialogState()
+    },
+
+    async handleConfirmDialogConfirm() {
+      const onConfirm = this.confirmDialog.onConfirm
+      this.closeConfirmDialog()
+      if (typeof onConfirm === 'function') {
+        await onConfirm()
+      }
+    },
+
+    restoreSelection() {
+      if (!this.selectedCount || this.actionBusy) return
+      this.closeSelectAllMenu()
+      this.openConfirmDialog({
+        title: '确认还原',
+        message: `确认还原已选中的 ${this.selectedCount} 项吗？\n若目标位置已存在同名项目，系统会自动补编号避免覆盖。`,
+        confirmLabel: '还原',
+        cancelLabel: '取消',
+        tone: 'accent',
+        onConfirm: () => this.executeRestoreSelection(),
+      })
+    },
+
+    async executeRestoreSelection() {
+      if (!this.selectedCount || this.actionBusy) return
+      this.actionBusy = true
+      try {
+        const res = await fetch(`${API_BASE}/api/trash/restore`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entry_ids: this.selectedEntries.map(({ item }) => item.id) }),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        if (data.errors?.length) {
+          this.showMessage('error', data.errors.join('；'))
+        } else {
+          this.showMessage('success', `已还原 ${data.restored} 项。`)
+        }
+        await this.loadData()
+      } catch (err) {
+        this.showMessage('error', err?.message || '还原失败')
+      } finally {
+        this.actionBusy = false
+      }
+    },
+
+    hardDeleteSelection() {
+      if (!this.selectedCount || this.actionBusy) return
+      this.closeSelectAllMenu()
+      this.openConfirmDialog({
+        title: '确认彻底删除',
+        message: `确认彻底删除已选中的 ${this.selectedCount} 项吗？\n此操作会直接移除 trash 中的文件，且无法恢复。`,
+        confirmLabel: '彻底删除',
+        cancelLabel: '取消',
+        tone: 'danger',
+        onConfirm: () => this.executeHardDeleteSelection(),
+      })
+    },
+
+    async executeHardDeleteSelection() {
+      if (!this.selectedCount || this.actionBusy) return
+      this.actionBusy = true
+      try {
+        const res = await fetch(`${API_BASE}/api/trash/hard-delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entry_ids: this.selectedEntries.map(({ item }) => item.id) }),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        if (data.errors?.length) {
+          this.showMessage('error', data.errors.join('；'))
+        } else {
+          this.showMessage('success', `已删除 ${data.deleted} 项。`)
+        }
+        await this.loadData()
+      } catch (err) {
+        this.showMessage('error', err?.message || '删除失败')
+      } finally {
+        this.actionBusy = false
+      }
+    },
+
+    clearTrash() {
+      if (!this.totalCount || this.actionBusy) return
+      this.closeSelectAllMenu()
+      this.openConfirmDialog({
+        title: '确认清空回收站',
+        message: '确认清空回收站吗？\n此操作会物理删除 trash 中的全部文件和目录，且无法恢复。',
+        confirmLabel: '清空回收站',
+        cancelLabel: '取消',
+        tone: 'danger',
+        onConfirm: () => this.executeClearTrash(),
+      })
+    },
+
+    async executeClearTrash() {
+      if (!this.totalCount || this.actionBusy) return
+      this.actionBusy = true
+      try {
+        const res = await fetch(`${API_BASE}/api/trash`, { method: 'DELETE' })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        if (data.errors?.length) {
+          this.showMessage('error', data.errors.join('；'))
+        } else {
+          this.showMessage('success', `已清空回收站，共删除 ${data.deleted} 项。`)
+        }
+        await this.loadData()
+      } catch (err) {
+        this.showMessage('error', err?.message || '清空回收站失败')
+      } finally {
+        this.actionBusy = false
+      }
+    },
+
+    onWindowKeydown(event) {
+      if (this.selectionDetailsOpen && event.key === 'Escape') {
+        event.preventDefault()
+        this.closeSelectionDetails()
+        return
+      }
+      if (!this.selectionMode) return
+      const key = event.key.toLowerCase()
+      if ((event.ctrlKey || event.metaKey) && key === 'a') {
+        event.preventDefault()
+        this.selectAllOfCurrentType()
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        if (this.selectedCount) {
+          this.clearSelection()
+        } else {
+          this.toggleSelectionMode(false)
+        }
+      }
+    },
+
+    onWindowPointerDown(event) {
+      if (!this.selectAllMenuOpen) return
+      const menu = this.$refs.selectionIslandMenu
+      if (menu && typeof menu.contains === 'function' && menu.contains(event.target)) {
+        return
+      }
+      this.closeSelectAllMenu()
+    },
+  },
+}
+</script>
+
+<style scoped lang="css">
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.page-note {
+  margin: 0;
+  padding: 0.8rem 1rem;
+  border-radius: 12px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.page-note--success {
+  background: rgba(220, 252, 231, 0.9);
+  color: #166534;
+}
+
+.page-note--error {
+  background: rgba(254, 226, 226, 0.92);
+  color: #991b1b;
+}
+
+.vm-btns {
+  display: flex;
+  align-items: center;
+  background: #f1f5f9;
+  border-radius: 8px;
+  padding: 2px;
+  gap: 1px;
+}
+
+.vm-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0;
+  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
+}
+
+.vm-btn:hover:not(:disabled) {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+.vm-btn.active {
+  background: #fff;
+  color: #1e293b;
+  box-shadow: 0 1px 3px rgba(0,0,0,.12);
+}
+
+.empty-hint {
+  @apply border-2 border-dashed border-slate-300 bg-slate-50 rounded-xl py-16 text-center text-slate-400 text-sm;
+}
+
+.empty-hint__icon {
+  @apply text-5xl block mb-3;
+}
+
+.selection-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.selection-wrap {
+  min-width: 0;
+  cursor: pointer;
+  user-select: none;
+  touch-action: pan-y;
+}
+
+.selection-wrap.is-disabled {
+  cursor: not-allowed;
+}
+
+.photo-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.jl-row {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.photo-wrap {
+  overflow: hidden;
+  flex-shrink: 0;
+  height: 100%;
+}
+
+.photo-skeleton {
+  @apply w-full h-full rounded-xl overflow-hidden flex items-center justify-center;
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-wave 1.4s ease-in-out infinite;
+}
+
+.skeleton-label {
+  @apply text-slate-400 text-xs font-mono tracking-widest select-none;
+}
+
+.photo-card {
+  @apply relative cursor-pointer rounded-xl overflow-hidden shadow-md;
+  width: 100%;
+  height: 100%;
+  transition: box-shadow 200ms ease, transform 200ms ease;
+}
+
+.photo-card:hover {
+  @apply shadow-xl -translate-y-0.5;
+}
+
+.photo-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 300ms ease;
+}
+
+.photo-card:hover .photo-img {
+  transform: scale(1.03);
+}
+
+.album-badge {
+  @apply absolute top-2 right-2 flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg;
+  background: rgba(255, 255, 255, 0.90);
+  box-shadow: 0 1px 4px rgba(0,0,0,.15);
+  pointer-events: none;
+}
+
+.badge-icon {
+  font-size: 1rem;
+}
+
+.badge-name {
+  @apply text-slate-800 text-xs font-semibold text-center select-none;
+  max-width: 6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge-count {
+  @apply select-none;
+  color: rgba(100, 116, 139, 0.8);
+  font-size: 0.65rem;
+}
+
+.selection-island {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(14px);
+}
+
+.selection-island__count {
+  color: #0f172a;
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.selection-island__menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.selection-island__submenu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 0.55rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.42rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 34px rgba(15, 23, 42, 0.12);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.selection-island__menu-wrap.is-open .selection-island__submenu {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.selection-island__submenu-btn {
+  border: 0;
+  border-radius: 10px;
+  padding: 0.48rem 0.72rem;
+  background: transparent;
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.selection-island__submenu-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.selection-island__btn {
+  border: 0;
+  border-radius: 12px;
+  padding: 0.45rem 0.75rem;
+  background: transparent;
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+
+.selection-island__btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.selection-island__btn--danger {
+  color: #b45309;
+}
+
+.selection-island__btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+@keyframes skeleton-wave {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@media (orientation: landscape) {
+  .selection-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@media (orientation: portrait) {
+  .selection-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.8rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .selection-island {
+    right: 0.9rem;
+    left: 0.9rem;
+    bottom: 0.9rem;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .selection-island__menu-wrap {
+    display: flex;
+    flex: 1 1 100%;
+  }
+
+  .selection-island__submenu {
+    left: 0;
+    right: 0;
+  }
+}
+</style>

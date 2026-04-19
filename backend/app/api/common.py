@@ -1,33 +1,8 @@
 from pathlib import Path
-from typing import Optional
-
-from sqlalchemy import exists, not_
-from sqlmodel import select
+from typing import Callable, Optional
 
 from app.core.config import CACHE_DIR, PROJECT_ROOT, TEMP_DIR
-from app.models.album import Album
 from app.models.image_asset import ImageAsset
-from app.models.soft_delete import PathSoftDelete
-
-
-def ia_not_deleted():
-    return not_(
-        exists(
-            select(PathSoftDelete.id)
-            .where(PathSoftDelete.entity_type == "image")
-            .where(PathSoftDelete.owner_id == ImageAsset.id)
-        )
-    )
-
-
-def album_not_deleted():
-    return not_(
-        exists(
-            select(PathSoftDelete.id)
-            .where(PathSoftDelete.entity_type == "album")
-            .where(PathSoftDelete.owner_id == Album.id)
-        )
-    )
 
 
 def resolve_stored_path(stored_path: Optional[str]) -> Optional[Path]:
@@ -68,51 +43,72 @@ def media_url(asset: ImageAsset) -> Optional[str]:
     for stored in (asset.media_path or []):
         if not isinstance(stored, str) or not stored:
             continue
-        resolved = resolve_stored_path(stored)
-        if not resolved or not resolved.exists():
-            continue
-        norm = normalize_stored_path(stored)
-        if norm.startswith("media/"):
-            return f"/{norm}"
+        url = media_url_for_path(stored)
+        if url:
+            return url
     return None
+
+
+def media_url_for_path(media_rel_path: Optional[str]) -> Optional[str]:
+    if not media_rel_path:
+        return None
+    resolved = resolve_stored_path(media_rel_path)
+    if not resolved or not resolved.exists():
+        return None
+    norm = normalize_stored_path(media_rel_path)
+    if not norm.startswith("media/"):
+        return None
+    return f"/{norm}"
 
 
 def normalize_stored_path(path: str) -> str:
     return path.replace("\\", "/").strip()
 
 
-def build_soft_delete_maps(session) -> tuple[dict[int, set[str]], dict[int, set[str]]]:
-    image_deleted: dict[int, set[str]] = {}
-    album_deleted: dict[int, set[str]] = {}
-    rows = session.exec(select(PathSoftDelete)).all()
-    for row in rows:
-        if not row.target_path:
+def iter_asset_media_paths(asset: ImageAsset) -> list[tuple[int, str]]:
+    items: list[tuple[int, str]] = []
+    for index, stored in enumerate(asset.media_path or []):
+        if not isinstance(stored, str) or not stored:
             continue
-        normalized = normalize_stored_path(row.target_path)
-        owner_id = row.owner_id
-        if row.entity_type == "image" and owner_id is not None:
-            image_deleted.setdefault(owner_id, set()).add(normalized)
-        elif row.entity_type == "album" and owner_id is not None:
-            album_deleted.setdefault(owner_id, set()).add(normalized)
-    return image_deleted, album_deleted
+        normalized = normalize_stored_path(stored)
+        if not normalized.startswith("media/"):
+            continue
+        items.append((index, normalized))
+    return items
 
 
-def asset_visible(asset: ImageAsset, image_deleted: dict[int, set[str]]) -> bool:
-    if asset.id is None:
-        return True
-    deleted_paths = image_deleted.get(asset.id, set())
-    media_paths = [
-        normalize_stored_path(p)
-        for p in (asset.media_path or [])
-        if isinstance(p, str) and p
-    ]
-    if not media_paths:
-        return True
-    return any(path not in deleted_paths for path in media_paths)
+def pick_asset_media_path(
+    asset: ImageAsset,
+    predicate: Optional[Callable[[str], bool]] = None,
+) -> tuple[Optional[int], Optional[str]]:
+    fallback_index: Optional[int] = None
+    fallback_path: Optional[str] = None
+    for index, normalized in iter_asset_media_paths(asset):
+        if fallback_path is None:
+            fallback_index = index
+            fallback_path = normalized
+        if predicate is None or predicate(normalized):
+            return index, normalized
+    return fallback_index, fallback_path
 
 
-def album_visible(album: Album, album_deleted: dict[int, set[str]]) -> bool:
-    if album.id is None:
-        return True
-    deleted_paths = album_deleted.get(album.id, set())
-    return normalize_stored_path(album.path) not in deleted_paths
+def date_group_media_predicate(date_group: str) -> Callable[[str], bool]:
+    prefix = f"media/{normalize_stored_path(date_group)}/"
+
+    def _predicate(media_rel_path: str) -> bool:
+        if not media_rel_path.startswith(prefix):
+            return False
+        remaining = media_rel_path[len(prefix):]
+        return "/" not in remaining
+
+    return _predicate
+
+
+def album_media_predicate(album_path: str) -> Callable[[str], bool]:
+    normalized_album_path = normalize_stored_path(album_path)
+    prefix = f"media/{normalized_album_path}/"
+
+    def _predicate(media_rel_path: str) -> bool:
+        return media_rel_path.startswith(prefix)
+
+    return _predicate
