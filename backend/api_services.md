@@ -40,6 +40,12 @@
   - hard_delete_trash_entries(entry_ids)
   - clear_trash()
   - 说明：负责回收站条目查询、移动到回收站、还原、彻底删除与清空回收站
+- app/services/category_service.py
+  - ensure_default_category()
+  - resolve_category_id()
+  - sync_category_usage_counts()
+  - reassign_category_references()
+  - 说明：维护受控主分类、默认主分类、初始化回填、批量启用 / 停用与删除回退
 - app/services/app_settings_service.py
   - load_app_settings()/save_app_settings()
   - get_cache_thumb_short_side_px()/set_cache_thumb_short_side_px()
@@ -89,6 +95,12 @@
   - DELETE /api/cache
   - POST /api/thumbnails/cache
   - GET /api/thumbnails/cache/status/{task_id}
+- app/api/routers/categories.py
+  - GET /api/categories
+  - POST /api/categories
+  - PATCH /api/categories/{category_id}
+  - DELETE /api/categories/{category_id}
+  - POST /api/categories/bulk
 - app/api/routers/tags.py
   - GET /api/tags
   - GET /api/tags/{tag_id}
@@ -159,7 +171,7 @@
 - GET /api/images/meta
   - 实现：app/api/routers/images.py
   - 参数：`ids=1,2,3`（逗号分隔图片 ID）
-  - 用途：批量回填图片元数据、缩略图地址与 `media_paths`
+  - 用途：批量回填图片元数据、缩略图地址、`media_paths` 与 `category_id`
   - 说明：主要供详情浮层或旧列表数据补齐字段；`media_paths` 也为更精细的文件实例操作提供兜底信息
 
 - GET /api/images/{image_id}/open
@@ -173,7 +185,33 @@
   - 实现：app/api/routers/trash.py，调用 app/services/trash_service.py
   - 用途：列出回收站条目，供 TrashPage 瀑布流与选择态使用
   - 说明：返回前会先执行一次批量轻量对账，清除已丢失 payload 的 `TrashEntry`，并为仍存在的条目成批补齐 `preview_path` 与 `temp/*.webp`；不再在进入页面时逐条强制生成 `data/cache/*.webp`
-  - 返回：`{ items: [...] }`，条目包含类型、名称、预览图、原路径、图片尺寸、Tag ID 列表等
+  - 返回：`{ items: [...] }`，条目包含类型、名称、预览图、原路径、图片尺寸、Tag ID 列表与 `category_id`
+
+### 3.4b 主分类接口
+
+- GET /api/categories
+  - 实现：app/api/routers/categories.py
+  - 用途：列出全部主分类，并同步返回 `{image, album, tag}` 使用计数
+  - 说明：接口会确保默认主分类存在，默认项固定为 `id=1`
+
+- POST /api/categories
+  - 实现：app/api/routers/categories.py
+  - Body：`{ name, display_name, description, is_active? }`
+  - 用途：创建主分类；`name` 只允许小写字母、数字与下划线
+
+- PATCH /api/categories/{category_id}
+  - 实现：app/api/routers/categories.py
+  - 用途：更新主分类名称、显示名、说明或启用状态
+  - 说明：默认主分类不可编辑
+
+- DELETE /api/categories/{category_id}
+  - 实现：app/api/routers/categories.py
+  - 用途：删除主分类，并把引用该分类的图片、相册、Tag 与回收站条目回退到默认主分类
+
+- POST /api/categories/bulk
+  - 实现：app/api/routers/categories.py
+  - Body：`{ action: activate|deactivate|delete, ids: [...] }`
+  - 用途：批量启用、停用或删除主分类；主分类配置页的管理模式通过该接口驱动右下角按钮岛与移除操作
 
 - POST /api/trash/move
   - 实现：app/api/routers/trash.py，调用 app/services/trash_service.py
@@ -257,7 +295,8 @@
 
 - GET /api/tags
   - 实现：app/api/routers/tags.py
-  - 参数：ids（逗号分隔 ID 列表，批量查）、category（过滤）、type（标签种类过滤）、q（名称模糊搜索）、limit/offset（分页）
+  - 参数：ids（逗号分隔 ID 列表，批量查）、category_id（主分类过滤）、category（兼容旧名称过滤）、type（标签种类过滤）、q（名称模糊搜索）、limit/offset（分页）
+  - 返回补充：条目会携带 `category_id`、`category_name`、`category_display_name`
   - 用途：列出/搜索/批量查询 Tag；前端展示图片标签时通过 ids 参数批量拉取
   - 性能补充：总数统计已改为数据库 `COUNT(*)` 查询，避免批量 ids 请求时先全量取回记录再在 Python 内计数
 

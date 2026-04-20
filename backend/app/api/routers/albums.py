@@ -19,6 +19,7 @@ from app.db.session import get_session
 from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
+from app.services.category_service import DEFAULT_CATEGORY_ID
 
 router = APIRouter()
 
@@ -92,6 +93,7 @@ def _build_album_response(album: Album, session) -> AlbumDetailResponse:
             thumb_url=row_thumb_url,
             count=sa.subtree_photo_count,
             id=cover_photo_id,
+            category_id=sa.category_id or DEFAULT_CATEGORY_ID,
             cache_thumb_url=row_cache_thumb_url,
             width=cover_width,
             height=cover_height,
@@ -126,6 +128,7 @@ def _build_album_response(album: Album, session) -> AlbumDetailResponse:
             name=asset.full_filename or "",
             thumb_url=thumb,
             id=asset.id,
+            category_id=asset.category_id or DEFAULT_CATEGORY_ID,
             cache_thumb_url=cache_thumb,
             width=asset.width,
             height=asset.height,

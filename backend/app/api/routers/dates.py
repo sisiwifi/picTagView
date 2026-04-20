@@ -18,6 +18,7 @@ from app.db.session import get_session
 from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
+from app.services.category_service import DEFAULT_CATEGORY_ID
 
 router = APIRouter()
 
@@ -163,6 +164,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     name=asset.full_filename or "",
                     thumb_url=thumb,
                     id=asset.id,
+                    category_id=asset.category_id or DEFAULT_CATEGORY_ID,
                     cache_thumb_url=cache_thumb,
                     width=asset.width,
                     height=asset.height,
@@ -224,6 +226,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     thumb_url=row_thumb_url,
                     count=album.subtree_photo_count,
                     id=cover_photo_id,
+                    category_id=album.category_id or DEFAULT_CATEGORY_ID,
                     cache_thumb_url=row_cache_thumb_url,
                     width=cover_width,
                     height=cover_height,

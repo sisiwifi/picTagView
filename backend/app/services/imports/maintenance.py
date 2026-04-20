@@ -10,6 +10,7 @@ from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
 from app.models.trash_entry import TrashEntry
+from app.services.category_service import DEFAULT_CATEGORY_ID
 from app.services.file_scanner import list_image_files
 from app.services.parallel_processor import process_from_paths, process_hash_only_from_paths
 
@@ -79,6 +80,7 @@ def _ensure_album_chain(session, subdir_chain: list[str], date_group: str) -> tu
             public_id="",
             title=subdir_name,
             path=album_path,
+            category_id=DEFAULT_CATEGORY_ID,
             is_leaf=is_last,
             parent_id=parent_id,
             date_group=date_group,
@@ -336,8 +338,8 @@ def ingest_media_entries(
                     existing.full_filename = path.name
                 if existing.tags is None:
                     existing.tags = []
-                if existing.category is None:
-                    existing.category = ""
+                if not existing.category_id:
+                    existing.category_id = DEFAULT_CATEGORY_ID
                 if not existing.date_group:
                     existing.date_group = date_group
                 session.add(existing)
@@ -372,7 +374,7 @@ def ingest_media_entries(
                 height=px_h,
                 file_size=stat.st_size,
                 mime_type=mime_from_name(path.name),
-                category="",
+                category_id=DEFAULT_CATEGORY_ID,
                 tags=[],
                 album=[album_public_ids] if album_public_ids else [],
                 collection=[],
@@ -522,8 +524,8 @@ def refresh_library(mode: str = "quick") -> dict[str, int | str]:
                 db_asset.full_filename = media_path.name
             if db_asset.tags is None:
                 db_asset.tags = []
-            if db_asset.category is None:
-                db_asset.category = ""
+            if not db_asset.category_id:
+                db_asset.category_id = DEFAULT_CATEGORY_ID
 
             if db_asset.thumbs:
                 live: list[dict] = []

@@ -24,7 +24,7 @@ class ImageAsset(SQLModel, table=True):
     height: Optional[int] = Field(default=None)
     file_size: Optional[int] = Field(default=None)
     mime_type: Optional[str] = Field(default=None)
-    category: Optional[str] = Field(default=None)
+    category_id: int = Field(default=1, index=True)
     # 存储 Tag 的 id 整数列表，如 [23, 45, 91]；查询标签详情时通过 /api/tags?ids=... 批量获取
     tags: Optional[list[int]] = Field(default_factory=list, sa_column=Column(JSON))
     # 所属相册：[[public_id_1, public_id_2], [...]] 每个内层数组是从根到叶的完整路径

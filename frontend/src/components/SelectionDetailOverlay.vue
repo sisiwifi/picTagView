@@ -80,6 +80,14 @@
             </div>
           </div>
 
+          <div class="detail-field">
+            <span class="detail-field__label">主分类</span>
+            <div class="detail-field__value">
+              <em v-if="categoryField.isVarious" class="detail-field__various">various</em>
+              <span v-else class="detail-field__text">{{ categoryField.text || '—' }}</span>
+            </div>
+          </div>
+
           <div class="detail-field detail-field--tags">
             <span class="detail-field__label">标签</span>
             <div class="detail-field__tag-row" :class="{ 'detail-field__tag-row--single': !showAnalysisButton }">
@@ -150,6 +158,10 @@ export default {
     previewItems: { type: Array, default: () => [] },
     isMulti: { type: Boolean, default: false },
     nameField: {
+      type: Object,
+      default: () => ({ text: '', isVarious: false, isEmpty: false }),
+    },
+    categoryField: {
       type: Object,
       default: () => ({ text: '', isVarious: false, isEmpty: false }),
     },

@@ -4,6 +4,7 @@ import GalleryPage from '../pages/GalleryPage.vue'
 import EmptyPage from '../pages/EmptyPage.vue'
 import CalendarOverview from '../pages/CalendarOverview.vue'
 import BrowsePage from '../pages/BrowsePage.vue'
+import CategorySettingsPage from '../pages/CategorySettingsPage.vue'
 import SettingsPage from '../pages/SettingsPage.vue'
 import TrashPage from '../pages/TrashPage.vue'
 
@@ -46,6 +47,11 @@ const routes = [
     path: '/settings',
     name: 'settings',
     component: SettingsPage
+  },
+  {
+    path: '/settings/categories',
+    name: 'settings-categories',
+    component: CategorySettingsPage
   },
   {
     path: '/trash',

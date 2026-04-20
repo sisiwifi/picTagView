@@ -138,6 +138,7 @@
       :preview-items="selectionDetailPreviewItems"
       :is-multi="selectionDetailPreviewItems.length > 1"
       :name-field="selectionDetailNameField"
+      :category-field="selectionDetailCategoryField"
       :tags-field="selectionDetailTagsField"
       :size-field="selectionDetailSizeField"
       :size-label="selectionDetailSizeLabel"
@@ -223,6 +224,7 @@ export default {
       messageType: 'success',
       actionBusy: false,
       tagNameMap: {},
+      categoryDisplayMap: {},
       selectAllMenuOpen: false,
       confirmDialog: createDialogState(),
     }
@@ -370,6 +372,10 @@ export default {
       return this.buildDetailField(this.selectedEntries.map(({ item }) => item.name || '未命名'))
     },
 
+    selectionDetailCategoryField() {
+      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailCategoryText(item)))
+    },
+
     selectionDetailTagsField() {
       return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailTagTextForItem(item)), { emptyText: '' })
     },
@@ -433,6 +439,7 @@ export default {
         this.items = this.sortItems(data.items || [])
         this.clearSelection()
         this.$nextTick(() => this.refreshContainerWidth())
+        this.ensureCategoryLabelsLoaded()
         this.ensureTagLabelsLoaded()
       } catch (err) {
         this.items = []
@@ -689,6 +696,7 @@ export default {
 
     openSelectionDetails() {
       if (!this.selectedCount) return
+      this.ensureCategoryLabelsLoaded()
       this.ensureTagLabelsLoaded()
       this.updateSelectionDetailsBounds()
       this.closeSelectAllMenu()
@@ -799,6 +807,12 @@ export default {
       return tags.map(id => this.tagNameMap[id] || `#${id}`).filter(Boolean).join(', ')
     },
 
+    detailCategoryText(item) {
+      const categoryId = Number(item?.category_id)
+      if (!Number.isInteger(categoryId) || categoryId <= 0) return ''
+      return this.categoryDisplayMap[categoryId] || ''
+    },
+
     detailSizeText(item) {
       if (item?.type === 'album') {
         return item?.photo_count != null ? `${item.photo_count} 张` : ''
@@ -847,6 +861,23 @@ export default {
         this.tagNameMap = nextMap
       } catch {
         // ignore tag load failure in trash detail view
+      }
+    },
+
+    async ensureCategoryLabelsLoaded(force = false) {
+      if (!force && Object.keys(this.categoryDisplayMap).length) return
+      try {
+        const res = await fetch(`${API_BASE}/api/categories`)
+        if (!res.ok) return
+        const data = await res.json()
+        const nextMap = {}
+        for (const category of (data.items || [])) {
+          if (!Number.isInteger(category?.id)) continue
+          nextMap[category.id] = category.display_name || category.name || `#${category.id}`
+        }
+        this.categoryDisplayMap = nextMap
+      } catch {
+        // ignore category load failure in trash detail view
       }
     },
 

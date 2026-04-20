@@ -17,10 +17,15 @@ def init_db() -> None:
     # Import all models so SQLModel.metadata knows every table before create_all.
     from app.models.album import Album          # noqa: F401
     from app.models.album_image import AlbumImage  # noqa: F401
+    from app.models.category import Category    # noqa: F401
     from app.models.tag import Tag              # noqa: F401
     from app.models.trash_entry import TrashEntry  # noqa: F401
     SQLModel.metadata.create_all(engine)
     _migrate_db()
+    from app.services.category_service import backfill_category_ids_from_legacy, ensure_default_category_exists
+
+    ensure_default_category_exists()
+    backfill_category_ids_from_legacy()
     _db_initialized = True
 
 
@@ -45,7 +50,7 @@ def _migrate_db() -> None:
             ("height",         "INTEGER"),
             ("file_size",      "INTEGER"),
             ("mime_type",      "TEXT"),
-            ("category",       "TEXT"),
+            ("category_id",    "INTEGER"),
             ("tags",           "TEXT"),
             ("album",          "TEXT"),
             ("collection",     "TEXT"),
@@ -130,7 +135,7 @@ def _migrate_db() -> None:
             ("display_name", "TEXT"),
             ("type",         "TEXT"),
             ("description",  "TEXT"),
-            ("category",     "TEXT"),
+            ("category_id",  "INTEGER"),
             ("usage_count",  "INTEGER"),
             ("last_used_at", "TEXT"),
             ("metadata",     "TEXT"),
@@ -175,7 +180,7 @@ def _migrate_db() -> None:
             ("title",                "TEXT"),
             ("description",          "TEXT"),
             ("path",                 "TEXT"),
-            ("category",             "TEXT"),
+            ("category_id",          "INTEGER"),
             ("is_leaf",              "INTEGER"),
             ("parent_id",            "INTEGER"),
             ("cover",                "TEXT"),
@@ -192,6 +197,30 @@ def _migrate_db() -> None:
                 conn.execute(
                     text(f"ALTER TABLE album ADD COLUMN {column} {col_type}")
                 )
+                conn.commit()
+            except Exception:
+                pass
+
+        # ── trash_entry columns ───────────────────────────────────────────
+        for column, col_type in [
+            ("category_id", "INTEGER"),
+        ]:
+            try:
+                conn.execute(
+                    text(f"ALTER TABLE trash_entry ADD COLUMN {column} {col_type}")
+                )
+                conn.commit()
+            except Exception:
+                pass
+
+        for index_sql in [
+            "CREATE INDEX IF NOT EXISTS ix_imageasset_category_id ON imageasset(category_id)",
+            "CREATE INDEX IF NOT EXISTS ix_album_category_id ON album(category_id)",
+            "CREATE INDEX IF NOT EXISTS ix_tag_category_id ON tag(category_id)",
+            "CREATE INDEX IF NOT EXISTS ix_trash_entry_category_id ON trash_entry(category_id)",
+        ]:
+            try:
+                conn.execute(text(index_sql))
                 conn.commit()
             except Exception:
                 pass

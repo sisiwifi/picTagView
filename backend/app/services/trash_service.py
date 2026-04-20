@@ -13,6 +13,7 @@ from app.db.session import get_session
 from app.models.album import Album
 from app.models.image_asset import ImageAsset
 from app.models.trash_entry import TrashEntry
+from app.services.category_service import DEFAULT_CATEGORY_ID
 from app.services.file_scanner import iter_image_files, list_image_files
 from app.services.imports.hash_index import rebuild_hash_index
 from app.services.imports.helpers import mime_from_name, required_thumb_entry, to_project_relative, unique_dest, unique_dir_dest, upsert_thumb
@@ -517,6 +518,7 @@ def list_trash_items() -> TrashListResponse:
             entry_key=entry.entry_key,
             type=entry.entity_type,
             name=entry.display_name,
+            category_id=entry.category_id or DEFAULT_CATEGORY_ID,
             thumb_url=_project_preview_url(entry.preview_thumb_path) or "",
             cache_thumb_url=_project_preview_url(entry.preview_cache_path),
             trash_media_url=_project_preview_url(entry.preview_path),
@@ -580,6 +582,7 @@ def _move_image_to_trash(image_id: int, media_rel_path: str) -> None:
                 height=asset.height,
                 file_size=asset.file_size or file_stat.st_size,
                 mime_type=asset.mime_type,
+                category_id=asset.category_id or DEFAULT_CATEGORY_ID,
                 imported_at=asset.imported_at,
                 file_created_at=asset.file_created_at,
                 tags=list(asset.tags or []),
@@ -628,6 +631,7 @@ def _move_album_to_trash(album_path: str) -> None:
                 file_hash=file_hash,
                 width=width,
                 height=height,
+                category_id=album.category_id or DEFAULT_CATEGORY_ID,
                 photo_count=album.subtree_photo_count or album.photo_count,
                 source_created_at=album.created_at,
                 metadata_json={"album_public_id": album.public_id},

@@ -10,6 +10,7 @@ from app.db.session import get_session, init_db
 from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
+from app.services.category_service import DEFAULT_CATEGORY_ID
 from app.services.parallel_processor import (
     IMPORT_BATCH_SIZE,
     process_from_bytes,
@@ -68,6 +69,7 @@ def _ensure_album_chain(session, subdir_chain: list[str], date_group: str) -> li
                 public_id="",
                 title=subdir_name,
                 path=album_path,
+                category_id=DEFAULT_CATEGORY_ID,
                 is_leaf=is_last,
                 parent_id=parent_id,
                 date_group=date_group,
@@ -392,8 +394,8 @@ async def import_files(
                         if existing.tags is None:
                             existing.tags = []
                             needs_update = True
-                        if existing.category is None:
-                            existing.category = ""
+                        if not existing.category_id:
+                            existing.category_id = DEFAULT_CATEGORY_ID
                             needs_update = True
                         if existing.imported_at is None:
                             existing.imported_at = datetime.datetime.now()
@@ -437,7 +439,7 @@ async def import_files(
                     height=px_h,
                     file_size=file_size,
                     mime_type=mime_type,
-                    category="",
+                    category_id=DEFAULT_CATEGORY_ID,
                     tags=[],
                     album=[album_public_ids] if album_public_ids else [],
                     collection=[],

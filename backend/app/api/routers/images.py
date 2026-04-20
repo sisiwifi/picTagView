@@ -9,6 +9,7 @@ from app.api.common import cache_thumb_url, normalize_stored_path, resolve_store
 from app.api.schemas import ImageMetaItem, ImageMetaResponse
 from app.db.session import get_session
 from app.models.image_asset import ImageAsset
+from app.services.category_service import DEFAULT_CATEGORY_ID
 from app.services.viewer_service import (
     get_preferred_viewer_id,
     launch_with_preferred_viewer,
@@ -53,6 +54,7 @@ def image_meta(ids: str = Query(..., description="Comma-separated image ids")) -
             ImageMetaItem(
                 id=image_id,
                 name=asset.full_filename or "",
+                category_id=asset.category_id or DEFAULT_CATEGORY_ID,
                 width=asset.width,
                 height=asset.height,
                 file_size=asset.file_size,

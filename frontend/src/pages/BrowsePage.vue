@@ -207,6 +207,7 @@
       :preview-items="selectionDetailPreviewItems"
       :is-multi="selectionDetailPreviewItems.length > 1"
       :name-field="selectionDetailNameField"
+      :category-field="selectionDetailCategoryField"
       :tags-field="selectionDetailTagsField"
       :size-field="selectionDetailSizeField"
       :size-label="selectionDetailSizeLabel"
@@ -300,6 +301,7 @@ export default {
       longPressTimer: null,
       suppressNextListClick: false,
       tagNameMap: {},
+      categoryDisplayMap: {},
       tagsLoading: false,
       tagFetchSerial: 0,
       scrollTop: typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0,
@@ -584,6 +586,9 @@ export default {
     selectionDetailNameField() {
       return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailNameText(item)))
     },
+    selectionDetailCategoryField() {
+      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailCategoryText(item)))
+    },
     selectionDetailTagsField() {
       return this.buildDetailField(
         this.selectedEntries.map(({ item }) => this.detailTagTextForItem(item)),
@@ -715,6 +720,7 @@ export default {
 
       window.scrollTo({ top: 0, behavior: 'instant' })
       this.refreshObservedGrid()
+      this.ensureCategoryLabelsLoaded()
       if (this.selectionInfoMode === 'tags') {
         this.ensureTagLabelsLoaded()
       }
@@ -833,6 +839,7 @@ export default {
         this.updateSelectionDetailsBounds()
       })
       this.ensureTagLabelsLoaded(true)
+      this.ensureCategoryLabelsLoaded(true)
       this.fetchSelectionDetailMetadata()
     },
 
@@ -926,6 +933,12 @@ export default {
       return item?.name || item?.full_filename || '未命名'
     },
 
+    detailCategoryText(item) {
+      const categoryId = Number(item?.category_id)
+      if (!Number.isInteger(categoryId) || categoryId <= 0) return ''
+      return this.categoryDisplayMap[categoryId] || ''
+    },
+
     detailPreviewUrl(item) {
       return this.resolvedUrl(item)
     },
@@ -979,8 +992,26 @@ export default {
             name: meta.name || item.name,
           }
         })
+        this.ensureCategoryLabelsLoaded()
       } catch {
         // ignore metadata hydration failures and keep current values visible
+      }
+    },
+
+    async ensureCategoryLabelsLoaded(force = false) {
+      if (!force && Object.keys(this.categoryDisplayMap).length) return
+      try {
+        const res = await fetch(`${API_BASE}/api/categories`)
+        if (!res.ok) return
+        const data = await res.json()
+        const nextMap = {}
+        for (const category of (data.items || [])) {
+          if (!Number.isInteger(category?.id)) continue
+          nextMap[category.id] = category.display_name || category.name || `#${category.id}`
+        }
+        this.categoryDisplayMap = nextMap
+      } catch {
+        // ignore category label load failures in overlay
       }
     },
 

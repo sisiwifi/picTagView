@@ -94,6 +94,7 @@
           </div>
         </div>
       </div>
+
       <div class="setting-row">
         <div class="setting-info">
           <span class="setting-label">月份封面尺寸</span>
@@ -151,49 +152,44 @@
         导入时同名 Tag 默认跳过（可在导入对话框中选择覆盖模式）。
       </p>
 
-      <!-- 导出 -->
       <div class="setting-row">
         <div class="setting-info">
-          <span class="setting-label">导出标签</span>
-          <span class="setting-desc">将全部 Tag 下载为 tags_export.json</span>
-        </div>
-        <button class="btn btn--primary" :disabled="tagExporting" @click="exportTags">
-          {{ tagExporting ? '导出中…' : '导出 JSON' }}
-        </button>
-      </div>
-
-      <!-- 导入 -->
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">导入标签</span>
+          <span class="setting-label">标签数据</span>
           <span v-if="tagImportResult" class="setting-desc">
             已导入 {{ tagImportResult.imported }}，更新 {{ tagImportResult.updated }}，跳过 {{ tagImportResult.skipped }}
             <span v-if="tagImportResult.errors && tagImportResult.errors.length" class="text-red-500">
               — {{ tagImportResult.errors.length }} 条错误
             </span>
           </span>
-          <span v-else class="setting-desc">从 .json 文件批量导入 Tag</span>
+          <span v-else class="setting-desc">导出全部标签，或在弹窗中选择 JSON 文件批量导入</span>
         </div>
-        <div class="tag-import-group">
-          <select v-model="tagImportConflict" class="tag-conflict-select">
-            <option value="skip">跳过已存在</option>
-            <option value="overwrite">覆盖已存在</option>
-          </select>
-          <button class="btn btn--secondary" :disabled="tagImporting" @click="triggerTagImport">
+        <div class="setting-actions">
+          <button class="btn btn--primary" :disabled="tagExporting" @click="exportTags">
+            {{ tagExporting ? '导出中…' : '导出 JSON' }}
+          </button>
+          <button class="btn btn--outline" :disabled="tagImporting" @click="openTagImportDialog">
             {{ tagImporting ? '导入中…' : '导入 JSON' }}
           </button>
-          <!-- 隐藏文件输入 -->
-          <input
-            ref="tagFileInput"
-            type="file"
-            accept=".json,application/json"
-            style="display:none"
-            @change="handleTagFileSelected"
-          />
         </div>
       </div>
 
       <p v-if="tagError" class="viewer-error">{{ tagError }}</p>
+    </div>
+
+    <div class="settings-card">
+      <h3 class="card-title">主分类</h3>
+      <p class="card-desc">
+        主分类是高于 Tag 的一级控制维度，用于统一配置图片、相册与标签的归属和可见性。
+      </p>
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">配置主分类</span>
+          <span class="setting-desc">打开独立配置页，管理默认主分类、批量移除与显示开关。</span>
+        </div>
+        <button class="btn btn--secondary" type="button" @click="$router.push('/settings/categories')">
+          配置主分类
+        </button>
+      </div>
     </div>
 
     <!-- 图片查看器 -->
@@ -281,10 +277,34 @@
       <p v-if="viewerError" class="viewer-error">{{ viewerError }}</p>
       <p class="viewer-tip" v-if="savingViewer">正在保存默认查看器…</p>
     </div>
+
+    <input
+      ref="tagFileInput"
+      type="file"
+      accept=".json,application/json"
+      style="display:none"
+      @change="handleTagFileSelected"
+    >
+
+    <TagImportDialog
+      :visible="tagImportDialogOpen"
+      :busy="tagImporting"
+      :conflict="tagImportConflict"
+      :file-label="tagImportFileLabel"
+      :has-file="Boolean(tagImportFile)"
+      :result="tagImportResult"
+      :error="tagError"
+      @close="closeTagImportDialog"
+      @choose-file="chooseTagImportFile"
+      @confirm="confirmTagImport"
+      @update:conflict="tagImportConflict = $event"
+    />
   </section>
 </template>
 
 <script>
+import TagImportDialog from '../components/TagImportDialog.vue'
+
 const API_BASE = 'http://127.0.0.1:8000'
 
 function toErrorMessage(err) {
@@ -300,6 +320,9 @@ function toErrorMessage(err) {
 
 export default {
   name: 'SettingsPage',
+  components: {
+    TagImportDialog,
+  },
 
   data() {
     return {
@@ -337,6 +360,9 @@ export default {
       // 标签管理
       tagExporting: false,
       tagImporting: false,
+      tagImportDialogOpen: false,
+      tagImportFile: null,
+      tagImportFileLabel: '',
       tagImportResult: null,
       tagImportConflict: 'skip',
       tagError: '',
@@ -649,10 +675,18 @@ export default {
       }
     },
 
-    triggerTagImport() {
+    openTagImportDialog() {
       if (this.tagImporting) return
+      this.tagImportDialogOpen = true
       this.tagError = ''
-      this.tagImportResult = null
+    },
+
+    closeTagImportDialog() {
+      if (this.tagImporting) return
+      this.tagImportDialogOpen = false
+    },
+
+    chooseTagImportFile() {
       const input = this.$refs.tagFileInput
       if (!input) {
         this.tagError = '导入控件不可用，请刷新页面后重试'
@@ -662,14 +696,24 @@ export default {
       input.click()
     },
 
-    async handleTagFileSelected(event) {
+    handleTagFileSelected(event) {
       const file = event.target.files && event.target.files[0]
       if (!file) return
+      this.tagImportFile = file
+      this.tagImportFileLabel = file.name || '已选择文件'
+      this.tagError = ''
+    },
+
+    async confirmTagImport() {
+      if (!this.tagImportFile) {
+        this.tagError = '请先选择一个 JSON 文件'
+        return
+      }
       this.tagImporting = true
       this.tagError = ''
       this.tagImportResult = null
       try {
-        const text = await file.text()
+        const text = await this.tagImportFile.text()
         let parsed
         try {
           parsed = JSON.parse(text)
@@ -690,8 +734,11 @@ export default {
           throw new Error(d.detail || `HTTP ${res.status}`)
         }
         this.tagImportResult = await res.json()
+        this.tagImportDialogOpen = false
+        this.showFloatingMessage('success', '标签导入完成。')
       } catch (err) {
         this.tagError = `导入失败：${toErrorMessage(err)}`
+        this.showFloatingMessage('error', this.tagError)
       } finally {
         this.tagImporting = false
       }
@@ -915,6 +962,12 @@ export default {
 .btn--primary:not(:disabled):hover { @apply bg-indigo-700; }
 .btn--secondary { @apply bg-slate-100 text-slate-700 border border-slate-300; }
 .btn--secondary:not(:disabled):hover { @apply bg-slate-200; }
+.btn--outline { @apply bg-white text-slate-700 border border-slate-300; }
+.btn--outline:not(:disabled):hover { @apply bg-slate-50; }
+
+.setting-actions {
+  @apply flex items-center gap-2 flex-wrap justify-end;
+}
 
 .tag-import-group {
   @apply flex items-center gap-2;

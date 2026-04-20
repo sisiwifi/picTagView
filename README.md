@@ -18,6 +18,7 @@
 | **选择模式** | 日期详情页/相册页可切换到选择模式，使用固定比例媒体卡片；图片区优先显示 `backend/data/cache` 缩略图，横屏 5 列、竖屏 3 列，支持 Ctrl/Shift、多选拖选、卡片详情浮层、右下角操作岛与混合类型按需全选，并对可视区外卡片做窗口化渲染；详情浮层打开时会锁定页面滚动，混合类型时点击“全选”会展开“相册 / 图片”入口 |
 | **列表选择** | 列表模式支持长按进入选择，沿用与选择界面一致的选择逻辑与圆形选择符号；相册项标识改为缩略图右侧的圆角矩形标签，并对列表项做窗口化渲染 |
 | **信息区切换** | 选择模式下信息区默认显示文件名；点击信息区可整页切换为 Tag 文本显示，按需批量查询标签 |
+| **主分类体系** | `Category` 表统一管理图片 / 相册 / Tag / 回收站条目的 `category_id`；主分类配置页按屏幕方向切换横向 / 竖向卡片比例，常态仅显示编辑按钮，管理模式才显示圆形选择按钮与移除按钮，右下角按钮岛负责批量打开 / 关闭，删除统一回退到默认主分类 |
 | **回收站** | 设置页右上角提供更醒目的入口进入独立回收站页面；支持把图片或整棵相册目录移入 `trash/`、批量还原、彻底删除、“清空回收站”；进入页面时以后端批量轻量对账补齐预览，删除/还原确认统一改为页面中部弹窗 |
 | **哈希索引缓存** | `.hash_index.json` 加速导入去重，避免逐条 DB 查询 |
 | **媒体库刷新** | 清除失效 DB 记录及孤立缩略图；补全 `media/` 中未入库的文件；重建哈希索引；不再承担用户回收站状态维护 |
@@ -60,10 +61,12 @@ picTagView/
 │   │   ├── db/
 │   │   │   └── session.py         # 数据库连接 / init_db()
 │   │   ├── models/
+│   │   │   ├── category.py        # Category SQLModel 模型（受控主分类）
 │   │   │   ├── image_asset.py     # ImageAsset SQLModel 模型
 │   │   │   ├── album.py           # Album SQLModel 模型（树形相册结构）
 │   │   │   └── trash_entry.py     # TrashEntry SQLModel 模型（回收站条目）
 │   │   ├── services/
+│   │   │   ├── category_service.py    # 主分类默认项 / 回退 / 计数同步
 │   │   │   ├── hash_service.py        # SHA-256 哈希计算（单文件工具）
 │   │   │   ├── parallel_processor.py  # 并行处理模块（多线程/多进程）
 │   │   │   ├── import_service.py      # 导入 + 刷新门面
@@ -86,6 +89,7 @@ picTagView/
 │   │   │   ├── ThumbCard.vue      # 通用缩略图卡片组件
 │   │   │   ├── LoadingSpinner.vue # 加载中旋转动画组件
 │   │   │   ├── BreadcrumbHeader.vue # BrowsePage 头部面包屑
+│   │   │   ├── CategoryFormDialog.vue # 主分类创建 / 编辑弹窗
 │   │   │   ├── ConfirmationDialog.vue # 居中确认 / 提示弹窗
 │   │   │   ├── SelectionDetailOverlay.vue # 详情浮层 / 操作按钮岛
 │   │   │   └── TrashPageHeader.vue # 回收站专用头部
@@ -94,6 +98,7 @@ picTagView/
 │   │   │   ├── GalleryPage.vue    # 图库管理（导入 + 刷新）
 │   │   │   ├── CalendarOverview.vue # 日历总览页（按年月分组）
 │   │   │   ├── BrowsePage.vue     # 浏览页（年月内容 / 物理路径相册）
+│   │   │   ├── CategorySettingsPage.vue # 主分类配置页
 │   │   │   ├── SettingsPage.vue   # 设置页（含回收站入口）
 │   │   │   └── TrashPage.vue      # 回收站页
 │   │   ├── router/
@@ -204,7 +209,7 @@ class ImageAsset(SQLModel, table=True):
     file_created_at: Optional[datetime]     # 文件原始创建时间
     imported_at:     datetime               # 导入时间
     width / height / file_size / mime_type  # 媒体元信息
-    category:        Optional[str]          # 分类
+    category_id:     int                    # 主分类 ID（默认回退到 1）
     tags:            Optional[list[int]]    # Tag ID 列表（JSON）
     album:           Optional[list[list[str]]]  # 所属相册路径（JSON），每个内层数组为 public_id 链
     collection:      Optional[list]         # 所属收藏集（JSON）
@@ -218,6 +223,7 @@ class Album(SQLModel, table=True):
     public_id:             str              # 外部标识，格式 album_{id}（唯一索引）
     title:                 str              # 相册名称
     path:                  str              # 完整路径（{date_group}/{subdir1}/...）
+    category_id:           int              # 主分类 ID（默认回退到 1）
     is_leaf:               bool             # 是否为叶节点
     parent_id:             Optional[int]    # 父相册 ID
     cover:                 Optional[dict]   # 封面信息（JSON）
@@ -226,6 +232,23 @@ class Album(SQLModel, table=True):
     date_group:            Optional[str]    # 继承顶层 date_group
     sort_mode:             str              # alpha / date / manual
 ```
+
+### Category
+
+```python
+class Category(SQLModel, table=True):
+  id:           int                    # 主键（默认分类固定为 1）
+  public_id:    str                    # 对外标识，格式 category_{id}
+  name:         str                    # 规范名，仅允许小写字母/数字/下划线
+  display_name: str                    # 前端展示名
+  description:  str                    # 分类说明
+  usage_count:  dict[str, int]         # {image, album, tag}
+  is_active:    bool                   # 是否在前端可见
+  created_at:   datetime               # 创建时间
+```
+
+- 系统保留默认主分类：`id=1`、`name=default`、`display_name=默认`。
+- 删除其他主分类时，所有引用该分类的图片、相册、Tag 与回收站条目都会自动回退到默认主分类。
 
 ### TrashEntry
 
@@ -242,6 +265,7 @@ class TrashEntry(SQLModel, table=True):
     preview_thumb_path: Optional[str]       # temp 缩略图路径
     preview_cache_path: Optional[str]       # cache 缩略图路径
     file_hash:         Optional[str]        # 原图 hash
+    category_id:       int                  # 主分类 ID（删除时保留，用于回收站详情）
     tags:              Optional[list[int]]  # Tag ID 列表（JSON）
     metadata_json:     Optional[dict]       # 其他恢复元数据
 ```
@@ -258,6 +282,11 @@ class TrashEntry(SQLModel, table=True):
 | `POST` | `/api/import`                    | 导入图片文件夹（multipart/form-data） |
 | `GET`  | `/api/images/count`              | 返回已导入图片总数 |
 | `GET`  | `/api/images/meta`               | 批量读取图片详情与 `media_paths` |
+| `GET`  | `/api/categories`                | 列出全部主分类与使用计数 |
+| `POST` | `/api/categories`                | 创建主分类 |
+| `PATCH`| `/api/categories/{category_id}`  | 更新主分类名称 / 显示名 / 说明 / 启用状态 |
+| `DELETE` | `/api/categories/{category_id}` | 删除主分类，并把引用对象回退到默认主分类 |
+| `POST` | `/api/categories/bulk`           | 批量启用 / 停用 / 删除主分类 |
 | `GET`  | `/api/images/{image_id}/open`    | 按指定 `media_path` 实例在系统中打开图片 |
 | `POST` | `/api/admin/refresh`             | 媒体库刷新（清理 + 修复 + 重建哈希索引） |
 | `GET`  | `/api/dates`                     | 返回所有年/月分组及首张缩略图 |

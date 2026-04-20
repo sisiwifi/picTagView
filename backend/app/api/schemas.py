@@ -34,6 +34,7 @@ class DateItem(BaseModel):
     thumb_url: str          # /thumbnails/<hash>.webp (may be empty string)
     count: Optional[int] = None          # total images inside an album
     id: Optional[int] = None             # ImageAsset.id
+    category_id: Optional[int] = None
     cache_thumb_url: Optional[str] = None  # /cache/<hash>_cache.webp when generated
     width: Optional[int] = None
     height: Optional[int] = None
@@ -74,6 +75,7 @@ class CacheStatusResponse(BaseModel):
 class ImageMetaItem(BaseModel):
     id: int
     name: str
+    category_id: Optional[int] = None
     width: Optional[int] = None
     height: Optional[int] = None
     file_size: Optional[int] = None
@@ -128,6 +130,7 @@ class AlbumItem(BaseModel):
     thumb_url: str = ""
     count: Optional[int] = None
     id: Optional[int] = None             # ImageAsset.id (for images)
+    category_id: Optional[int] = None
     cache_thumb_url: Optional[str] = None
     width: Optional[int] = None
     height: Optional[int] = None
@@ -186,6 +189,7 @@ class TrashItem(BaseModel):
     entry_key: str
     type: str
     name: str
+    category_id: Optional[int] = None
     thumb_url: str = ""
     cache_thumb_url: Optional[str] = None
     trash_media_url: Optional[str] = None

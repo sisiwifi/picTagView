@@ -33,7 +33,7 @@ class Tag(SQLModel, table=True):
     description: Optional[str] = Field(default="", max_length=1024)
 
     # 主分类
-    category: Optional[str] = Field(default="", max_length=128)
+    category_id: int = Field(default=1, index=True)
 
     # 缓存：当前被多少张图片关联（由写入侧负责维护）
     usage_count: int = Field(default=0)

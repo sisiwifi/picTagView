@@ -13,7 +13,7 @@ class Album(SQLModel, table=True):
     title: str = Field(index=True)
     description: Optional[str] = Field(default=None)
     path: str = Field(index=True)          # media-relative, e.g. "2024-07/vacation"
-    category: Optional[str] = Field(default=None)
+    category_id: int = Field(default=1, index=True)
     is_leaf: bool = Field(default=True)
     parent_id: Optional[int] = Field(default=None, index=True)
     cover: Optional[dict] = Field(default=None, sa_column=Column(JSON))
