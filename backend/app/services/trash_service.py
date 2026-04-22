@@ -13,6 +13,7 @@ from app.db.session import get_session
 from app.models.album import Album
 from app.models.image_asset import ImageAsset
 from app.models.trash_entry import TrashEntry
+from app.services.cache_thumb_service import generate_cache_thumbs_progressively
 from app.services.category_service import DEFAULT_CATEGORY_ID
 from app.services.file_scanner import iter_image_files, list_image_files
 from app.services.imports.hash_index import rebuild_hash_index
@@ -159,8 +160,6 @@ def _reconcile_trash_entries() -> None:
     changed = False
     with get_session() as session:
         entries = session.exec(select(TrashEntry).order_by(col(TrashEntry.id))).all()
-        thumb_jobs: list[tuple[str, str]] = []
-        thumb_entry_ids: dict[str, int] = {}
 
         for entry in entries:
             payload_path = _find_existing_trash_payload(entry)
@@ -192,10 +191,11 @@ def _reconcile_trash_entries() -> None:
                 entry.preview_path = desired_preview_path
                 changed = True
 
+            if entry.preview_thumb_path is not None:
+                entry.preview_thumb_path = None
+                changed = True
+
             if not preview_source:
-                if entry.preview_thumb_path is not None:
-                    entry.preview_thumb_path = None
-                    changed = True
                 if entry.preview_cache_path is not None:
                     entry.preview_cache_path = None
                     changed = True
@@ -210,14 +210,6 @@ def _reconcile_trash_entries() -> None:
                         entry.height = None
                         changed = True
                 continue
-
-            needs_thumb_repair = preview_changed or not _stored_path_exists(entry.preview_thumb_path)
-            needs_metadata_repair = not entry.file_hash or not entry.width or not entry.height
-            if needs_thumb_repair or needs_metadata_repair:
-                job_key = str(entry.id or entry.entry_key)
-                thumb_jobs.append((job_key, str(preview_source)))
-                if entry.id is not None:
-                    thumb_entry_ids[job_key] = entry.id
 
             cache_path = _cache_path_for_hash(entry.file_hash)
             if entry.preview_cache_path != cache_path:
@@ -235,46 +227,6 @@ def _reconcile_trash_entries() -> None:
                     changed = True
 
             session.add(entry)
-
-        if thumb_jobs:
-            thumb_results = process_from_paths(thumb_jobs, TEMP_DIR)
-            for job_key, entry_id in thumb_entry_ids.items():
-                result = thumb_results.get(job_key)
-                if not result:
-                    continue
-                file_hash, thumb_path_str, error, _quick_hash, width, height = result
-                if error:
-                    continue
-                entry = session.get(TrashEntry, entry_id)
-                if not entry:
-                    continue
-
-                next_thumb_path = entry.preview_thumb_path
-                if thumb_path_str:
-                    next_thumb_path = to_project_relative(Path(thumb_path_str))
-
-                next_file_hash = file_hash or entry.file_hash
-                next_width = width or entry.width
-                next_height = height or entry.height
-                next_cache_path = _cache_path_for_hash(next_file_hash)
-
-                if entry.preview_thumb_path != next_thumb_path:
-                    entry.preview_thumb_path = next_thumb_path
-                    changed = True
-                if entry.file_hash != next_file_hash:
-                    entry.file_hash = next_file_hash
-                    changed = True
-                if entry.width != next_width:
-                    entry.width = next_width
-                    changed = True
-                if entry.height != next_height:
-                    entry.height = next_height
-                    changed = True
-                if entry.preview_cache_path != next_cache_path:
-                    entry.preview_cache_path = next_cache_path
-                    changed = True
-
-                session.add(entry)
 
         if changed:
             session.commit()
@@ -326,6 +278,84 @@ def _cache_path_for_hash(file_hash: str | None) -> str | None:
     if not cache_file.exists():
         return None
     return to_project_relative(cache_file)
+
+
+def _hash_from_cache_path(cache_path: str | None) -> str | None:
+    if not cache_path:
+        return None
+    stem = Path(cache_path).stem
+    if not stem.endswith("_cache"):
+        return None
+    file_hash = stem[:-6]
+    return file_hash or None
+
+
+def _ensure_cache_for_trash_entries(entry_ids: list[int]) -> None:
+    if not entry_ids:
+        return
+
+    with get_session() as session:
+        entries = session.exec(
+            select(TrashEntry)
+            .where(TrashEntry.id.in_(entry_ids))  # type: ignore[arg-type]
+            .order_by(col(TrashEntry.id))
+        ).all()
+
+    jobs: list[tuple[str, str]] = []
+    for entry in entries:
+        if entry.id is None or _cache_path_for_hash(entry.file_hash):
+            continue
+        preview_source = resolve_stored_path(entry.preview_path)
+        if not preview_source or not preview_source.exists() or not preview_source.is_file():
+            continue
+        jobs.append((str(entry.id), str(preview_source)))
+
+    generated_results: dict[str, tuple[str | None, str | None]] = {}
+    if jobs:
+        def on_complete(
+            key: str,
+            cache_path: str | None,
+            error: str | None,
+            _width: int | None,
+            _height: int | None,
+        ) -> None:
+            generated_results[key] = (cache_path, error)
+
+        generate_cache_thumbs_progressively(jobs, CACHE_DIR, on_complete)
+
+    with get_session() as session:
+        db_entries = session.exec(
+            select(TrashEntry)
+            .where(TrashEntry.id.in_(entry_ids))  # type: ignore[arg-type]
+            .order_by(col(TrashEntry.id))
+        ).all()
+
+        changed = False
+        for entry in db_entries:
+            if entry.id is None:
+                continue
+
+            next_cache_path = _cache_path_for_hash(entry.file_hash)
+            if next_cache_path is None:
+                generated_cache_path, generated_error = generated_results.get(str(entry.id), (None, None))
+                if not generated_error and generated_cache_path:
+                    next_cache_path = to_project_relative(Path(generated_cache_path))
+                    next_hash = _hash_from_cache_path(next_cache_path)
+                    if next_hash and entry.file_hash != next_hash:
+                        entry.file_hash = next_hash
+                        changed = True
+
+            if entry.preview_thumb_path is not None:
+                entry.preview_thumb_path = None
+                changed = True
+            if entry.preview_cache_path != next_cache_path:
+                entry.preview_cache_path = next_cache_path
+                changed = True
+
+            session.add(entry)
+
+        if changed:
+            session.commit()
 
 
 def _normalize_album_path(album_path: str) -> str:
@@ -479,18 +509,20 @@ def _ensure_album_cover_thumbs(album_paths: set[str]) -> None:
 
 
 def _cleanup_unused_preview_files() -> None:
-    active_hashes: set[str] = set()
+    active_cache_hashes: set[str] = set()
+    active_temp_hashes: set[str] = set()
     with get_session() as session:
         for file_hash in session.exec(select(ImageAsset.file_hash)).all():
             if isinstance(file_hash, str) and file_hash:
-                active_hashes.add(file_hash)
+                active_cache_hashes.add(file_hash)
+                active_temp_hashes.add(file_hash)
         for file_hash in session.exec(select(TrashEntry.file_hash).where(TrashEntry.file_hash != None)).all():  # noqa: E711
             if isinstance(file_hash, str) and file_hash:
-                active_hashes.add(file_hash)
+                active_cache_hashes.add(file_hash)
 
     for cache_file in CACHE_DIR.glob("*_cache.webp"):
         file_hash = cache_file.stem[:-6]
-        if file_hash in active_hashes:
+        if file_hash in active_cache_hashes:
             continue
         try:
             cache_file.unlink()
@@ -499,7 +531,7 @@ def _cleanup_unused_preview_files() -> None:
 
     for thumb_file in TEMP_DIR.glob("*.webp"):
         file_hash = thumb_file.stem
-        if file_hash in active_hashes:
+        if file_hash in active_temp_hashes:
             continue
         try:
             thumb_file.unlink()
@@ -539,7 +571,7 @@ def list_trash_items() -> TrashListResponse:
     return TrashListResponse(items=items)
 
 
-def _move_image_to_trash(image_id: int, media_rel_path: str) -> None:
+def _move_image_to_trash(image_id: int, media_rel_path: str) -> int | None:
     normalized_path = normalize_stored_path(media_rel_path)
     with get_session() as session:
         asset = session.get(ImageAsset, image_id)
@@ -566,35 +598,36 @@ def _move_image_to_trash(image_id: int, media_rel_path: str) -> None:
 
         parsed_parts = [part for part in normalized_path.split("/") if part]
         original_date_group = parsed_parts[1] if len(parsed_parts) > 1 else asset.date_group
-        session.add(
-            TrashEntry(
-                entry_key=entry_key,
-                entity_type="image",
-                display_name=asset.full_filename or src_path.name,
-                original_path=normalized_path,
-                original_date_group=original_date_group,
-                trash_path=to_project_relative(dest_path),
-                preview_path=to_project_relative(dest_path),
-                preview_thumb_path=_asset_thumb_path(asset),
-                preview_cache_path=_cache_path_for_hash(asset.file_hash),
-                file_hash=asset.file_hash,
-                width=asset.width,
-                height=asset.height,
-                file_size=asset.file_size or file_stat.st_size,
-                mime_type=asset.mime_type,
-                category_id=asset.category_id or DEFAULT_CATEGORY_ID,
-                imported_at=asset.imported_at,
-                file_created_at=asset.file_created_at,
-                tags=list(asset.tags or []),
-                metadata_json={"image_id": image_id},
-            )
+        trash_entry = TrashEntry(
+            entry_key=entry_key,
+            entity_type="image",
+            display_name=asset.full_filename or src_path.name,
+            original_path=normalized_path,
+            original_date_group=original_date_group,
+            trash_path=to_project_relative(dest_path),
+            preview_path=to_project_relative(dest_path),
+            preview_thumb_path=None,
+            preview_cache_path=_cache_path_for_hash(asset.file_hash),
+            file_hash=asset.file_hash,
+            width=asset.width,
+            height=asset.height,
+            file_size=asset.file_size or file_stat.st_size,
+            mime_type=asset.mime_type,
+            category_id=asset.category_id or DEFAULT_CATEGORY_ID,
+            imported_at=asset.imported_at,
+            file_created_at=asset.file_created_at,
+            tags=list(asset.tags or []),
+            metadata_json={"image_id": image_id},
         )
+        session.add(trash_entry)
         session.commit()
+        session.refresh(trash_entry)
 
     _cleanup_empty_parent_dirs(src_path.parent, MEDIA_DIR)
+    return trash_entry.id
 
 
-def _move_album_to_trash(album_path: str) -> None:
+def _move_album_to_trash(album_path: str) -> int | None:
     normalized_album_path = _normalize_album_path(album_path)
     with get_session() as session:
         album = session.exec(select(Album).where(Album.path == normalized_album_path)).first()
@@ -617,52 +650,57 @@ def _move_album_to_trash(album_path: str) -> None:
         shutil.move(str(src_dir), str(dest_dir))
 
         preview_path, thumb_path, cache_path, width, height, file_hash = _album_preview_data(session, album, dest_dir)
-        session.add(
-            TrashEntry(
-                entry_key=entry_key,
-                entity_type="album",
-                display_name=album.title,
-                original_path=normalized_album_path,
-                original_date_group=album.date_group,
-                trash_path=to_project_relative(dest_dir),
-                preview_path=preview_path,
-                preview_thumb_path=thumb_path,
-                preview_cache_path=cache_path,
-                file_hash=file_hash,
-                width=width,
-                height=height,
-                category_id=album.category_id or DEFAULT_CATEGORY_ID,
-                photo_count=album.subtree_photo_count or album.photo_count,
-                source_created_at=album.created_at,
-                metadata_json={"album_public_id": album.public_id},
-            )
+        trash_entry = TrashEntry(
+            entry_key=entry_key,
+            entity_type="album",
+            display_name=album.title,
+            original_path=normalized_album_path,
+            original_date_group=album.date_group,
+            trash_path=to_project_relative(dest_dir),
+            preview_path=preview_path,
+            preview_thumb_path=None,
+            preview_cache_path=cache_path,
+            file_hash=file_hash,
+            width=width,
+            height=height,
+            category_id=album.category_id or DEFAULT_CATEGORY_ID,
+            photo_count=album.subtree_photo_count or album.photo_count,
+            source_created_at=album.created_at,
+            metadata_json={"album_public_id": album.public_id},
         )
+        session.add(trash_entry)
         session.commit()
+        session.refresh(trash_entry)
 
     _cleanup_empty_parent_dirs(src_dir.parent, MEDIA_DIR)
+    return trash_entry.id
 
 
 def move_targets_to_trash(items: list[TrashTargetRef]) -> TrashActionResult:
     result = TrashActionResult()
     changed = False
+    moved_entry_ids: list[int] = []
     for item in items:
         try:
             if item.type == "image":
                 if item.image_id is None or not item.media_rel_path:
                     raise ValueError("Image trash target requires image_id and media_rel_path")
-                _move_image_to_trash(item.image_id, item.media_rel_path)
+                entry_id = _move_image_to_trash(item.image_id, item.media_rel_path)
             elif item.type == "album":
                 if not item.album_path:
                     raise ValueError("Album trash target requires album_path")
-                _move_album_to_trash(item.album_path)
+                entry_id = _move_album_to_trash(item.album_path)
             else:
                 raise ValueError(f"Unsupported trash target type: {item.type}")
+            if isinstance(entry_id, int):
+                moved_entry_ids.append(entry_id)
             result.moved += 1
             changed = True
         except Exception as exc:
             result.errors.append(str(exc))
 
     if changed:
+        _ensure_cache_for_trash_entries(moved_entry_ids)
         _refresh_library_indexes()
         _cleanup_unused_preview_files()
     return result

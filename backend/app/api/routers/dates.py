@@ -18,7 +18,7 @@ from app.db.session import get_session
 from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
-from app.services.category_service import DEFAULT_CATEGORY_ID
+from app.services.category_service import DEFAULT_CATEGORY_ID, get_active_category_ids, is_category_visible
 
 router = APIRouter()
 
@@ -36,12 +36,16 @@ def _to_unix_ts(dt: datetime | None) -> int | None:
 @router.get("/api/dates", response_model=DateViewResponse)
 def dates_view() -> DateViewResponse:
     with get_session() as session:
+        active_category_ids = get_active_category_ids(session)
         all_assets = session.exec(
             select(ImageAsset)
             .where(ImageAsset.date_group != None)  # noqa: E711
             .order_by(col(ImageAsset.id))
         ).all()
-        assets = all_assets
+        assets = [
+            asset for asset in all_assets
+            if is_category_visible(asset.category_id, active_category_ids)
+        ]
 
         # Build set of image IDs that belong to any album via album_image table
         album_image_ids: set[int] = set(
@@ -60,6 +64,10 @@ def dates_view() -> DateViewResponse:
             .where(Album.parent_id == None)  # noqa: E711
             .where(Album.date_group != None)  # noqa: E711
         ).all()
+        top_albums = [
+            album for album in top_albums
+            if is_category_visible(album.category_id, active_category_ids)
+        ]
 
         album_map: dict[str, list[Album]] = defaultdict(list)
         for album in top_albums:
@@ -132,12 +140,16 @@ def dates_view() -> DateViewResponse:
 @router.get("/api/dates/{date_group}/items", response_model=DateItemsResponse)
 def date_group_items(date_group: str) -> DateItemsResponse:
     with get_session() as session:
+        active_category_ids = get_active_category_ids(session)
         all_assets = session.exec(
             select(ImageAsset)
             .where(ImageAsset.date_group == date_group)
             .order_by(col(ImageAsset.id))
         ).all()
-        assets = all_assets
+        assets = [
+            asset for asset in all_assets
+            if is_category_visible(asset.category_id, active_category_ids)
+        ]
 
         # Build set of image IDs that belong to any album via album_image table
         album_image_ids: set[int] = set(
@@ -185,6 +197,10 @@ def date_group_items(date_group: str) -> DateItemsResponse:
             .where(Album.parent_id == None)  # noqa: E711
             .order_by(col(Album.title))
         ).all()
+        top_albums = [
+            album for album in top_albums
+            if is_category_visible(album.category_id, active_category_ids)
+        ]
 
         album_items: list[DateItem] = []
         for album in top_albums:

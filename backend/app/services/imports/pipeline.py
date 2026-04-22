@@ -43,13 +43,99 @@ from .helpers import (
 _album_chain_cache: dict[str, list[str]] = {}
 
 
-def _ensure_album_chain(session, subdir_chain: list[str], date_group: str) -> list[str]:
+def normalize_import_category_id(category_id: Optional[int]) -> int:
+    if isinstance(category_id, int) and category_id > 0:
+        return category_id
+    return DEFAULT_CATEGORY_ID
+
+
+def resolve_effective_album_category_state(
+    session,
+    subdir_chain: list[str],
+    date_group: str,
+    requested_category_id: Optional[int] = None,
+) -> tuple[int, Optional[int]]:
+    effective_category_id = normalize_import_category_id(requested_category_id)
+    if not subdir_chain:
+        return effective_category_id, None
+
+    path_parts = [date_group]
+    for index, subdir_name in enumerate(subdir_chain):
+        path_parts.append(subdir_name)
+        album_path = "/".join(path_parts)
+        existing = session.exec(select(Album).where(Album.path == album_path)).first()
+        if not existing:
+            continue
+        current_category_id = normalize_import_category_id(existing.category_id)
+        if current_category_id != DEFAULT_CATEGORY_ID:
+            return current_category_id, index
+
+    return effective_category_id, None
+
+
+def resolve_effective_album_category_id(
+    session,
+    subdir_chain: list[str],
+    date_group: str,
+    requested_category_id: Optional[int] = None,
+) -> int:
+    return resolve_effective_album_category_state(
+        session,
+        subdir_chain,
+        date_group,
+        requested_category_id,
+    )[0]
+
+
+def apply_import_category_to_image_asset(asset: ImageAsset, category_id: Optional[int]) -> bool:
+    target_category_id = normalize_import_category_id(category_id)
+    current_category_id = normalize_import_category_id(asset.category_id)
+    if current_category_id != DEFAULT_CATEGORY_ID:
+        return False
+    if current_category_id == target_category_id:
+        return False
+    asset.category_id = target_category_id
+    return True
+
+
+def apply_import_category_to_album(
+    album: Album,
+    category_id: Optional[int],
+    force_override: bool = False,
+) -> bool:
+    target_category_id = normalize_import_category_id(category_id)
+    current_category_id = normalize_import_category_id(album.category_id)
+    if force_override:
+        if current_category_id == target_category_id:
+            return False
+        album.category_id = target_category_id
+        return True
+    if current_category_id != DEFAULT_CATEGORY_ID:
+        return False
+    if current_category_id == target_category_id:
+        return False
+    album.category_id = target_category_id
+    return True
+
+
+def _ensure_album_chain(
+    session,
+    subdir_chain: list[str],
+    date_group: str,
+    requested_category_id: Optional[int] = None,
+) -> list[str]:
     if not subdir_chain:
         return []
 
     public_ids: list[str] = []
     parent_id: Optional[int] = None
     path_parts = [date_group]
+    effective_category_id, controlling_index = resolve_effective_album_category_state(
+        session,
+        subdir_chain,
+        date_group,
+        requested_category_id,
+    )
 
     for index, subdir_name in enumerate(subdir_chain):
         path_parts.append(subdir_name)
@@ -61,7 +147,12 @@ def _ensure_album_chain(session, subdir_chain: list[str], date_group: str) -> li
         if existing:
             if not is_last and existing.is_leaf:
                 existing.is_leaf = False
-                session.add(existing)
+            apply_import_category_to_album(
+                existing,
+                effective_category_id,
+                force_override=controlling_index is not None and index >= controlling_index,
+            )
+            session.add(existing)
             public_ids.append(existing.public_id)
             parent_id = existing.id
         else:
@@ -69,7 +160,7 @@ def _ensure_album_chain(session, subdir_chain: list[str], date_group: str) -> li
                 public_id="",
                 title=subdir_name,
                 path=album_path,
-                category_id=DEFAULT_CATEGORY_ID,
+                category_id=effective_category_id,
                 is_leaf=is_last,
                 parent_id=parent_id,
                 date_group=date_group,
@@ -84,12 +175,17 @@ def _ensure_album_chain(session, subdir_chain: list[str], date_group: str) -> li
     return public_ids
 
 
-def _ensure_album_chain_cached(session, subdir_chain: list[str], date_group: str) -> list[str]:
-    cache_key = date_group + "/" + "/".join(subdir_chain)
+def _ensure_album_chain_cached(
+    session,
+    subdir_chain: list[str],
+    date_group: str,
+    requested_category_id: Optional[int] = None,
+) -> list[str]:
+    cache_key = f"{normalize_import_category_id(requested_category_id)}:{date_group}/{'/'.join(subdir_chain)}"
     cached = _album_chain_cache.get(cache_key)
     if cached is not None:
         return cached
-    result = _ensure_album_chain(session, subdir_chain, date_group)
+    result = _ensure_album_chain(session, subdir_chain, date_group, requested_category_id)
     _album_chain_cache[cache_key] = result
     return result
 
@@ -136,10 +232,12 @@ async def import_files(
     files: list[UploadFile],
     last_modified_times: Optional[list[Optional[int]]] = None,
     created_times: Optional[list[Optional[int]]] = None,
+    category_id: Optional[int] = None,
 ) -> dict[str, list[str]]:
     init_db()
     load_hash_index()
     _album_chain_cache.clear()
+    requested_category_id = normalize_import_category_id(category_id)
 
     imported: list[str] = []
     skipped: list[str] = []
@@ -309,7 +407,18 @@ async def import_files(
 
                 if existing:
                     if subdir_chain:
-                        album_public_ids = _ensure_album_chain_cached(session, subdir_chain, date_group)
+                        effective_category_id = resolve_effective_album_category_id(
+                            session,
+                            subdir_chain,
+                            date_group,
+                            requested_category_id,
+                        )
+                        album_public_ids = _ensure_album_chain_cached(
+                            session,
+                            subdir_chain,
+                            date_group,
+                            requested_category_id,
+                        )
                         media_path = save_to_media(
                             content,
                             meta["filename"],
@@ -329,6 +438,8 @@ async def import_files(
 
                         if new_thumb:
                             existing.thumbs = upsert_thumb(existing.thumbs, new_thumb)
+
+                        apply_import_category_to_image_asset(existing, effective_category_id)
 
                         session.add(existing)
                         # Write album_image mapping for the leaf album
@@ -394,8 +505,7 @@ async def import_files(
                         if existing.tags is None:
                             existing.tags = []
                             needs_update = True
-                        if not existing.category_id:
-                            existing.category_id = DEFAULT_CATEGORY_ID
+                        if apply_import_category_to_image_asset(existing, requested_category_id):
                             needs_update = True
                         if existing.imported_at is None:
                             existing.imported_at = datetime.datetime.now()
@@ -414,9 +524,14 @@ async def import_files(
                     px_w, px_h = image_dimensions_from_bytes(content)
 
                 album_public_ids = (
-                    _ensure_album_chain_cached(session, subdir_chain, date_group)
+                    _ensure_album_chain_cached(session, subdir_chain, date_group, requested_category_id)
                     if subdir_chain
                     else []
+                )
+                asset_category_id = (
+                    resolve_effective_album_category_id(session, subdir_chain, date_group, requested_category_id)
+                    if subdir_chain
+                    else requested_category_id
                 )
                 media_path = save_to_media(
                     content,
@@ -439,7 +554,7 @@ async def import_files(
                     height=px_h,
                     file_size=file_size,
                     mime_type=mime_type,
-                    category_id=DEFAULT_CATEGORY_ID,
+                    category_id=asset_category_id,
                     tags=[],
                     album=[album_public_ids] if album_public_ids else [],
                     collection=[],

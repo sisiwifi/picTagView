@@ -19,7 +19,7 @@ from app.db.session import get_session
 from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
-from app.services.category_service import DEFAULT_CATEGORY_ID
+from app.services.category_service import DEFAULT_CATEGORY_ID, get_active_category_ids, is_category_visible
 
 router = APIRouter()
 
@@ -34,7 +34,18 @@ def _to_unix_ts(dt: datetime | None) -> int | None:
     return int(dt.timestamp())
 
 
-def _build_album_response(album: Album, session) -> AlbumDetailResponse:
+def _is_album_visible(session, album: Album, active_category_ids: set[int]) -> bool:
+    current = album
+    while current:
+        if not is_category_visible(current.category_id, active_category_ids):
+            return False
+        if current.parent_id is None:
+            break
+        current = session.get(Album, current.parent_id)
+    return True
+
+
+def _build_album_response(album: Album, session, active_category_ids: set[int]) -> AlbumDetailResponse:
     """Shared logic for building album detail response."""
     parent_public_id = None
     ancestors: list[BreadcrumbItem] = []
@@ -53,6 +64,10 @@ def _build_album_response(album: Album, session) -> AlbumDetailResponse:
         .where(Album.parent_id == album.id)
         .order_by(col(Album.title))
     ).all()
+    sub_albums = [
+        sub_album for sub_album in sub_albums
+        if _is_album_visible(session, sub_album, active_category_ids)
+    ]
 
     sub_items: list[AlbumItem] = []
     for sa in sub_albums:
@@ -115,6 +130,10 @@ def _build_album_response(album: Album, session) -> AlbumDetailResponse:
         )
         .order_by(col(ImageAsset.id))
     ).all()
+    album_assets = [
+        asset for asset in album_assets
+        if is_category_visible(asset.category_id, active_category_ids)
+    ]
 
     image_items: list[AlbumItem] = []
     for asset in album_assets:
@@ -160,12 +179,15 @@ def _build_album_response(album: Album, session) -> AlbumDetailResponse:
 @router.get("/api/albums/by-path/{album_path:path}", response_model=AlbumDetailResponse)
 def album_by_path(album_path: str) -> AlbumDetailResponse:
     with get_session() as session:
+        active_category_ids = get_active_category_ids(session)
         album = session.exec(
             select(Album).where(Album.path == album_path)
         ).first()
         if not album:
             raise HTTPException(status_code=404, detail="Album not found")
-        return _build_album_response(album, session)
+        if not _is_album_visible(session, album, active_category_ids):
+            raise HTTPException(status_code=404, detail="Album not found")
+        return _build_album_response(album, session, active_category_ids)
 
 
 @router.get("/api/albums/open-by-path/{album_path:path}")
@@ -195,9 +217,12 @@ def open_album_by_path(album_path: str) -> dict:
 @router.get("/api/albums/{album_id}", response_model=AlbumDetailResponse)
 def album_detail(album_id: str) -> AlbumDetailResponse:
     with get_session() as session:
+        active_category_ids = get_active_category_ids(session)
         album = session.exec(
             select(Album).where(Album.public_id == album_id)
         ).first()
         if not album:
             raise HTTPException(status_code=404, detail="Album not found")
-        return _build_album_response(album, session)
+        if not _is_album_visible(session, album, active_category_ids):
+            raise HTTPException(status_code=404, detail="Album not found")
+        return _build_album_response(album, session, active_category_ids)

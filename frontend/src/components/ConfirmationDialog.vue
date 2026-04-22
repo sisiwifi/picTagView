@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="confirm-dialog-fade">
-      <div v-if="visible" class="confirm-dialog" @click.self="$emit('cancel')">
+      <div v-if="visible" class="confirm-dialog" @click.self="handleCancel">
         <div
           class="confirm-dialog__panel"
           role="alertdialog"
@@ -24,7 +24,8 @@
               v-if="showCancel"
               class="confirm-dialog__btn confirm-dialog__btn--cancel"
               type="button"
-              @click="$emit('cancel')"
+              :disabled="busy"
+              @click="handleCancel"
             >
               {{ cancelLabel }}
             </button>
@@ -32,9 +33,10 @@
               class="confirm-dialog__btn"
               :class="`confirm-dialog__btn--${tone}`"
               type="button"
-              @click="$emit('confirm')"
+              :disabled="busy"
+              @click="handleConfirm"
             >
-              {{ confirmLabel }}
+              {{ busy ? busyLabel : confirmLabel }}
             </button>
           </div>
         </div>
@@ -58,6 +60,8 @@ export default {
       validator: value => ['danger', 'accent'].includes(value),
     },
     showCancel: { type: Boolean, default: true },
+    busy: { type: Boolean, default: false },
+    busyLabel: { type: String, default: '处理中…' },
   },
   emits: ['confirm', 'cancel'],
   data() {
@@ -71,6 +75,16 @@ export default {
     },
     messageId() {
       return `${this.dialogIdBase}-message`
+    },
+  },
+  methods: {
+    handleCancel() {
+      if (this.busy) return
+      this.$emit('cancel')
+    },
+    handleConfirm() {
+      if (this.busy) return
+      this.$emit('confirm')
     },
   },
 }
@@ -160,6 +174,12 @@ export default {
 
 .confirm-dialog__btn:hover {
   transform: translateY(-1px);
+}
+
+.confirm-dialog__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .confirm-dialog__btn--cancel {

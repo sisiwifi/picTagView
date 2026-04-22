@@ -130,6 +130,23 @@ def get_category_display_map(session: Session) -> dict[int, str]:
     }
 
 
+def get_active_category_ids(session: Session) -> set[int]:
+    ensure_default_category(session)
+    active_ids = {
+        category.id or DEFAULT_CATEGORY_ID
+        for category in session.exec(select(Category).where(Category.is_active == True)).all()  # noqa: E712
+        if category is not None
+    }
+    active_ids.add(DEFAULT_CATEGORY_ID)
+    return active_ids
+
+
+def is_category_visible(category_id: object, active_category_ids: set[int]) -> bool:
+    if isinstance(category_id, int) and category_id in active_category_ids:
+        return True
+    return DEFAULT_CATEGORY_ID in active_category_ids and (category_id is None or category_id == DEFAULT_CATEGORY_ID)
+
+
 def require_category(session: Session, category_id: int | None) -> Category:
     ensure_default_category(session)
     target_id = category_id or DEFAULT_CATEGORY_ID

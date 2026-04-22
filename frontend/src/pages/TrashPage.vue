@@ -147,6 +147,7 @@
       primary-action-label="还原"
       :can-open-primary-action="selectedCount > 0 && !actionBusy"
       danger-action-label="删除"
+      :danger-action-disabled="actionBusy"
       :show-analysis-button="false"
       @close="closeSelectionDetails"
       @open-primary="restoreSelection"
@@ -161,14 +162,23 @@
       :cancel-label="confirmDialog.cancelLabel"
       :tone="confirmDialog.tone"
       :show-cancel="confirmDialog.showCancel"
+      :busy="confirmDialog.busy"
+      :busy-label="confirmDialog.busyLabel"
       @cancel="closeConfirmDialog"
       @confirm="handleConfirmDialogConfirm"
+    />
+
+    <ActionProgressOverlay
+      :visible="actionBusy"
+      :title="actionBusyTitle || '处理中'"
+      :message="actionBusyText || '正在处理回收站操作，请稍候…'"
     />
   </section>
 </template>
 
 <script>
 import ConfirmationDialog from '../components/ConfirmationDialog.vue'
+import ActionProgressOverlay from '../components/ActionProgressOverlay.vue'
 import LoadingSpinner from '../components/LoadingSpinner.vue'
 import MediaItemCard from '../components/MediaItemCard.vue'
 import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
@@ -185,6 +195,8 @@ function createDialogState() {
     cancelLabel: '取消',
     tone: 'danger',
     showCancel: true,
+    busy: false,
+    busyLabel: '处理中…',
     onConfirm: null,
   }
 }
@@ -192,6 +204,7 @@ function createDialogState() {
 export default {
   name: 'TrashPage',
   components: {
+    ActionProgressOverlay,
     ConfirmationDialog,
     LoadingSpinner,
     MediaItemCard,
@@ -223,6 +236,8 @@ export default {
       messageText: '',
       messageType: 'success',
       actionBusy: false,
+      actionBusyTitle: '',
+      actionBusyText: '',
       tagNameMap: {},
       categoryDisplayMap: {},
       selectAllMenuOpen: false,
@@ -892,14 +907,27 @@ export default {
     },
 
     closeConfirmDialog() {
+      if (this.confirmDialog.busy) return
       this.confirmDialog = createDialogState()
     },
 
     async handleConfirmDialogConfirm() {
+      if (this.confirmDialog.busy) return
       const onConfirm = this.confirmDialog.onConfirm
-      this.closeConfirmDialog()
-      if (typeof onConfirm === 'function') {
+      if (typeof onConfirm !== 'function') {
+        this.closeConfirmDialog()
+        return
+      }
+
+      this.confirmDialog = {
+        ...this.confirmDialog,
+        busy: true,
+      }
+
+      try {
         await onConfirm()
+      } finally {
+        this.confirmDialog = createDialogState()
       }
     },
 
@@ -912,6 +940,7 @@ export default {
         confirmLabel: '还原',
         cancelLabel: '取消',
         tone: 'accent',
+        busyLabel: '还原中…',
         onConfirm: () => this.executeRestoreSelection(),
       })
     },
@@ -919,6 +948,8 @@ export default {
     async executeRestoreSelection() {
       if (!this.selectedCount || this.actionBusy) return
       this.actionBusy = true
+      this.actionBusyTitle = '还原中'
+      this.actionBusyText = '正在还原所选内容，请稍候…'
       try {
         const res = await fetch(`${API_BASE}/api/trash/restore`, {
           method: 'POST',
@@ -937,6 +968,8 @@ export default {
         this.showMessage('error', err?.message || '还原失败')
       } finally {
         this.actionBusy = false
+        this.actionBusyTitle = ''
+        this.actionBusyText = ''
       }
     },
 
@@ -949,6 +982,7 @@ export default {
         confirmLabel: '彻底删除',
         cancelLabel: '取消',
         tone: 'danger',
+        busyLabel: '删除中…',
         onConfirm: () => this.executeHardDeleteSelection(),
       })
     },
@@ -956,6 +990,8 @@ export default {
     async executeHardDeleteSelection() {
       if (!this.selectedCount || this.actionBusy) return
       this.actionBusy = true
+      this.actionBusyTitle = '删除中'
+      this.actionBusyText = '正在彻底删除所选内容，请稍候…'
       try {
         const res = await fetch(`${API_BASE}/api/trash/hard-delete`, {
           method: 'POST',
@@ -974,6 +1010,8 @@ export default {
         this.showMessage('error', err?.message || '删除失败')
       } finally {
         this.actionBusy = false
+        this.actionBusyTitle = ''
+        this.actionBusyText = ''
       }
     },
 
@@ -986,6 +1024,7 @@ export default {
         confirmLabel: '清空回收站',
         cancelLabel: '取消',
         tone: 'danger',
+        busyLabel: '清空中…',
         onConfirm: () => this.executeClearTrash(),
       })
     },
@@ -993,6 +1032,8 @@ export default {
     async executeClearTrash() {
       if (!this.totalCount || this.actionBusy) return
       this.actionBusy = true
+      this.actionBusyTitle = '清空中'
+      this.actionBusyText = '正在清空回收站，请稍候…'
       try {
         const res = await fetch(`${API_BASE}/api/trash`, { method: 'DELETE' })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -1007,6 +1048,8 @@ export default {
         this.showMessage('error', err?.message || '清空回收站失败')
       } finally {
         this.actionBusy = false
+        this.actionBusyTitle = ''
+        this.actionBusyText = ''
       }
     },
 

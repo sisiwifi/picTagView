@@ -1,7 +1,7 @@
 # picTagView Backend 技术说明书
 
 ## 1. 项目位置
-- `D:\project2025\Python_Projects\picTagView\backend`
+- `D:\Python_projects\picTagView_main\backend`
 
 ## 2. 后端架构概览
 - 框架：FastAPI
@@ -41,6 +41,7 @@
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的图片条目现同时返回 `tags`（Tag ID 整数列表）；接口仍只返回 ID，不在主查询中联表展开 Tag 名称。
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的图片条目现同时返回 `width` / `height`；相册条目则返回封面图对应的 `width` / `height`。
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的相册条目现同时返回 `photo_count` / `created_at`，供选择详情浮层展示相册图片数量与创建时间。
+- 日期视图与相册浏览接口现在只返回 `Category.is_active = true` 的内容；若某个相册自身或其任一祖先相册的主分类已停用，则该相册路径在浏览接口中视为不可见，直接路径访问返回 `404`。
 - `sort_ts` 生成规则：
   - 图片条目：优先 `file_created_at`，回退 `imported_at`，再回退 `created_at`。
   - 相册条目：优先 `updated_at`，回退 `created_at`。
@@ -105,10 +106,11 @@
   - TrashPage header 左侧提供“返回”按钮，右侧项目数前提供“清空回收站”按钮；选择态右下角操作岛提供“详情 / 还原 / 删除 / 全选 / 取消选择”。
   - TrashPage 详情浮层复用 `SelectionDetailOverlay.vue`，但主动作切换为“还原”，危险动作切换为“删除”，并隐藏普通浏览页才需要的“分析”按钮。
   - BrowsePage 的“删除到回收站”与 TrashPage 的“还原 / 删除 / 清空回收站”统一改为 `ConfirmationDialog.vue` 居中弹窗确认，不再使用浏览器原生 `confirm/alert`。
+  - 批量删除/清空/还原确认后，页面会立即进入 busy 锁定态：确认按钮不可重复点击，主界面显示“处理中”遮罩，降低大批量操作下的重复误触风险。
 
 ### 3.3 `app/services/import_service.py`（门面）
 - 对外稳定入口：
-  - `import_files(files, last_modified_times, created_times)`
+  - `import_files(files, last_modified_times, created_times, category_id=None)`
   - `refresh_library()`
   - `rebuild_hash_index()`
   - `recalculate_album_counts()`
@@ -117,6 +119,8 @@
 ### 3.3a `app/services/category_service.py`
 - 主分类服务：
   - `ensure_default_category(session)`：确保默认主分类存在，固定 `id=1`、`name=default`、`display_name=默认`
+  - `get_active_category_ids(session)`：返回当前可见主分类集合，并强制包含默认主分类 `1`
+  - `is_category_visible(category_id, active_category_ids)`：供浏览接口复用的可见性判断
   - `resolve_category_id(session, category_id, category_name)`：兼容旧数据或导入 JSON 中的分类名称
   - `sync_category_usage_counts(session)`：同步 `{image, album, tag}` 使用计数
   - `reassign_category_references(session, source_category_id, target_category_id=1)`：删除主分类前，把所有关联对象统一回退到默认主分类
@@ -124,12 +128,20 @@
 
 ### 3.3b `app/services/imports/pipeline.py`
 - 导入主流程（批处理与去重核心）
-- `import_files(files, last_modified_times, created_times)`：
+- `import_files(files, last_modified_times, created_times, category_id=None)`：
   - 解析上传路径（兼容 `webkitRelativePath`），`_parse_relative_path` 返回 `(subdir_chain, filename)`
   - 过滤非图片，由扩展名判断
   - 维护目录级 `date_group`，按子目录最早时间分组（格式 `YYYY-MM`）
+  - 可选接收 `category_id`；当导入请求来自前端多行导入表单时，每行会带入一个主分类选择值
+  - 前端多行导入表单会把根目录直下文件与嵌套子目录统一按 `50` 个文件切块后顺序提交，避免大子目录形成单次超大请求；导入开始时表单自动收起，主页面进度文案显示当前目录标签
+  - 导入完成后，Gallery 页面不再额外弹出顶部“完成确认”结果框；成功结果收敛到状态行，失败目录仍保留在导入表单中供重试
   - 导入前加载哈希索引缓存 `.hash_index.json`，用于 O(1) 去重查找
   - 子目录链 → 自动创建 Album 树（`_ensure_album_chain`），所有嵌套层级继承顶层 `date_group`
+  - 主分类决策规则：
+    - 若当前目录链上已存在非默认主分类相册，则以“最上层命中的非默认相册”作为当前导入链的有效主分类
+    - 一旦命中该祖先，相册链上该祖先以下的现有子相册与本次新建子相册都会被拉齐到同一主分类，以保证目录显隐一致
+    - 若目录链上尚无非默认相册，则本次请求的 `category_id` 作为有效主分类；新建相册直接写入该值，现有默认相册可被提升到该值
+    - 对 `ImageAsset` 采用保守策略：新建图片直接写入有效主分类；已存在图片仅在当前仍为默认主分类时提升，已存在的非默认图片保持原值，避免 hash 去重场景下误改其它目录的既有主分类
   - 去重策略：相同哈希在相册内 → 保留并添加 album 关系；直传重复 → 跳过
   - 导入结束后保存哈希索引并释放内存
   - 批次读取文件内容（`IMPORT_BATCH_SIZE=50`）
@@ -137,6 +149,7 @@
   - 其他图片调用 `process_hash_only_from_bytes`（`_compute_hash_only` worker）：并行完成 SHA-256 + xxhash + **cv2.imdecode 尺寸读取**，不生成缩略图
   - DB 串行写入循环中仅使用已并行得到的宽高，不再在主线程调用 cv2（性能优化方案 A）
   - 导入不中断行为：前端在开始导入时会设置全局标记 `window.__ptvImporting = true`（见 `frontend/src/pages/GalleryPage.vue`），导入结束时恢复为 `false`。
+  - 前端多行队列采用“单行失败不阻塞后续行”的策略；失败行会在导入结束后保留在表单中，供用户修正后重试。
   - 前端刷新策略变更（路由切换相关）：项目已移除“路由切换自动触发全库刷新”的行为，`frontend/src/router/index.js` 不再在每次路由变更时发起后台 `POST /api/admin/refresh`。当前前端刷新策略为：
     - 仅在 Gallery 页面由用户点击的“刷新”按钮触发完整的 `POST /api/admin/refresh?mode=full`（保留为手动触发的全库修复/补齐与新文件收编）。
     - 切换到首页（`/`）时仅请求 `GET /api/images/count`，用于刷新并显示库总数的统计信息。
@@ -264,7 +277,7 @@
   - `original_path` (str): 删除前 live 路径；图片对应具体 `media_path` 条目，相册对应 `Album.path`
   - `original_date_group` (str | null): 删除前所属月份
   - `trash_path` (str): 实际移动到 `TRASH_DIR` 后的 payload 路径
-  - `preview_path` / `preview_thumb_path` / `preview_cache_path`: 预览与回退缩略图路径
+  - `preview_path` / `preview_thumb_path` / `preview_cache_path`: 预览与回退缩略图路径；当前策略下回收站优先复用 `preview_cache_path` 指向的共享 cache，`preview_thumb_path` 仅保留兼容字段
   - `file_hash` / `width` / `height` / `file_size` / `mime_type`: 预览与恢复辅助元数据
   - `category_id` (int): 删除前保留的主分类 ID
   - `imported_at` / `file_created_at` / `source_created_at`: 原文件时间信息
@@ -320,7 +333,7 @@
 "height": 3000,
 "file_size": 3421123,
 "mime_type": "image/jpeg",
-"category": "",
+"category_id": 1,
 "tags": [23, 45, 91],
 "album": [["album_1", "album_3"]],
 "collection": []
@@ -353,7 +366,7 @@
   - `display_name` (str): 前端展示名称，默认与 name 相同
   - `type` (str): 标签种类，取值为 `normal` / `artist` / `artwork` / `series`，默认 `normal`
   - `description` (str | null): 描述，最大 1024 字节
-  - `category` (str | null): 分类，与其他实体保持一致
+  - `category_id` (int): 主分类 ID，默认回退到 1，与 `ImageAsset` / `Album` / `TrashEntry` 保持一致
   - `usage_count` (int): 缓存字段，表示当前有多少张图片关联了该 Tag，由写入侧维护
   - `last_used_at` (str | null): Tag 最后被关联或访问的时间，格式 `YYYYMMDDHHMMSS`
   - `metadata_` (JSON dict): 存储为数据库列 `metadata`，可扩展扩展字段，结构如下：
@@ -410,12 +423,12 @@
 
 ## 4. 核心业务流程
 1. 用户前端上传图像文件列表
-2. `/api/import` 解析 `last_modified_json`，并发处理图像哈希/缩略图
+2. `/api/import` 解析 `last_modified_json` 与可选 `category_id`，并发处理图像哈希/缩略图
 3. 记录写入数据库并保存到 `MEDIA_DIR`（按 `date_group`/子目录组织）
 4. 前端调用 `/api/dates` 和 `/api/dates/{date_group}/items` 构建图库视图
 5. 管理端 `/api/admin/refresh` 保持一致性（支持 `quick/full`）
 6. 用户从 BrowsePage 删除图片或相册时，请求 `/api/trash/move`，目标会从 `media/` 移入 `trash/` 并生成 `TrashEntry`
-7. TrashPage 通过 `/api/trash/items` 浏览回收站；该接口在返回条目前会先做一次批量轻量对账，清除已丢失 payload 的条目，并成批补齐仍存在条目的预览路径与 temp 缩略图，避免逐条串行修复带来的页面进入延迟
+7. TrashPage 通过 `/api/trash/items` 浏览回收站；该接口在返回条目前会先做一次批量轻量对账，清除已丢失 payload 的条目，并补齐仍存在条目的预览路径与已有 cache 引用，但不再同步生成 temp 预览，从而避免页面进入时卡顿
 8. TrashPage 批量“还原”调用 `/api/trash/restore`，“删除”调用 `/api/trash/hard-delete`，“清空回收站”调用 `DELETE /api/trash`；其中图片恢复保留正常缩略图链路，相册恢复优先走轻量哈希收编再按需补预览，以降低等待时间
 
 补充：
@@ -446,12 +459,13 @@
 - 回收站规则
   - 普通浏览接口只处理 live `media/` 与数据库中的 `ImageAsset` / `Album` 记录，不再依赖路径级软删除过滤
   - 删除动作会把 payload 物理移入 `TRASH_DIR` 并写入 `TrashEntry`；新写入条目直接扁平存放在 `trash/` 根下，而不是创建额外的深层 payload 目录
+  - 删除动作会优先为新写入的 `TrashEntry` 复用或补齐共享 `CACHE_DIR/{file_hash}_cache.webp`，避免回收站再单独维护一套 temp 缩略图
   - 恢复动作会将 payload 移回 `MEDIA_DIR` 后复用导入链路重新建库；相册重名时通过 `unique_dir_dest()` 自动编号
-  - `GET /api/trash/items` 会执行一次轻量回收站对账：若用户手动删掉了某些 trash payload，则清理对应条目；若只删掉了 temp 预览，则按当前 payload 批量补齐，避免进入页面时逐条强制生成 cache 缩略图
+  - `GET /api/trash/items` 会执行一次轻量回收站对账：若用户手动删掉了某些 trash payload，则清理对应条目；若 cache 已缺失，只保留 payload 级回退，不在列表请求中同步补图
 - 缩略图缓存策略
   - **导入缩略图**（月份封面）：仅对每月代表图生成 `TEMP_DIR/{file_hash}.webp`，400×400 方形裁剪
   - **缓存展示缩略图**（相册内浏览）：按需生成 `CACHE_DIR/{file_hash}_cache.webp`，最短边 600，保持原始比例
-  - 回收站条目会尽量复用现有 `thumb_url` / `cache_thumb_url`；若仅存在 payload，则通过 `/trash-media/...` 提供预览回退
+  - 回收站条目优先复用 `cache_thumb_url`；若 cache 缺失，则通过 `/trash-media/...` 提供预览回退，不再额外生成回收站专用 temp 缩略图
   - 重复上传同 hash 文件时不会重复写缩略图
 - 目录组织：
   - 原图存储：`MEDIA_DIR/<date_group>/[top_subdir/]...`（`YYYY-MM`）
@@ -470,7 +484,7 @@
 3. 启动服务 `..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
 4. API 说明：
    - `GET /` 健康检查
-   - `POST /api/import` 多文件上传（`files` + 可选 `last_modified_json`）
+  - `POST /api/import` 多文件上传（`files` + 可选 `last_modified_json` + 可选 `created_time_json` + 可选 `category_id`）
   - `POST /api/admin/refresh?mode=quick|full` 修复库状态（默认 `quick`）
    - `GET /api/images/count` 计数
   - `GET /api/images/meta?ids=...` 批量读取图片详情字段与 `media_paths`

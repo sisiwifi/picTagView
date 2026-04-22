@@ -18,7 +18,7 @@
         <button
           class="btn btn--primary"
           :disabled="importing || refreshing"
-          @click="triggerFolder"
+          @click="openImportDialog"
         >
           选择图片文件夹并导入
         </button>
@@ -40,7 +40,7 @@
         webkitdirectory
         directory
         multiple
-        @change="handleFolder"
+        @change="handleFolderSelection"
       />
 
       <!-- Status line -->
@@ -54,7 +54,7 @@
 
       <!-- Per-file progress -->
       <p v-if="importing && totalFiles > 0" class="progress-text">
-        {{ doneFiles }} / {{ totalFiles }} 张
+        {{ currentFolderLabel ? `${currentFolderLabel} · ` : '' }}{{ doneFiles }} / {{ totalFiles }} 张
       </p>
 
       <!-- Unified notice -->
@@ -68,14 +68,49 @@
         </p>
       </div>
     </div>
+
+    <FolderImportDialog
+      :visible="importDialogOpen"
+      :busy="importing"
+      :rows="importDialogRows"
+      :selected-ids="selectedImportRowIds"
+      :categories="importCategories"
+      :error="importDialogError"
+      @close="closeImportDialog"
+      @add-row="triggerFolderPicker"
+      @delete-selected="deleteSelectedImportRows"
+      @confirm="confirmImportDialog"
+      @toggle-row="toggleImportRowSelection"
+      @update-category="updateImportRowCategory"
+    />
   </section>
 </template>
 
 <script>
+import FolderImportDialog from '../components/FolderImportDialog.vue'
+
 const API_BASE = 'http://127.0.0.1:8000'
+const DEFAULT_CATEGORY_ID = 1
+const AUTO_CATEGORY_KEY = 'auto'
+const IMPORT_CHUNK = 50
+const IMAGE_EXT_RE = /\.(jpe?g|png|webp|gif|bmp|tiff?)$/i
+
+function toErrorMessage(err) {
+  if (!err) return '未知错误'
+  if (typeof err === 'string') return err
+  if (err instanceof Error) return err.message
+  try {
+    return JSON.stringify(err)
+  } catch {
+    return String(err)
+  }
+}
 
 export default {
   name: 'GalleryPage',
+  components: {
+    FolderImportDialog,
+  },
 
   data() {
     return {
@@ -89,7 +124,14 @@ export default {
       noticeType:    'info',
       noticeTitle:   '',
       noticeLines:   [],
+      importDialogOpen: false,
+      importDialogRows: [],
+      selectedImportRowIds: [],
+      importCategories: [],
+      importDialogError: '',
+      nextImportRowId: 1,
       checkingThumbs: false,
+      currentFolderLabel: '',
     }
   },
 
@@ -120,6 +162,274 @@ export default {
       this.noticeLines = []
     },
 
+    defaultImportCategoryValue() {
+      const defaultCategory = this.importCategories.find(category => Number(category.id) === DEFAULT_CATEGORY_ID)
+      if (defaultCategory) return String(defaultCategory.id)
+      const firstCategory = this.importCategories[0]
+      return firstCategory ? String(firstCategory.id) : String(DEFAULT_CATEGORY_ID)
+    },
+
+    async ensureImportCategoriesLoaded(force = false) {
+      if (!force && this.importCategories.length) return true
+      try {
+        const res = await fetch(`${API_BASE}/api/categories`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        const categories = Array.isArray(data.items)
+          ? data.items.filter(category => category && category.is_active !== false)
+          : []
+        this.importCategories = categories
+        return true
+      } catch (err) {
+        this.importDialogError = `加载主分类失败：${toErrorMessage(err)}`
+        this.showNotice({ type: 'error', title: '加载主分类失败', lines: [toErrorMessage(err)] })
+        return false
+      }
+    },
+
+    async openImportDialog() {
+      if (this.importing || this.refreshing) return
+      const loaded = await this.ensureImportCategoriesLoaded()
+      if (!loaded) return
+      this.importDialogError = ''
+      this.importDialogOpen = true
+    },
+
+    closeImportDialog() {
+      if (this.importing) return
+      this.resetImportDialog()
+    },
+
+    resetImportDialog() {
+      this.importDialogOpen = false
+      this.importDialogRows = []
+      this.selectedImportRowIds = []
+      this.importDialogError = ''
+    },
+
+    triggerFolderPicker() {
+      if (this.importing) return
+      const input = this.$refs.folderInput
+      if (!input) return
+      input.value = ''
+      input.click()
+    },
+
+    handleFolderSelection(event) {
+      const files = Array.from(event.target.files || [])
+      event.target.value = ''
+      if (!files.length) return
+
+      const rootName = (files[0].webkitRelativePath || files[0].name).split('/')[0] || '未命名目录'
+      const imageCount = files.filter(file => IMAGE_EXT_RE.test(file.name || '')).length
+      const row = {
+        id: this.nextImportRowId,
+        label: rootName,
+        files,
+        fileCount: files.length,
+        imageCount,
+        categoryValue: this.defaultImportCategoryValue(),
+      }
+
+      this.nextImportRowId += 1
+      this.importDialogRows = [...this.importDialogRows, row]
+      this.importDialogError = ''
+      if (!this.importDialogOpen) {
+        this.importDialogOpen = true
+      }
+    },
+
+    toggleImportRowSelection(rowId) {
+      if (this.importing) return
+      if (this.selectedImportRowIds.includes(rowId)) {
+        this.selectedImportRowIds = this.selectedImportRowIds.filter(id => id !== rowId)
+        return
+      }
+      this.selectedImportRowIds = [...this.selectedImportRowIds, rowId]
+    },
+
+    updateImportRowCategory({ rowId, value }) {
+      this.importDialogRows = this.importDialogRows.map(row => (
+        row.id === rowId ? { ...row, categoryValue: value } : row
+      ))
+      this.importDialogError = ''
+    },
+
+    deleteSelectedImportRows() {
+      if (this.importing || !this.selectedImportRowIds.length) return
+      const selectedIdSet = new Set(this.selectedImportRowIds)
+      this.importDialogRows = this.importDialogRows.filter(row => !selectedIdSet.has(row.id))
+      this.selectedImportRowIds = []
+      if (!this.importDialogRows.length) {
+        this.importDialogError = ''
+      }
+    },
+
+    buildImportBatches(files) {
+      const directFiles = []
+      const subdirMap = {}
+
+      for (const file of files) {
+        const parts = (file.webkitRelativePath || file.name).split('/')
+        if (parts.length <= 2) {
+          directFiles.push(file)
+        } else {
+          const subdir = parts[1]
+          if (!subdirMap[subdir]) subdirMap[subdir] = []
+          subdirMap[subdir].push(file)
+        }
+      }
+
+      const directBatches = []
+      for (let index = 0; index < directFiles.length; index += IMPORT_CHUNK) {
+        const chunk = directFiles.slice(index, index + IMPORT_CHUNK)
+        directBatches.push({
+          files: chunk,
+          imageCount: chunk.filter(file => IMAGE_EXT_RE.test(file.name || '')).length,
+        })
+      }
+
+      const nestedBatches = []
+      for (const [subdir, nestedFiles] of Object.entries(subdirMap)) {
+        const batchTotal = Math.max(1, Math.ceil(nestedFiles.length / IMPORT_CHUNK))
+        for (let index = 0; index < nestedFiles.length; index += IMPORT_CHUNK) {
+          const chunk = nestedFiles.slice(index, index + IMPORT_CHUNK)
+          nestedBatches.push({
+            subdir,
+            files: chunk,
+            imageCount: chunk.filter(file => IMAGE_EXT_RE.test(file.name || '')).length,
+            batchIndex: Math.floor(index / IMPORT_CHUNK) + 1,
+            batchTotal,
+          })
+        }
+      }
+
+      return {
+        batches: [...directBatches, ...nestedBatches],
+        totalImageCount: files.filter(file => IMAGE_EXT_RE.test(file.name || '')).length,
+      }
+    },
+
+    async readErrorMessage(response, fallbackMessage) {
+      const rawText = await response.text().catch(() => '')
+      if (rawText) {
+        try {
+          const data = JSON.parse(rawText)
+          if (typeof data.detail === 'string' && data.detail) return data.detail
+          if (Array.isArray(data.detail) && data.detail.length) {
+            return data.detail.map(item => item.msg || item.message || String(item)).join('；')
+          }
+          if (typeof data.message === 'string' && data.message) return data.message
+        } catch {
+          return rawText
+        }
+      }
+      return fallbackMessage || `HTTP ${response.status}`
+    },
+
+    async importFolderRow(row) {
+      const { batches } = this.buildImportBatches(row.files)
+      let importedCount = 0
+      let skippedCount = 0
+
+      for (const batch of batches) {
+        const firstFile = batch.files[0]
+        this.currentItem = batch.subdir
+          ? `${row.label}/${batch.subdir}/${batch.batchTotal > 1 ? `(${batch.batchIndex}/${batch.batchTotal})` : ''}`
+          : (firstFile ? `${row.label}/${firstFile.name}` : row.label)
+
+        const fd = new FormData()
+        const lastModifiedTimes = []
+        const createdTimes = []
+        for (const file of batch.files) {
+          fd.append('files', file, file.webkitRelativePath || file.name)
+          lastModifiedTimes.push(file.lastModified)
+          createdTimes.push(null)
+        }
+        fd.append('last_modified_json', JSON.stringify(lastModifiedTimes))
+        fd.append('created_time_json', JSON.stringify(createdTimes))
+        fd.append('category_id', row.categoryValue)
+
+        const res = await fetch(`${API_BASE}/api/import`, { method: 'POST', body: fd })
+        if (!res.ok) {
+          const message = await this.readErrorMessage(res, '导入失败，请检查后端服务')
+          throw new Error(message)
+        }
+
+        const data = await res.json()
+        importedCount += Array.isArray(data.imported) ? data.imported.length : 0
+        skippedCount += Array.isArray(data.skipped) ? data.skipped.length : 0
+        this.doneFiles = Math.min(this.doneFiles + batch.imageCount, this.totalFiles)
+      }
+
+      return { importedCount, skippedCount }
+    },
+
+    async confirmImportDialog() {
+      if (this.importing) return
+      if (!this.importDialogRows.length) {
+        this.importDialogError = '请先添加至少一个文件夹。'
+        return
+      }
+      if (this.importDialogRows.some(row => row.categoryValue === AUTO_CATEGORY_KEY)) {
+        this.importDialogError = 'Auto 主分类暂未实现，请为每一行选择具体主分类。'
+        return
+      }
+
+      const rowsToImport = [...this.importDialogRows]
+      const failedRows = []
+      let importedCount = 0
+      let skippedCount = 0
+
+      this.importing = true
+      window.__ptvImporting = true
+      this.clearNotice()
+      this.importDialogError = ''
+      this.importDialogOpen = false
+      this.totalFiles = rowsToImport.reduce((sum, row) => sum + row.imageCount, 0)
+      this.doneFiles = 0
+
+      try {
+        for (const [index, row] of rowsToImport.entries()) {
+          this.currentFolderLabel = row.label
+          this.status = `正在导入（${index + 1}/${rowsToImport.length}）${row.label}…`
+          try {
+            const result = await this.importFolderRow(row)
+            importedCount += result.importedCount
+            skippedCount += result.skippedCount
+          } catch (err) {
+            failedRows.push({
+              id: row.id,
+              label: row.label,
+              error: toErrorMessage(err),
+            })
+          }
+        }
+
+        if (failedRows.length) {
+          const failedIdSet = new Set(failedRows.map(item => item.id))
+          this.importDialogRows = this.importDialogRows.filter(row => failedIdSet.has(row.id))
+          this.selectedImportRowIds = []
+          this.importDialogError = [
+            '部分文件夹导入失败，已保留失败项，可调整后重试。',
+            ...failedRows.map(item => `${item.label}：${item.error}`),
+          ].join('；')
+          this.importDialogOpen = true
+          this.status = '部分导入完成。'
+        } else {
+          this.resetImportDialog()
+          this.status = `导入完成：${importedCount} 张，重复跳过 ${skippedCount} 张。`
+        }
+      } finally {
+        this.importing = false
+        window.__ptvImporting = false
+        this.currentFolderLabel = ''
+        this.currentItem = ''
+        this.totalFiles = 0
+        this.doneFiles = 0
+      }
+    },
+
     async runRefresh() {
       this.refreshing    = true
       this.clearNotice()
@@ -139,97 +449,6 @@ export default {
         this.status = ''
       } finally {
         this.refreshing = false
-      }
-    },
-
-    triggerFolder() { this.$refs.folderInput.click() },
-
-    async handleFolder(event) {
-      const files = Array.from(event.target.files || [])
-      if (!files.length) return
-
-      const rootName = (files[0].webkitRelativePath || files[0].name).split('/')[0]
-
-      const directFiles = []
-      const subdirMap   = {}
-      for (const file of files) {
-        const parts = (file.webkitRelativePath || file.name).split('/')
-        if (parts.length <= 2) {
-          directFiles.push(file)
-        } else {
-          const sub = parts[1]
-          if (!subdirMap[sub]) subdirMap[sub] = []
-          subdirMap[sub].push(file)
-        }
-      }
-
-      // Group direct files into chunks of 50 to reduce HTTP overhead
-      const CHUNK = 50
-      const directBatches = []
-      for (let i = 0; i < directFiles.length; i += CHUNK) {
-        const chunk = directFiles.slice(i, i + CHUNK)
-        directBatches.push({ files: chunk })
-      }
-      const batches = [
-        ...directBatches,
-        ...Object.entries(subdirMap).map(([sub, fs]) => ({ subdir: sub, files: fs })),
-      ]
-
-      const totalFileCount = files.filter(f => {
-        const name = f.name || ''
-        return /\.(jpe?g|png|webp|gif|bmp|tiff?)$/i.test(name)
-      }).length
-
-      this.importing    = true
-      window.__ptvImporting = true
-      this.clearNotice()
-      this.status       = `正在导入 ${rootName}…`
-      this.totalFiles   = totalFileCount
-      this.doneFiles    = 0
-
-      const allImported = []
-      const allSkipped  = []
-      try {
-        for (const batch of batches) {
-          // Show first filename in batch (or subdir name) as the live label
-          const firstFile = batch.files[0]
-          this.currentItem = batch.subdir
-            ? `${batch.subdir}/`
-            : (firstFile ? firstFile.name : '')
-          const fd = new FormData()
-          const ts = []
-          const createdTs = []
-          for (const f of batch.files) {
-            fd.append('files', f, f.webkitRelativePath || f.name)
-            ts.push(f.lastModified)
-            createdTs.push(null)
-          }
-          fd.append('last_modified_json', JSON.stringify(ts))
-          fd.append('created_time_json', JSON.stringify(createdTs))
-
-          const res = await fetch(`${API_BASE}/api/import`, { method: 'POST', body: fd })
-          if (!res.ok) throw new Error('导入失败，请检查后端服务')
-          const data = await res.json()
-          allImported.push(...data.imported)
-          allSkipped.push(...data.skipped)
-          this.doneFiles = Math.min(this.doneFiles + batch.files.length, this.totalFiles)
-        }
-        this.showNotice({
-          type: 'success',
-          title: `导入完成：${allImported.length} 张`,
-          lines: [`重复跳过：${allSkipped.length} 张`],
-        })
-        this.status  = '导入完成。'
-      } catch (err) {
-        this.showNotice({ type: 'error', title: '导入失败', lines: [`${err.message}`] })
-        this.status = ''
-      } finally {
-        this.importing   = false
-        window.__ptvImporting = false
-        this.currentItem = ''
-        this.totalFiles  = 0
-        this.doneFiles   = 0
-        event.target.value = ''
       }
     },
 

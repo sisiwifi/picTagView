@@ -178,7 +178,7 @@
       <button
         class="selection-island__btn"
         type="button"
-        :disabled="!selectedCount"
+        :disabled="!selectedCount || actionBusy"
         @click="openSelectionDetailsFromIsland"
       >详情</button>
       <div
@@ -189,6 +189,7 @@
         <button
           class="selection-island__btn"
           type="button"
+          :disabled="actionBusy"
           :aria-expanded="hasMixedSelectableTypes ? (selectAllMenuOpen ? 'true' : 'false') : 'false'"
           @click="handleSelectAllButtonClick"
         >全选</button>
@@ -197,7 +198,7 @@
           <button class="selection-island__submenu-btn" type="button" @click="onSelectAllTypeClick('image')">图片</button>
         </div>
       </div>
-      <button class="selection-island__btn" type="button" @click="clearSelection">取消选择</button>
+      <button class="selection-island__btn" type="button" :disabled="actionBusy" @click="clearSelection">取消选择</button>
     </div>
 
     <SelectionDetailOverlay
@@ -214,7 +215,8 @@
       :imported-field="selectionDetailImportedField"
       :created-field="selectionDetailCreatedField"
       :primary-action-label="selectionDetailPrimaryActionLabel"
-      :can-open-primary-action="canOpenPrimaryActionFromDetails"
+      :can-open-primary-action="canOpenPrimaryActionFromDetails && !actionBusy"
+      :danger-action-disabled="actionBusy"
       @close="closeSelectionDetails"
       @analysis="onReservedAnalysisClick"
       @delete="onReservedDeleteClick"
@@ -229,8 +231,16 @@
       :cancel-label="confirmDialog.cancelLabel"
       :tone="confirmDialog.tone"
       :show-cancel="confirmDialog.showCancel"
+      :busy="confirmDialog.busy"
+      :busy-label="confirmDialog.busyLabel"
       @cancel="closeConfirmDialog"
       @confirm="handleConfirmDialogConfirm"
+    />
+
+    <ActionProgressOverlay
+      :visible="actionBusy"
+      title="删除中"
+      :message="actionBusyText || '正在移动所选内容到回收站，请稍候…'"
     />
   </section>
 </template>
@@ -240,6 +250,7 @@ import LoadingSpinner from '../components/LoadingSpinner.vue'
 import BreadcrumbHeader from '../components/BreadcrumbHeader.vue'
 import MediaItemCard from '../components/MediaItemCard.vue'
 import ConfirmationDialog from '../components/ConfirmationDialog.vue'
+import ActionProgressOverlay from '../components/ActionProgressOverlay.vue'
 import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
 
 const API_BASE = 'http://127.0.0.1:8000'
@@ -266,13 +277,15 @@ function createDialogState() {
     cancelLabel: '取消',
     tone: 'danger',
     showCancel: true,
+    busy: false,
+    busyLabel: '处理中…',
     onConfirm: null,
   }
 }
 
 export default {
   name: 'BrowsePage',
-  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, ConfirmationDialog, SelectionDetailOverlay },
+  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, ConfirmationDialog, ActionProgressOverlay, SelectionDetailOverlay },
 
   data() {
     return {
@@ -324,6 +337,8 @@ export default {
       scrollLockState: null,
       selectionDetailFetchSerial: 0,
       selectAllMenuOpen: false,
+      actionBusy: false,
+      actionBusyText: '',
       confirmDialog: createDialogState(),
     }
   },
@@ -1893,19 +1908,37 @@ export default {
     },
 
     closeConfirmDialog() {
+      if (this.confirmDialog.busy) return
       this.confirmDialog = createDialogState()
     },
 
     async handleConfirmDialogConfirm() {
+      if (this.confirmDialog.busy) return
       const onConfirm = this.confirmDialog.onConfirm
-      this.closeConfirmDialog()
-      if (typeof onConfirm === 'function') {
-        await onConfirm()
+      if (typeof onConfirm !== 'function') {
+        this.closeConfirmDialog()
+        return
+      }
+
+      this.confirmDialog = {
+        ...this.confirmDialog,
+        busy: true,
+      }
+
+      let followupDialog = null
+      try {
+        followupDialog = await onConfirm()
+      } finally {
+        this.confirmDialog = createDialogState()
+      }
+
+      if (followupDialog) {
+        this.openConfirmDialog(followupDialog)
       }
     },
 
     moveSelectedToTrash() {
-      if (!this.selectedCount) return
+      if (!this.selectedCount || this.actionBusy) return
       const label = this.selectionTypeLock === 'album'
         ? `确认删除已选中的 ${this.selectedCount} 个相册吗？`
         : `确认删除已选中的 ${this.selectedCount} 张图片吗？`
@@ -1915,12 +1948,16 @@ export default {
         confirmLabel: '移入回收站',
         cancelLabel: '取消',
         tone: 'danger',
+        busyLabel: '删除中…',
         onConfirm: () => this.executeMoveSelectedToTrash(),
       })
     },
 
     async executeMoveSelectedToTrash() {
-      if (!this.selectedCount) return
+      if (!this.selectedCount || this.actionBusy) return null
+
+      this.actionBusy = true
+      this.actionBusyText = '正在移动所选内容到回收站，请稍候…'
 
       const payload = {
         items: this.selectedEntries.map(({ item }) => (
@@ -1930,33 +1967,46 @@ export default {
         ))
       }
 
-      const res = await fetch(`${API_BASE}/api/trash/move`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      if (!res.ok) {
-        this.openConfirmDialog({
-          title: '移入回收站失败',
-          message: `请求未成功完成，服务器返回 HTTP ${res.status}。`,
-          confirmLabel: '知道了',
-          tone: 'danger',
-          showCancel: false,
+      try {
+        const res = await fetch(`${API_BASE}/api/trash/move`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
         })
-        return
-      }
+        if (!res.ok) {
+          return {
+            title: '移入回收站失败',
+            message: `请求未成功完成，服务器返回 HTTP ${res.status}。`,
+            confirmLabel: '知道了',
+            tone: 'danger',
+            showCancel: false,
+          }
+        }
 
-      const data = await res.json()
-      if (Array.isArray(data.errors) && data.errors.length) {
-        this.openConfirmDialog({
+        const data = await res.json()
+        await this.loadData()
+        if (Array.isArray(data.errors) && data.errors.length) {
+          return {
+            title: '移入回收站失败',
+            message: data.errors.join('；'),
+            confirmLabel: '知道了',
+            tone: 'danger',
+            showCancel: false,
+          }
+        }
+        return null
+      } catch (err) {
+        return {
           title: '移入回收站失败',
-          message: data.errors.join('；'),
+          message: err?.message || '删除失败，请稍后重试。',
           confirmLabel: '知道了',
           tone: 'danger',
           showCancel: false,
-        })
+        }
+      } finally {
+        this.actionBusy = false
+        this.actionBusyText = ''
       }
-      await this.loadData()
     },
 
     onReservedDeleteClick() {

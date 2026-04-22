@@ -129,7 +129,7 @@
             <button
               class="detail-panel__action"
               type="button"
-              :disabled="!canOpenPrimaryAction"
+              :disabled="!canOpenPrimaryAction || primaryActionDisabled"
               @click="$emit('open-primary')"
             >
               {{ primaryActionLabel }}
@@ -137,6 +137,7 @@
             <button
               class="detail-panel__action detail-panel__action--danger"
               type="button"
+              :disabled="dangerActionDisabled"
               @click="$emit('delete')"
             >
               {{ dangerActionLabel }}
@@ -184,7 +185,9 @@ export default {
     },
     primaryActionLabel: { type: String, default: '查看原图' },
     canOpenPrimaryAction: { type: Boolean, default: false },
+    primaryActionDisabled: { type: Boolean, default: false },
     dangerActionLabel: { type: String, default: '删除' },
+    dangerActionDisabled: { type: Boolean, default: false },
     showAnalysisButton: { type: Boolean, default: true },
   },
   emits: ['analysis', 'close', 'delete', 'open-primary'],
