@@ -12,15 +12,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from app.db.session import get_session
-from app.models.category import Category
 from app.models.tag import Tag
-from app.services.category_service import (
-    DEFAULT_CATEGORY_ID,
-    require_category,
-    resolve_category_id,
-    sanitize_legacy_category_name,
-    sync_category_usage_counts,
-)
 
 router = APIRouter(prefix="/api/tags", tags=["tags"])
 
@@ -46,9 +38,7 @@ def _normalize_tag_type(tag_type: object) -> str:
     return value
 
 
-def _tag_to_dict(tag: Tag, category_lookup: dict[int, Category] | None = None) -> dict:
-    category_id = tag.category_id or DEFAULT_CATEGORY_ID
-    category = category_lookup.get(category_id) if category_lookup else None
+def _tag_to_dict(tag: Tag) -> dict:
     return {
         "id": tag.id,
         "public_id": tag.public_id,
@@ -56,10 +46,6 @@ def _tag_to_dict(tag: Tag, category_lookup: dict[int, Category] | None = None) -
         "display_name": tag.display_name,
         "type": tag.type,
         "description": tag.description,
-        "category_id": category_id,
-        "category_public_id": category.public_id if category else None,
-        "category_name": category.name if category else None,
-        "category_display_name": category.display_name if category else None,
         "usage_count": tag.usage_count,
         "last_used_at": tag.last_used_at,
         "metadata": tag.metadata_ or {},
@@ -91,7 +77,6 @@ class TagCreate(BaseModel):
     display_name: str = ""
     type: Literal["normal", "artist", "copyright","character", "series"] = "normal"
     description: str = ""
-    category_id: int = DEFAULT_CATEGORY_ID
     created_by: str = "admin"
     metadata: TagMetadata = Field(default_factory=TagMetadata)
 
@@ -100,7 +85,6 @@ class TagUpdate(BaseModel):
     display_name: Optional[str] = None
     type: Optional[Literal["normal", "artist", "copyright","character", "series"]] = None
     description: Optional[str] = None
-    category_id: Optional[int] = None
     metadata: Optional[TagMetadata] = None
 
 
@@ -111,15 +95,16 @@ class TagUpdate(BaseModel):
 @router.get("")
 def list_tags(
     ids: Optional[str] = Query(default=None, description="逗号分隔的 Tag ID 列表，用于批量查询"),
-    category_id: Optional[int] = Query(default=None),
-    category: Optional[str] = Query(default=None, description="兼容旧参数，按分类标准名过滤"),
+    category_id: Optional[int] = Query(default=None, description="已废弃；标签不再属于主分类"),
+    category: Optional[str] = Query(default=None, description="已废弃；标签不再属于主分类"),
     tag_type: Optional[str] = Query(default=None, alias="type"),
     q: Optional[str] = Query(default=None, description="按 name/display_name 模糊搜索"),
     limit: int = Query(default=200, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
-    """列出所有 Tag；支持按 ID 列表批量查、分类过滤、类型过滤、名称模糊搜索。"""
+    """列出所有 Tag；支持按 ID 列表批量查、类型过滤、名称模糊搜索。"""
     with get_session() as session:
+        _ = category_id, category
         stmt = select(Tag)
         if ids:
             try:
@@ -127,15 +112,6 @@ def list_tags(
             except ValueError:
                 raise HTTPException(status_code=400, detail="ids 参数必须为整数列表")
             stmt = stmt.where(Tag.id.in_(id_list))  # type: ignore[attr-defined]
-        if category_id is not None:
-            stmt = stmt.where(Tag.category_id == category_id)  # type: ignore[attr-defined]
-        elif category:
-            normalized_name = sanitize_legacy_category_name(category)
-            if normalized_name:
-                matched_category = session.exec(select(Category).where(Category.name == normalized_name)).first()
-                if not matched_category:
-                    return {"total": 0, "offset": offset, "limit": limit, "items": []}
-                stmt = stmt.where(Tag.category_id == (matched_category.id or DEFAULT_CATEGORY_ID))  # type: ignore[attr-defined]
         if tag_type:
             stmt = stmt.where(Tag.type == _normalize_tag_type(tag_type))  # type: ignore[attr-defined]
         if q:
@@ -145,8 +121,7 @@ def list_tags(
             )
         tags = session.exec(stmt.offset(offset).limit(limit)).all()
         total = int(session.exec(select(func.count()).select_from(stmt.subquery())).one())
-        category_lookup = {category.id or DEFAULT_CATEGORY_ID: category for category in session.exec(select(Category)).all()}
-        return {"total": total, "offset": offset, "limit": limit, "items": [_tag_to_dict(t, category_lookup) for t in tags]}
+        return {"total": total, "offset": offset, "limit": limit, "items": [_tag_to_dict(t) for t in tags]}
 
 
 @router.get("/{tag_id}")
@@ -155,8 +130,7 @@ def get_tag(tag_id: int) -> dict:
         tag = session.get(Tag, tag_id)
         if not tag:
             raise HTTPException(status_code=404, detail=f"Tag {tag_id} 不存在")
-        category_lookup = {category.id or DEFAULT_CATEGORY_ID: category for category in session.exec(select(Category)).all()}
-        return _tag_to_dict(tag, category_lookup)
+        return _tag_to_dict(tag)
 
 
 @router.post("", status_code=201)
@@ -174,18 +148,12 @@ def create_tag(body: TagCreate) -> dict:
         if existing:
             raise HTTPException(status_code=409, detail=f"name '{norm_name}' 已存在")
 
-        try:
-            category = require_category(session, body.category_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
         now = datetime.utcnow()
         tag = Tag(
             name=norm_name,
             display_name=body.display_name or norm_name,
             type=_normalize_tag_type(body.type),
             description=body.description,
-            category_id=category.id or DEFAULT_CATEGORY_ID,
             created_by=body.created_by,
             metadata_=meta,
             created_at=now,
@@ -195,11 +163,9 @@ def create_tag(body: TagCreate) -> dict:
         session.flush()
         _write_public_id(tag)
         session.add(tag)
-        sync_category_usage_counts(session)
         session.commit()
         session.refresh(tag)
-        category_lookup = {item.id or DEFAULT_CATEGORY_ID: item for item in session.exec(select(Category)).all()}
-        return _tag_to_dict(tag, category_lookup)
+        return _tag_to_dict(tag)
 
 
 @router.patch("/{tag_id}")
@@ -214,12 +180,6 @@ def update_tag(tag_id: int, body: TagUpdate) -> dict:
             tag.type = _normalize_tag_type(body.type)
         if body.description is not None:
             tag.description = body.description
-        if body.category_id is not None:
-            try:
-                category = require_category(session, body.category_id)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            tag.category_id = category.id or DEFAULT_CATEGORY_ID
         if body.metadata is not None:
             meta = body.metadata.model_dump()
             if meta.get("created_via", "manual") not in _VALID_CREATED_VIA:
@@ -227,11 +187,9 @@ def update_tag(tag_id: int, body: TagUpdate) -> dict:
             tag.metadata_ = meta
         tag.updated_at = datetime.utcnow()
         session.add(tag)
-        sync_category_usage_counts(session)
         session.commit()
         session.refresh(tag)
-        category_lookup = {item.id or DEFAULT_CATEGORY_ID: item for item in session.exec(select(Category)).all()}
-        return _tag_to_dict(tag, category_lookup)
+        return _tag_to_dict(tag)
 
 
 @router.delete("/{tag_id}")
@@ -241,7 +199,6 @@ def delete_tag(tag_id: int) -> Response:
         if not tag:
             raise HTTPException(status_code=404, detail=f"Tag {tag_id} 不存在")
         session.delete(tag)
-        sync_category_usage_counts(session)
         session.commit()
     return Response(status_code=204)
 
@@ -255,8 +212,7 @@ def export_tags() -> JSONResponse:
     """将全库 Tag 导出为 JSON 数组，前端可保存为 .json 文件。"""
     with get_session() as session:
         tags = session.exec(select(Tag)).all()
-        category_lookup = {item.id or DEFAULT_CATEGORY_ID: item for item in session.exec(select(Category)).all()}
-        data = [_tag_to_dict(t, category_lookup) for t in tags]
+        data = [_tag_to_dict(t) for t in tags]
     return JSONResponse(
         content={"schema_version": 1, "exported_at": datetime.utcnow().isoformat(), "tags": data},
         headers={"Content-Disposition": 'attachment; filename="tags_export.json"'},
@@ -273,7 +229,7 @@ def import_tags(body: TagImportBody) -> dict:
     """批量导入 Tag 数据。
 
     - on_conflict=skip：跳过同名已存在的 tag（默认）
-    - on_conflict=overwrite：覆盖 display_name / type / description / category_id / metadata
+    - on_conflict=overwrite：覆盖 display_name / type / description / metadata
     """
     if body.on_conflict not in ("skip", "overwrite"):
         raise HTTPException(status_code=400, detail="on_conflict 必须为 skip 或 overwrite")
@@ -296,12 +252,6 @@ def import_tags(body: TagImportBody) -> dict:
             if created_via not in _VALID_CREATED_VIA:
                 meta_raw["created_via"] = "import"
 
-            next_category_id = resolve_category_id(
-                session,
-                category_id=item.get("category_id"),
-                category_name=item.get("category_name") or item.get("category"),
-            )
-
             existing = session.exec(select(Tag).where(Tag.name == raw_name)).first()  # type: ignore[attr-defined]
             if existing:
                 if body.on_conflict == "skip":
@@ -311,7 +261,6 @@ def import_tags(body: TagImportBody) -> dict:
                 existing.display_name = item.get("display_name", existing.display_name)
                 existing.type = _normalize_tag_type(item.get("type", existing.type))
                 existing.description = item.get("description", existing.description)
-                existing.category_id = next_category_id
                 existing.metadata_ = meta_raw
                 existing.updated_at = datetime.utcnow()
                 session.add(existing)
@@ -324,7 +273,6 @@ def import_tags(body: TagImportBody) -> dict:
                 display_name=item.get("display_name", raw_name),
                 type=_normalize_tag_type(item.get("type", "normal")),
                 description=item.get("description", ""),
-                category_id=next_category_id,
                 created_by=item.get("created_by", "import"),
                 metadata_=meta_raw,
                 created_at=now,
@@ -336,7 +284,6 @@ def import_tags(body: TagImportBody) -> dict:
             session.add(tag)
             imported += 1
 
-        sync_category_usage_counts(session)
         session.commit()
 
     return {"imported": imported, "updated": updated, "skipped": skipped, "errors": errors}

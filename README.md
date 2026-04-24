@@ -14,11 +14,11 @@
 | **缩略图生成** | 自动生成月份封面缩略图到 `backend/temp/`，并按需生成浏览缓存缩略图到 `backend/data/cache/`；BrowsePage 会按“缓存锚点 + 当前首排 + 前后 50 张”提交 generation 请求，优先补齐停留位置附近的预览 |
 | **SHA-256 去重** | 哈希匹配完全重复图片，自动跳过；刷新与恢复流程沿用相同去重规则 |
 | **日期与日历浏览** | 日历总览与按年月/相册路径浏览分离，支持嵌套层级与统一面包屑；月份总览按页面方向自适应，横向 6 列、纵向 3 列 |
-| **相册管理** | 子目录导入自动创建树形相册结构，支持嵌套层级、按相册路径浏览 |
+| **相册管理** | 子目录导入自动创建树形相册结构，支持嵌套层级、按相册路径浏览；相册是否显示、计数与封面均由其子树中的可见图片派生 |
 | **选择模式** | 日期详情页/相册页可切换到选择模式，使用固定比例媒体卡片；图片区优先显示 `backend/data/cache` 缩略图，横屏 5 列、竖屏 3 列，支持 Ctrl/Shift、多选拖选、卡片详情浮层、右下角操作岛与混合类型按需全选，并对可视区外卡片做窗口化渲染；切换浏览态 / 选择态时会按视觉锚点恢复到同一内容附近，避免“迷路” |
 | **列表选择** | 列表模式支持长按进入选择，沿用与选择界面一致的选择逻辑与圆形选择符号；相册项标识改为缩略图右侧的圆角矩形标签，并对列表项做窗口化渲染 |
 | **信息区切换** | 选择模式下信息区默认显示文件名；点击信息区可整页切换为 Tag 文本显示，按需批量查询标签 |
-| **主分类体系** | `Category` 表统一管理图片 / 相册 / Tag / 回收站条目的 `category_id`；主分类配置页按屏幕方向切换横向 / 竖向卡片比例，常态仅显示编辑按钮，管理模式才显示圆形选择按钮与移除按钮，右下角按钮岛负责批量打开 / 关闭，删除统一回退到默认主分类 |
+| **主分类体系** | `Category` 表只管理图片的 `category_id`，并同步维护图片使用计数；主分类配置页按屏幕方向切换横向 / 竖向卡片比例，常态仅显示编辑按钮，管理模式才显示圆形选择按钮与移除按钮，右下角按钮岛负责批量打开 / 关闭，删除时会把关联图片与图片回收站条目回退到默认主分类 |
 | **回收站** | 设置页右上角提供更醒目的入口进入独立回收站页面；支持把图片或整棵相册目录移入 `trash/`、批量还原、彻底删除、“清空回收站”；进入页面时以后端批量轻量对账补齐预览，删除/还原确认统一改为页面中部弹窗 |
 | **哈希索引缓存** | `.hash_index.json` 加速导入去重，避免逐条 DB 查询 |
 | **媒体库刷新** | 清除失效 DB 记录及孤立缩略图；补全 `media/` 中未入库的文件；重建哈希索引；不再承担用户回收站状态维护 |
@@ -225,7 +225,6 @@ class Album(SQLModel, table=True):
     public_id:             str              # 外部标识，格式 album_{id}（唯一索引）
     title:                 str              # 相册名称
     path:                  str              # 完整路径（{date_group}/{subdir1}/...）
-    category_id:           int              # 主分类 ID（默认回退到 1）
     is_leaf:               bool             # 是否为叶节点
     parent_id:             Optional[int]    # 父相册 ID
     cover:                 Optional[dict]   # 封面信息（JSON）
@@ -244,13 +243,13 @@ class Category(SQLModel, table=True):
   name:         str                    # 规范名，仅允许小写字母/数字/下划线
   display_name: str                    # 前端展示名
   description:  str                    # 分类说明
-  usage_count:  dict[str, int]         # {image, album, tag}
+  usage_count:  dict[str, int]         # {image}
   is_active:    bool                   # 是否在前端可见
   created_at:   datetime               # 创建时间
 ```
 
 - 系统保留默认主分类：`id=1`、`name=default`、`display_name=默认`。
-- 删除其他主分类时，所有引用该分类的图片、相册、Tag 与回收站条目都会自动回退到默认主分类。
+- 删除其他主分类时，所有引用该分类的图片与图片回收站条目都会自动回退到默认主分类。
 
 ### TrashEntry
 
@@ -267,7 +266,7 @@ class TrashEntry(SQLModel, table=True):
     preview_thumb_path: Optional[str]       # temp 缩略图路径
     preview_cache_path: Optional[str]       # cache 缩略图路径
     file_hash:         Optional[str]        # 原图 hash
-    category_id:       int                  # 主分类 ID（删除时保留，用于回收站详情）
+    category_id:       Optional[int]        # 仅图片条目保留删除前主分类，用于回收站详情与恢复
     tags:              Optional[list[int]]  # Tag ID 列表（JSON）
     metadata_json:     Optional[dict]       # 其他恢复元数据
 ```
@@ -287,7 +286,7 @@ class TrashEntry(SQLModel, table=True):
 | `GET`  | `/api/categories`                | 列出全部主分类与使用计数 |
 | `POST` | `/api/categories`                | 创建主分类 |
 | `PATCH`| `/api/categories/{category_id}`  | 更新主分类名称 / 显示名 / 说明 / 启用状态 |
-| `DELETE` | `/api/categories/{category_id}` | 删除主分类，并把引用对象回退到默认主分类 |
+| `DELETE` | `/api/categories/{category_id}` | 删除主分类，并把关联图片与图片回收站条目回退到默认主分类 |
 | `POST` | `/api/categories/bulk`           | 批量启用 / 停用 / 删除主分类 |
 | `GET`  | `/api/images/{image_id}/open`    | 按指定 `media_path` 实例在系统中打开图片 |
 | `POST` | `/api/admin/refresh`             | 媒体库刷新（清理 + 修复 + 重建哈希索引） |
@@ -303,6 +302,8 @@ class TrashEntry(SQLModel, table=True):
 | `DELETE` | `/api/trash`                   | 清空回收站 |
 | `POST` | `/api/thumbnails/cache`          | 异步生成缓存缩略图 |
 | `GET`  | `/api/thumbnails/cache/status/{task_id}` | 查询缓存生成进度 |
+
+主分类语义迁移：已有旧库可执行 `d:/Python_projects/picTagView_main/.venv/Scripts/python.exe backend/scripts/migrate_image_only_categories.py`，一次性移除 `album` / `tag` 表中的旧分类列并重算图片分类统计。
 | `DELETE` | `/api/cache`                   | 清除所有缓存 |
 | `GET`  | `/api/system/viewer-preference`  | 获取图片查看器偏好 |
 | `POST` | `/api/system/viewer-preference`  | 设置图片查看器偏好 |

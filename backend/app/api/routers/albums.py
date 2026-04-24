@@ -20,6 +20,7 @@ from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
 from app.services.category_service import DEFAULT_CATEGORY_ID, get_active_category_ids, is_category_visible
+from app.services.visible_album_service import album_has_visible_images, build_visible_album_stats, list_visible_assets
 
 router = APIRouter()
 
@@ -34,19 +35,11 @@ def _to_unix_ts(dt: datetime | None) -> int | None:
     return int(dt.timestamp())
 
 
-def _is_album_visible(session, album: Album, active_category_ids: set[int]) -> bool:
-    current = album
-    while current:
-        if not is_category_visible(current.category_id, active_category_ids):
-            return False
-        if current.parent_id is None:
-            break
-        current = session.get(Album, current.parent_id)
-    return True
-
-
 def _build_album_response(album: Album, session, active_category_ids: set[int]) -> AlbumDetailResponse:
     """Shared logic for building album detail response."""
+    visible_assets = list_visible_assets(session, active_category_ids, album.date_group)
+    stats_by_public_id = build_visible_album_stats(session, visible_assets, album.date_group)
+
     parent_public_id = None
     ancestors: list[BreadcrumbItem] = []
     cur = album
@@ -66,56 +59,36 @@ def _build_album_response(album: Album, session, active_category_ids: set[int]) 
     ).all()
     sub_albums = [
         sub_album for sub_album in sub_albums
-        if _is_album_visible(session, sub_album, active_category_ids)
+        if album_has_visible_images(sub_album, stats_by_public_id)
     ]
 
     sub_items: list[AlbumItem] = []
     for sa in sub_albums:
         row_thumb_url = ""
         row_cache_thumb_url = None
-        cover_photo_id = None
-        cover_width = None
-        cover_height = None
-        if sa.cover and isinstance(sa.cover, dict):
-            cover_photo_id = sa.cover.get("photo_id")
-            tp = sa.cover.get("thumb_path", "")
-            if tp:
-                resolved = resolve_stored_path(tp)
-                if resolved and resolved.exists():
-                    try:
-                        resolved.relative_to(TEMP_DIR)
-                        row_thumb_url = f"/thumbnails/{resolved.name}"
-                    except ValueError:
-                        try:
-                            resolved.relative_to(CACHE_DIR)
-                            row_cache_thumb_url = f"/cache/{resolved.name}"
-                        except ValueError:
-                            pass
-
-        if cover_photo_id is not None:
-            asset_for_cover = session.get(ImageAsset, cover_photo_id)
-            if asset_for_cover:
-                cover_width = asset_for_cover.width
-                cover_height = asset_for_cover.height
-                if not row_thumb_url:
-                    row_thumb_url = thumb_url(asset_for_cover)
-                if not row_cache_thumb_url:
-                    row_cache_thumb_url = cache_thumb_url(asset_for_cover)
+        stats = stats_by_public_id.get(sa.public_id or "")
+        cover_asset = stats.cover_asset if stats else None
+        cover_photo_id = cover_asset.id if cover_asset else None
+        cover_width = cover_asset.width if cover_asset else None
+        cover_height = cover_asset.height if cover_asset else None
+        if cover_asset:
+            row_thumb_url = thumb_url(cover_asset)
+            row_cache_thumb_url = cache_thumb_url(cover_asset)
 
         sub_items.append(AlbumItem(
             type="album",
             name=sa.title,
             thumb_url=row_thumb_url,
-            count=sa.subtree_photo_count,
+            count=stats.subtree_photo_count if stats else 0,
             id=cover_photo_id,
-            category_id=sa.category_id or DEFAULT_CATEGORY_ID,
+            category_id=None,
             cache_thumb_url=row_cache_thumb_url,
             width=cover_width,
             height=cover_height,
             public_id=sa.public_id,
             album_path=sa.path,
             sort_ts=_to_unix_ts(sa.updated_at or sa.created_at),
-            photo_count=sa.photo_count,
+            photo_count=stats.direct_photo_count if stats else 0,
             created_at=sa.created_at,
         ))
     sub_items.sort(key=lambda item: _item_sort_key(item.name))
@@ -134,6 +107,10 @@ def _build_album_response(album: Album, session, active_category_ids: set[int]) 
         asset for asset in album_assets
         if is_category_visible(asset.category_id, active_category_ids)
     ]
+
+    album_stats = stats_by_public_id.get(album.public_id or "")
+    if not album_stats or album_stats.subtree_photo_count <= 0:
+        raise HTTPException(status_code=404, detail="Album not found")
 
     image_items: list[AlbumItem] = []
     for asset in album_assets:
@@ -167,8 +144,8 @@ def _build_album_response(album: Album, session, active_category_ids: set[int]) 
             title=album.title,
             description=album.description,
             date_group=album.date_group,
-            photo_count=album.photo_count,
-            subtree_photo_count=album.subtree_photo_count,
+            photo_count=album_stats.direct_photo_count,
+            subtree_photo_count=album_stats.subtree_photo_count,
             parent_public_id=parent_public_id,
             ancestors=ancestors,
         ),
@@ -184,8 +161,6 @@ def album_by_path(album_path: str) -> AlbumDetailResponse:
             select(Album).where(Album.path == album_path)
         ).first()
         if not album:
-            raise HTTPException(status_code=404, detail="Album not found")
-        if not _is_album_visible(session, album, active_category_ids):
             raise HTTPException(status_code=404, detail="Album not found")
         return _build_album_response(album, session, active_category_ids)
 
@@ -222,7 +197,5 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
             select(Album).where(Album.public_id == album_id)
         ).first()
         if not album:
-            raise HTTPException(status_code=404, detail="Album not found")
-        if not _is_album_visible(session, album, active_category_ids):
             raise HTTPException(status_code=404, detail="Album not found")
         return _build_album_response(album, session, active_category_ids)

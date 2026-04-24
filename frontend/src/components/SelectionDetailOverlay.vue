@@ -80,8 +80,8 @@
             </div>
           </div>
 
-          <div class="detail-field">
-            <span class="detail-field__label">主分类</span>
+          <div v-if="showCategoryField" class="detail-field">
+            <span class="detail-field__label">主分类（图片）</span>
             <div class="detail-field__value">
               <em v-if="categoryField.isVarious" class="detail-field__various">various</em>
               <span v-else class="detail-field__text">{{ categoryField.text || '—' }}</span>
@@ -194,6 +194,9 @@ export default {
   computed: {
     primaryPreview() {
       return this.previewItems[0] || null
+    },
+    showCategoryField() {
+      return this.previewItems.some(item => item?.type === 'image')
     },
   },
 }

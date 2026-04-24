@@ -42,7 +42,7 @@
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的图片条目现同时返回 `tags`（Tag ID 整数列表）；接口仍只返回 ID，不在主查询中联表展开 Tag 名称。
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的图片条目现同时返回 `width` / `height`；相册条目则返回封面图对应的 `width` / `height`。
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的相册条目现同时返回 `photo_count` / `created_at`，供选择详情浮层展示相册图片数量与创建时间。
-- 日期视图与相册浏览接口现在只返回 `Category.is_active = true` 的内容；若某个相册自身或其任一祖先相册的主分类已停用，则该相册路径在浏览接口中视为不可见，直接路径访问返回 `404`。
+- 日期视图与相册浏览接口现在只依据图片主分类过滤内容；相册本身不再持有主分类，只要其子树中仍有至少一张可见图片，该相册路径就保持可见。
 - `sort_ts` 生成规则：
   - 图片条目：优先 `file_created_at`，回退 `imported_at`，再回退 `created_at`。
   - 相册条目：优先 `updated_at`，回退 `created_at`。
@@ -51,12 +51,12 @@
 - 前端交互补充：排序字段选择器由滑块改为 `select`（`Date`/`Alpha`），升降序箭头按钮独立放在选择框外侧。
 - 主分类体系：
   - `Category` 表与 `app/services/category_service.py` 共同维护默认主分类、使用计数、批量启用 / 停用与删除回退。
-  - `ImageAsset`、`Album`、`Tag`、`TrashEntry` 统一使用 `category_id`，默认回退到 `id=1` 的系统主分类。
+  - `ImageAsset` 持有唯一生效的 `category_id`；`Album` 只保留目录结构，`Tag` 不再绑定主分类，`TrashEntry.category_id` 仅用于图片条目的删除快照与恢复。
   - 设置页提供独立“主分类配置”入口；主分类页使用与 BrowsePage 一致的面包屑 header，右上角将“管理”和“新建主分类”拆分为独立按钮。
   - 主分类卡片按屏幕方向切换比例：横屏使用横向卡片，竖屏使用竖向卡片；页面主体为独立滚动区。
   - 常态卡片仅显示编辑按钮；管理模式把圆形选择按钮放到卡片右上角，并在卡片右下角显示移除按钮。右下角按钮岛负责批量打开 / 关闭、全选与取消选择。
   - 页面反馈使用浏览器顶端浮动 message，不占据正文布局高度。
-  - 选择详情浮层会显示 `Category.display_name` 作为“主分类”字段。
+  - 选择详情浮层仅在图片选择态显示 `Category.display_name` 作为“主分类”字段。
 - 前端结构补充：日期详情页与相册页的 header 已统一为面包屑样式，并组件化为 `frontend/src/components/BreadcrumbHeader.vue`，用于复用“返回按钮 + 面包屑 + 项目数 + 排序控件 + 右侧扩展操作区”。
 - 前端交互补充：BrowsePage 已启用 header 上预留的“选择”按钮。进入选择模式后，列表强制切换为固定比例媒体卡片网格；卡片由 `frontend/src/components/MediaItemCard.vue` 组件承载，结构为“正方形图片区 + 固定 56px 信息区”。当前网格列数策略为：横屏固定 5 列，竖屏固定 3 列，用于控制同屏资源消耗。
 - 渲染策略补充：BrowsePage 仅对列表模式与选择模式启用窗口化渲染，滚动时按可视区切片更新 DOM；“大缩略图”照片墙继续保留全量 `justifiedRows` 布局，但新增“精确容器宽度 + 布局指纹”级别的内存排布缓存，减少重复重算。
@@ -127,9 +127,9 @@
   - `get_active_category_ids(session)`：返回当前可见主分类集合，并强制包含默认主分类 `1`
   - `is_category_visible(category_id, active_category_ids)`：供浏览接口复用的可见性判断
   - `resolve_category_id(session, category_id, category_name)`：兼容旧数据或导入 JSON 中的分类名称
-  - `sync_category_usage_counts(session)`：同步 `{image, album, tag}` 使用计数
-  - `reassign_category_references(session, source_category_id, target_category_id=1)`：删除主分类前，把所有关联对象统一回退到默认主分类
-  - `backfill_category_ids_from_legacy()`：初始化时从 legacy `category` 字段回填 `category_id`
+  - `sync_category_usage_counts(session)`：同步 `{image}` 使用计数
+  - `reassign_category_references(session, source_category_id, target_category_id=1)`：删除主分类前，把关联图片与图片回收站条目统一回退到默认主分类
+  - `backfill_category_ids_from_legacy()`：初始化时只从图片与图片回收站 legacy 字段回填 `category_id`
 
 ### 3.3b `app/services/imports/pipeline.py`
 - 导入主流程（批处理与去重核心）
@@ -142,17 +142,14 @@
   - 导入完成后，Gallery 页面不再额外弹出顶部“完成确认”结果框；成功结果收敛到状态行，失败目录仍保留在导入表单中供重试
   - 导入前加载哈希索引缓存 `.hash_index.json`，用于 O(1) 去重查找
   - 子目录链 → 自动创建 Album 树（`_ensure_album_chain`），所有嵌套层级继承顶层 `date_group`
-  - 主分类决策规则：
-    - 若当前目录链上已存在非默认主分类相册，则以“最上层命中的非默认相册”作为当前导入链的有效主分类
-    - 一旦命中该祖先，相册链上该祖先以下的现有子相册与本次新建子相册都会被拉齐到同一主分类，以保证目录显隐一致
-    - 若目录链上尚无非默认相册，则本次请求的 `category_id` 作为有效主分类；新建相册直接写入该值，现有默认相册可被提升到该值
-    - 对 `ImageAsset` 采用保守策略：新建图片直接写入有效主分类；已存在图片仅在当前仍为默认主分类时提升，已存在的非默认图片保持原值，避免 hash 去重场景下误改其它目录的既有主分类
+  - 主分类决策规则：`category_id` 只写入图片；新建图片直接使用请求值，已存在图片仅在当前仍为默认主分类时提升，避免 hash 去重场景下误改既有非默认分类图片
   - 去重策略：相同哈希在相册内 → 保留并添加 album 关系；直传重复 → 跳过
   - 导入结束后保存哈希索引并释放内存
   - 批次读取文件内容（`IMPORT_BATCH_SIZE=50`）
   - 线程池并行 `process_from_bytes` 只为"每月封面所需图片"生成 temp 缩略图
   - 其他图片调用 `process_hash_only_from_bytes`（`_compute_hash_only` worker）：并行完成 SHA-256 + xxhash + **cv2.imdecode 尺寸读取**，不生成缩略图
   - DB 串行写入循环中仅使用已并行得到的宽高，不再在主线程调用 cv2（性能优化方案 A）
+  - 导入请求中的 `category_id` 只作用于图片；子目录仍会创建树形 `Album`，但不会再把主分类写入相册链或从祖先相册继承主分类
   - 导入不中断行为：`GalleryPage.vue` 仍在本地维护导入队列、当前目录与累计进度，但 `/gallery` 路由现在通过 `meta.keepAlive = true` 保活；用户切到其它页面时组件进入 deactivated 状态而不是被销毁，返回 Gallery 后会继续显示同一轮导入。
   - `window.__ptvImporting` 在导入开始/结束时仍会置为 `true/false`，但它只作为导入期状态标记；真正保证“切换页面不打断导入”的实现是前端路由保活。
   - 前端多行队列采用“单行失败不阻塞后续行”的策略；失败行会在导入结束后保留在表单中，供用户修正后重试。
@@ -258,7 +255,6 @@
   - `title` (str): 相册名称（可重复，取自子目录名）
   - `description` (str | null): 描述
   - `path` (str): 媒体目录下的完整路径，格式 `{date_group}/{subdir1}/{subdir2}`，用于唯一定位
-  - `category_id` (int): 主分类 ID，默认回退到 1
   - `is_leaf` (bool): 是否为叶节点相册（无子相册）
   - `parent_id` (int | null): 父相册 ID（顶层相册为 null）
   - `cover` (JSON dict | null): 封面信息 `{photo_id, thumb_path, filename, updated_at}`，按文件名字母序选取最早文件
@@ -268,6 +264,7 @@
   - `settings` / `stats` (JSON dict): 扩展设置与统计
   - `date_group` (str | null): 所有嵌套层级继承顶层的 `date_group`
   - `created_at` / `updated_at`: 时间戳
+  - 可见性、封面与计数由当前活跃主分类下的图片实时派生，而不是由相册字段直接决定
 
 ### 3.5c `app/models/category.py`
 - 数据模型 `Category`：
@@ -276,7 +273,7 @@
   - `name` (str): 规范名，仅允许小写字母、数字和下划线
   - `display_name` (str): 前端展示名
   - `description` (str): 说明
-  - `usage_count` (JSON dict): 使用计数 `{image, album, tag}`
+  - `usage_count` (JSON dict): 使用计数 `{image}`
   - `is_active` (bool): 前端显示开关
   - `created_at` (datetime): 创建时间
 
@@ -291,7 +288,7 @@
   - `trash_path` (str): 实际移动到 `TRASH_DIR` 后的 payload 路径
   - `preview_path` / `preview_thumb_path` / `preview_cache_path`: 预览与回退缩略图路径；当前策略下回收站优先复用 `preview_cache_path` 指向的共享 cache，`preview_thumb_path` 仅保留兼容字段
   - `file_hash` / `width` / `height` / `file_size` / `mime_type`: 预览与恢复辅助元数据
-  - `category_id` (int): 删除前保留的主分类 ID
+  - `category_id` (int | null): 仅图片条目保留删除前主分类 ID；相册条目始终为空
   - `imported_at` / `file_created_at` / `source_created_at`: 原文件时间信息
   - `photo_count` (int | null): 相册条目直属或子树图片数快照
   - `tags` / `metadata_json`: 附加 JSON 元数据
@@ -378,7 +375,6 @@
   - `display_name` (str): 前端展示名称，默认与 name 相同
   - `type` (str): 标签种类，取值为 `normal` / `artist` / `artwork` / `series`，默认 `normal`
   - `description` (str | null): 描述，最大 1024 字节
-  - `category_id` (int): 主分类 ID，默认回退到 1，与 `ImageAsset` / `Album` / `TrashEntry` 保持一致
   - `usage_count` (int): 缓存字段，表示当前有多少张图片关联了该 Tag，由写入侧维护
   - `last_used_at` (str | null): Tag 最后被关联或访问的时间，格式 `YYYYMMDDHHMMSS`
   - `metadata_` (JSON dict): 存储为数据库列 `metadata`，可扩展扩展字段，结构如下：
@@ -428,7 +424,7 @@
 | `album` | `Album` (`app/models/album.py`) | 树形相册结构；存储相册名称、层级路径、封面、照片计数、日期分组 |
 | `trashentry` | `TrashEntry` (`app/models/trash_entry.py`) | 回收站条目表；记录回收站内图片/相册的原路径、trash payload、预览信息与恢复所需元数据 |
 | `album_image` | `AlbumImage` (`app/models/album_image.py`) | 相册-图片显式多对多关联表；通过索引 JOIN 替代全表扫描，加速相册与日期视图查询 |
-| `tag` | `Tag` (`app/models/tag.py`) | 标签库；存储标准化名称、展示名称、分类、使用次数、来源、元信息等，`ImageAsset.tags` 存储该表的 `id` 外键 |
+| `tag` | `Tag` (`app/models/tag.py`) | 标签库；存储标准化名称、展示名称、使用次数、来源、元信息等，`ImageAsset.tags` 存储该表的 `id` 外键 |
 
 附加文件：
 - `MEDIA_DIR/.hash_index.json`：哈希索引缓存（非 SQLite），用于导入时 O(1) 去重，详见 §3.3d。

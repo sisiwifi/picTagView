@@ -168,12 +168,12 @@ def delete_category(category_id: int) -> dict:
 def bulk_update_categories(body: CategoryBulkAction) -> dict:
     ids = [category_id for category_id in body.ids if isinstance(category_id, int)]
     if not ids:
-        return {"updated": 0, "deleted": 0, "reassigned": {"image": 0, "album": 0, "tag": 0, "trash": 0}, "skipped": []}
+        return {"updated": 0, "deleted": 0, "reassigned": {"image": 0, "trash": 0}, "skipped": []}
 
     skipped: list[int] = []
     updated = 0
     deleted = 0
-    reassigned_total = {"image": 0, "album": 0, "tag": 0, "trash": 0}
+    reassigned_total = {"image": 0, "trash": 0}
 
     with get_session() as session:
         ensure_default_category(session)

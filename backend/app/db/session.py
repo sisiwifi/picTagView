@@ -18,6 +18,7 @@ def init_db() -> None:
     from app.models.album import Album          # noqa: F401
     from app.models.album_image import AlbumImage  # noqa: F401
     from app.models.category import Category    # noqa: F401
+    from app.models.image_asset import ImageAsset  # noqa: F401
     from app.models.tag import Tag              # noqa: F401
     from app.models.trash_entry import TrashEntry  # noqa: F401
     SQLModel.metadata.create_all(engine)
@@ -135,7 +136,6 @@ def _migrate_db() -> None:
             ("display_name", "TEXT"),
             ("type",         "TEXT"),
             ("description",  "TEXT"),
-            ("category_id",  "INTEGER"),
             ("usage_count",  "INTEGER"),
             ("last_used_at", "TEXT"),
             ("metadata",     "TEXT"),
@@ -180,7 +180,6 @@ def _migrate_db() -> None:
             ("title",                "TEXT"),
             ("description",          "TEXT"),
             ("path",                 "TEXT"),
-            ("category_id",          "INTEGER"),
             ("is_leaf",              "INTEGER"),
             ("parent_id",            "INTEGER"),
             ("cover",                "TEXT"),
@@ -215,8 +214,6 @@ def _migrate_db() -> None:
 
         for index_sql in [
             "CREATE INDEX IF NOT EXISTS ix_imageasset_category_id ON imageasset(category_id)",
-            "CREATE INDEX IF NOT EXISTS ix_album_category_id ON album(category_id)",
-            "CREATE INDEX IF NOT EXISTS ix_tag_category_id ON tag(category_id)",
             "CREATE INDEX IF NOT EXISTS ix_trash_entry_category_id ON trash_entry(category_id)",
         ]:
             try:

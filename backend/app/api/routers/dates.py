@@ -19,6 +19,7 @@ from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
 from app.services.category_service import DEFAULT_CATEGORY_ID, get_active_category_ids, is_category_visible
+from app.services.visible_album_service import album_has_visible_images, build_visible_album_stats, list_visible_assets
 
 router = APIRouter()
 
@@ -37,15 +38,8 @@ def _to_unix_ts(dt: datetime | None) -> int | None:
 def dates_view() -> DateViewResponse:
     with get_session() as session:
         active_category_ids = get_active_category_ids(session)
-        all_assets = session.exec(
-            select(ImageAsset)
-            .where(ImageAsset.date_group != None)  # noqa: E711
-            .order_by(col(ImageAsset.id))
-        ).all()
-        assets = [
-            asset for asset in all_assets
-            if is_category_visible(asset.category_id, active_category_ids)
-        ]
+        assets = list_visible_assets(session, active_category_ids)
+        stats_by_public_id = build_visible_album_stats(session, assets)
 
         # Build set of image IDs that belong to any album via album_image table
         album_image_ids: set[int] = set(
@@ -66,7 +60,7 @@ def dates_view() -> DateViewResponse:
         ).all()
         top_albums = [
             album for album in top_albums
-            if is_category_visible(album.category_id, active_category_ids)
+            if album_has_visible_images(album, stats_by_public_id)
         ]
 
         album_map: dict[str, list[Album]] = defaultdict(list)
@@ -87,7 +81,10 @@ def dates_view() -> DateViewResponse:
             direct_assets = direct_map.get(group, [])
             group_albums = album_map.get(group, [])
 
-            count = len(direct_assets) + sum(a.subtree_photo_count or 0 for a in group_albums)
+            count = len(direct_assets) + sum(
+                (stats_by_public_id.get(album.public_id or "").subtree_photo_count if stats_by_public_id.get(album.public_id or "") else 0)
+                for album in group_albums
+            )
             if count == 0:
                 continue
 
@@ -108,18 +105,15 @@ def dates_view() -> DateViewResponse:
                     row_cache_thumb_url = cache_thumb_url(rep)
             else:
                 for album in group_albums:
-                    cover_photo_id = None
-                    if album.cover and isinstance(album.cover, dict):
-                        cover_photo_id = album.cover.get("photo_id")
-                    if cover_photo_id is not None:
-                        asset_for_cover = session.get(ImageAsset, cover_photo_id)
-                        if asset_for_cover:
-                            cover_id = asset_for_cover.id
-                            row_thumb_url = thumb_url(asset_for_cover)
-                            if not row_thumb_url:
-                                row_cache_thumb_url = cache_thumb_url(asset_for_cover)
-                            if row_thumb_url or row_cache_thumb_url:
-                                break
+                    stats = stats_by_public_id.get(album.public_id or "")
+                    cover_asset = stats.cover_asset if stats else None
+                    if cover_asset:
+                        cover_id = cover_asset.id
+                        row_thumb_url = thumb_url(cover_asset)
+                        if not row_thumb_url:
+                            row_cache_thumb_url = cache_thumb_url(cover_asset)
+                        if row_thumb_url or row_cache_thumb_url:
+                            break
 
             year_map[year].append(
                 MonthGroup(
@@ -141,15 +135,8 @@ def dates_view() -> DateViewResponse:
 def date_group_items(date_group: str) -> DateItemsResponse:
     with get_session() as session:
         active_category_ids = get_active_category_ids(session)
-        all_assets = session.exec(
-            select(ImageAsset)
-            .where(ImageAsset.date_group == date_group)
-            .order_by(col(ImageAsset.id))
-        ).all()
-        assets = [
-            asset for asset in all_assets
-            if is_category_visible(asset.category_id, active_category_ids)
-        ]
+        assets = list_visible_assets(session, active_category_ids, date_group)
+        stats_by_public_id = build_visible_album_stats(session, assets, date_group)
 
         # Build set of image IDs that belong to any album via album_image table
         album_image_ids: set[int] = set(
@@ -199,57 +186,37 @@ def date_group_items(date_group: str) -> DateItemsResponse:
         ).all()
         top_albums = [
             album for album in top_albums
-            if is_category_visible(album.category_id, active_category_ids)
+            if album_has_visible_images(album, stats_by_public_id)
         ]
 
         album_items: list[DateItem] = []
         for album in top_albums:
+            stats = stats_by_public_id.get(album.public_id or "")
             row_thumb_url = ""
             row_cache_thumb_url = None
-            cover_photo_id = None
-            cover_width = None
-            cover_height = None
-            if album.cover and isinstance(album.cover, dict):
-                cover_photo_id = album.cover.get("photo_id")
-                tp = album.cover.get("thumb_path", "")
-                if tp:
-                    resolved = resolve_stored_path(tp)
-                    if resolved and resolved.exists():
-                        try:
-                            resolved.relative_to(TEMP_DIR)
-                            row_thumb_url = f"/thumbnails/{resolved.name}"
-                        except ValueError:
-                            try:
-                                resolved.relative_to(CACHE_DIR)
-                                row_cache_thumb_url = f"/cache/{resolved.name}"
-                            except ValueError:
-                                pass
-
-            if cover_photo_id is not None:
-                asset_for_cover = session.get(ImageAsset, cover_photo_id)
-                if asset_for_cover:
-                    cover_width = asset_for_cover.width
-                    cover_height = asset_for_cover.height
-                    if not row_thumb_url:
-                        row_thumb_url = thumb_url(asset_for_cover)
-                    if not row_cache_thumb_url:
-                        row_cache_thumb_url = cache_thumb_url(asset_for_cover)
+            cover_asset = stats.cover_asset if stats else None
+            cover_photo_id = cover_asset.id if cover_asset else None
+            cover_width = cover_asset.width if cover_asset else None
+            cover_height = cover_asset.height if cover_asset else None
+            if cover_asset:
+                row_thumb_url = thumb_url(cover_asset)
+                row_cache_thumb_url = cache_thumb_url(cover_asset)
 
             album_items.append(
                 DateItem(
                     type="album",
                     name=album.title,
                     thumb_url=row_thumb_url,
-                    count=album.subtree_photo_count,
+                    count=stats.subtree_photo_count if stats else 0,
                     id=cover_photo_id,
-                    category_id=album.category_id or DEFAULT_CATEGORY_ID,
+                    category_id=None,
                     cache_thumb_url=row_cache_thumb_url,
                     width=cover_width,
                     height=cover_height,
                     public_id=album.public_id,
                     album_path=album.path,
                     sort_ts=_to_unix_ts(album.updated_at or album.created_at),
-                    photo_count=album.photo_count,
+                    photo_count=stats.direct_photo_count if stats else 0,
                     created_at=album.created_at,
                 )
             )

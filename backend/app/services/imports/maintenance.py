@@ -80,7 +80,6 @@ def _ensure_album_chain(session, subdir_chain: list[str], date_group: str) -> tu
             public_id="",
             title=subdir_name,
             path=album_path,
-            category_id=DEFAULT_CATEGORY_ID,
             is_leaf=is_last,
             parent_id=parent_id,
             date_group=date_group,

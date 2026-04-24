@@ -7,7 +7,7 @@ from sqlmodel import Field, SQLModel
 
 
 def default_usage_count() -> dict[str, int]:
-    return {"image": 0, "album": 0, "tag": 0}
+    return {"image": 0}
 
 
 class Category(SQLModel, table=True):

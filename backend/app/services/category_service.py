@@ -175,9 +175,7 @@ def resolve_category_id(session: Session, category_id: object = None, category_n
 def sync_category_usage_counts(session: Session) -> bool:
     ensure_default_category(session)
 
-    from app.models.album import Album
     from app.models.image_asset import ImageAsset
-    from app.models.tag import Tag
 
     categories = session.exec(select(Category).order_by(Category.id)).all()
     counts = {
@@ -194,10 +192,6 @@ def sync_category_usage_counts(session: Session) -> bool:
 
     for image_category_id in session.exec(select(ImageAsset.category_id)).all():
         bump(image_category_id, "image")
-    for album_category_id in session.exec(select(Album.category_id)).all():
-        bump(album_category_id, "album")
-    for tag_category_id in session.exec(select(Tag.category_id)).all():
-        bump(tag_category_id, "tag")
 
     changed = False
     for category in categories:
@@ -211,13 +205,11 @@ def sync_category_usage_counts(session: Session) -> bool:
 
 
 def reassign_category_references(session: Session, source_category_id: int, target_category_id: int = DEFAULT_CATEGORY_ID) -> dict[str, int]:
-    reassigned = {"image": 0, "album": 0, "tag": 0, "trash": 0}
+    reassigned = {"image": 0, "trash": 0}
     if source_category_id == target_category_id:
         return reassigned
 
-    from app.models.album import Album
     from app.models.image_asset import ImageAsset
-    from app.models.tag import Tag
     from app.models.trash_entry import TrashEntry
 
     images = session.exec(select(ImageAsset).where(ImageAsset.category_id == source_category_id)).all()
@@ -226,19 +218,11 @@ def reassign_category_references(session: Session, source_category_id: int, targ
         session.add(asset)
     reassigned["image"] = len(images)
 
-    albums = session.exec(select(Album).where(Album.category_id == source_category_id)).all()
-    for album in albums:
-        album.category_id = target_category_id
-        session.add(album)
-    reassigned["album"] = len(albums)
-
-    tags = session.exec(select(Tag).where(Tag.category_id == source_category_id)).all()
-    for tag in tags:
-        tag.category_id = target_category_id
-        session.add(tag)
-    reassigned["tag"] = len(tags)
-
-    trash_entries = session.exec(select(TrashEntry).where(TrashEntry.category_id == source_category_id)).all()
+    trash_entries = session.exec(
+        select(TrashEntry)
+        .where(TrashEntry.entity_type == "image")
+        .where(TrashEntry.category_id == source_category_id)
+    ).all()
     for entry in trash_entries:
         entry.category_id = target_category_id
         session.add(entry)
@@ -299,7 +283,7 @@ def backfill_category_ids_from_legacy() -> None:
             categories_by_id[created.id or DEFAULT_CATEGORY_ID] = created
             return created.id or DEFAULT_CATEGORY_ID
 
-        for table_name in ("imageasset", "album", "tag", "trash_entry"):
+        for table_name in ("imageasset", "trash_entry"):
             rows = _load_legacy_category_rows(session, table_name)
             for row_id, category_id, legacy_value in rows:
                 next_category_id = category_id if isinstance(category_id, int) and category_id in categories_by_id else None

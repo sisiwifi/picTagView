@@ -179,12 +179,12 @@
     <div class="settings-card">
       <h3 class="card-title">主分类</h3>
       <p class="card-desc">
-        主分类是高于 Tag 的一级控制维度，用于统一配置图片、相册与标签的归属和可见性。
+        主分类只作用于图片可见性与导入归属；相册仅保留目录结构，标签不再绑定主分类。
       </p>
       <div class="setting-row">
         <div class="setting-info">
           <span class="setting-label">配置主分类</span>
-          <span class="setting-desc">打开独立配置页，管理默认主分类、批量移除与显示开关。</span>
+          <span class="setting-desc">打开独立配置页，管理图片主分类、批量移除与显示开关。</span>
         </div>
         <button class="btn btn--secondary" type="button" @click="$router.push('/settings/categories')">
           配置主分类

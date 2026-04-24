@@ -90,8 +90,6 @@
           <div class="category-card__bottom">
             <div class="category-card__stats">
               <span class="category-card__stat">图片 {{ category.usage_count?.image || 0 }}</span>
-              <span class="category-card__stat">相册 {{ category.usage_count?.album || 0 }}</span>
-              <span class="category-card__stat">标签 {{ category.usage_count?.tag || 0 }}</span>
             </div>
 
             <div v-if="!isDefaultCategory(category)" class="category-card__actions">
@@ -428,8 +426,8 @@ export default {
       const validIds = ids.filter(id => Number.isInteger(id) && id !== DEFAULT_CATEGORY_ID)
       if (!validIds.length) return
       const message = displayName
-        ? `确认移除主分类“${displayName}”吗？所有关联图片、相册、标签和回收站记录都会回退到默认主分类。`
-        : `确认移除已选中的 ${validIds.length} 个主分类吗？所有关联图片、相册、标签和回收站记录都会回退到默认主分类。`
+        ? `确认移除主分类“${displayName}”吗？所有关联图片及已删除图片记录都会回退到默认主分类。`
+        : `确认移除已选中的 ${validIds.length} 个主分类吗？所有关联图片及已删除图片记录都会回退到默认主分类。`
       this.openConfirmDialog({
         title: '确认移除主分类',
         message,
@@ -453,7 +451,7 @@ export default {
         }
         const data = await res.json()
         this.selectedIds = this.selectedIds.filter(id => !ids.includes(id))
-        this.showMessage('success', `已移除 ${data.deleted || 0} 个主分类，相关内容已回退到默认主分类。`)
+        this.showMessage('success', `已移除 ${data.deleted || 0} 个主分类，相关图片已回退到默认主分类。`)
         await this.loadCategories()
       } catch (err) {
         this.showMessage('error', `移除主分类失败：${toErrorMessage(err)}`, 4200)

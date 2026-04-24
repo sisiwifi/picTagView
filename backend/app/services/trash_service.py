@@ -168,6 +168,10 @@ def _reconcile_trash_entries() -> None:
                 changed = True
                 continue
 
+            if entry.entity_type != "image" and entry.category_id is not None:
+                entry.category_id = None
+                changed = True
+
             payload_path, migrated = _migrate_legacy_trash_payload(entry, payload_path)
             changed = changed or migrated
 
@@ -550,7 +554,7 @@ def list_trash_items() -> TrashListResponse:
             entry_key=entry.entry_key,
             type=entry.entity_type,
             name=entry.display_name,
-            category_id=entry.category_id or DEFAULT_CATEGORY_ID,
+            category_id=(entry.category_id or DEFAULT_CATEGORY_ID) if entry.entity_type == "image" else None,
             thumb_url=_project_preview_url(entry.preview_thumb_path) or "",
             cache_thumb_url=_project_preview_url(entry.preview_cache_path),
             trash_media_url=_project_preview_url(entry.preview_path),
@@ -663,7 +667,6 @@ def _move_album_to_trash(album_path: str) -> int | None:
             file_hash=file_hash,
             width=width,
             height=height,
-            category_id=album.category_id or DEFAULT_CATEGORY_ID,
             photo_count=album.subtree_photo_count or album.photo_count,
             source_created_at=album.created_at,
             metadata_json={"album_public_id": album.public_id},
@@ -787,10 +790,46 @@ def _cleanup_skipped_restore_conflicts(outcomes: list[dict[str, str]]) -> None:
             _cleanup_empty_parent_dirs(conflict_path.parent, MEDIA_DIR)
 
 
+def _reapply_restored_image_categories(path_to_category: dict[str, int]) -> None:
+    normalized_targets = {
+        normalize_stored_path(path): category_id
+        for path, category_id in path_to_category.items()
+        if isinstance(category_id, int) and category_id > 0
+    }
+    if not normalized_targets:
+        return
+
+    with get_session() as session:
+        assets = session.exec(select(ImageAsset).order_by(col(ImageAsset.id))).all()
+        changed = False
+        for asset in assets:
+            current_category_id = asset.category_id if isinstance(asset.category_id, int) and asset.category_id > 0 else DEFAULT_CATEGORY_ID
+            if current_category_id != DEFAULT_CATEGORY_ID:
+                continue
+
+            media_paths = [
+                normalize_stored_path(path)
+                for path in (asset.media_path or [])
+                if isinstance(path, str) and path
+            ]
+            for media_path in media_paths:
+                target_category_id = normalized_targets.get(media_path)
+                if not target_category_id or target_category_id == DEFAULT_CATEGORY_ID:
+                    continue
+                asset.category_id = target_category_id
+                session.add(asset)
+                changed = True
+                break
+
+        if changed:
+            session.commit()
+
+
 def restore_trash_entries(entry_ids: list[int]) -> TrashActionResult:
     result = TrashActionResult()
     changed = False
     affected_album_paths: set[str] = set()
+    image_category_overrides: dict[str, int] = {}
 
     with get_session() as session:
         entries = session.exec(
@@ -808,7 +847,11 @@ def restore_trash_entries(entry_ids: list[int]) -> TrashActionResult:
     for entry in entries:
         try:
             if entry.entity_type == "image":
-                image_entries.extend(_restore_image_entry(entry)[0])
+                restored_paths, _ = _restore_image_entry(entry)
+                image_entries.extend(restored_paths)
+                if isinstance(entry.category_id, int) and entry.category_id > 0:
+                    for rel_path, _ in restored_paths:
+                        image_category_overrides[normalize_stored_path(rel_path)] = entry.category_id
                 image_trash_entries.append(entry)
             elif entry.entity_type == "album":
                 album_entries.extend(_restore_album_entry(entry)[0])
@@ -822,6 +865,7 @@ def restore_trash_entries(entry_ids: list[int]) -> TrashActionResult:
         try:
             _created, _hash_conflicts, outcomes = ingest_media_entries(image_entries, generate_thumbs=True)
             _cleanup_skipped_restore_conflicts(outcomes)
+            _reapply_restored_image_categories(image_category_overrides)
             restored_trash_entries.extend(image_trash_entries)
         except Exception as exc:
             result.errors.append(str(exc))

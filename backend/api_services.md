@@ -187,14 +187,14 @@
   - 实现：app/api/routers/trash.py，调用 app/services/trash_service.py
   - 用途：列出回收站条目，供 TrashPage 瀑布流与选择态使用
   - 说明：返回前会先执行一次批量轻量对账，清除已丢失 payload 的 `TrashEntry`，并为仍存在的条目成批补齐 `preview_path` 与 `temp/*.webp`；不再在进入页面时逐条强制生成 `data/cache/*.webp`
-  - 返回：`{ items: [...] }`，条目包含类型、名称、预览图、原路径、图片尺寸、Tag ID 列表与 `category_id`
+  - 返回：`{ items: [...] }`，条目包含类型、名称、预览图、原路径、图片尺寸与 Tag ID 列表；`category_id` 仅在图片条目上返回
   - 前端约定：TrashPage 直接消费返回值中的 `cache_thumb_url` / `thumb_url` / `trash_media_url`，不再额外调用 `/api/thumbnails/cache`；页面切换锚点恢复、瀑布流排布缓存与选择态虚拟化都在前端本地完成
 
 ### 3.4b 主分类接口
 
 - GET /api/categories
   - 实现：app/api/routers/categories.py
-  - 用途：列出全部主分类，并同步返回 `{image, album, tag}` 使用计数
+  - 用途：列出全部主分类，并同步返回 `{image}` 使用计数
   - 说明：接口会确保默认主分类存在，默认项固定为 `id=1`
 
 - POST /api/categories
@@ -209,7 +209,7 @@
 
 - DELETE /api/categories/{category_id}
   - 实现：app/api/routers/categories.py
-  - 用途：删除主分类，并把引用该分类的图片、相册、Tag 与回收站条目回退到默认主分类
+  - 用途：删除主分类，并把引用该分类的图片与图片回收站条目回退到默认主分类
 
 - POST /api/categories/bulk
   - 实现：app/api/routers/categories.py
@@ -307,8 +307,7 @@
 
 - GET /api/tags
   - 实现：app/api/routers/tags.py
-  - 参数：ids（逗号分隔 ID 列表，批量查）、category_id（主分类过滤）、category（兼容旧名称过滤）、type（标签种类过滤）、q（名称模糊搜索）、limit/offset（分页）
-  - 返回补充：条目会携带 `category_id`、`category_name`、`category_display_name`
+  - 参数：ids（逗号分隔 ID 列表，批量查）、type（标签种类过滤）、q（名称模糊搜索）、limit/offset（分页）；历史 `category_id` / `category` 参数仍可传入但已忽略
   - 用途：列出/搜索/批量查询 Tag；前端展示图片标签时通过 ids 参数批量拉取
   - 性能补充：总数统计已改为数据库 `COUNT(*)` 查询，避免批量 ids 请求时先全量取回记录再在 Python 内计数
 
@@ -318,12 +317,12 @@
 
 - POST /api/tags
   - 实现：app/api/routers/tags.py
-  - Body：`{ name, display_name, type, description, category, created_by, metadata }`
+  - Body：`{ name, display_name, type, description, created_by, metadata }`
   - 用途：手动创建新 Tag；name 会自动规范化为小写
 
 - PATCH /api/tags/{tag_id}
   - 实现：app/api/routers/tags.py
-  - Body：`{ display_name?, type?, description?, category?, metadata? }`
+  - Body：`{ display_name?, type?, description?, metadata? }`
   - 用途：更新 Tag 属性（name 不可修改）
 
 - DELETE /api/tags/{tag_id}

@@ -25,7 +25,7 @@ class TrashEntry(SQLModel, table=True):
     height: Optional[int] = Field(default=None)
     file_size: Optional[int] = Field(default=None)
     mime_type: Optional[str] = Field(default=None)
-    category_id: int = Field(default=1, index=True)
+    category_id: Optional[int] = Field(default=None, index=True)
     imported_at: Optional[datetime] = Field(default=None)
     file_created_at: Optional[datetime] = Field(default=None)
     source_created_at: Optional[datetime] = Field(default=None)

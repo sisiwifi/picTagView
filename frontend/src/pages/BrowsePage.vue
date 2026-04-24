@@ -1029,6 +1029,7 @@ export default {
     },
 
     detailCategoryText(item) {
+      if (item?.type !== 'image') return ''
       const categoryId = Number(item?.category_id)
       if (!Number.isInteger(categoryId) || categoryId <= 0) return ''
       return this.categoryDisplayMap[categoryId] || ''
