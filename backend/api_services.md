@@ -188,6 +188,7 @@
   - 用途：列出回收站条目，供 TrashPage 瀑布流与选择态使用
   - 说明：返回前会先执行一次批量轻量对账，清除已丢失 payload 的 `TrashEntry`，并为仍存在的条目成批补齐 `preview_path` 与 `temp/*.webp`；不再在进入页面时逐条强制生成 `data/cache/*.webp`
   - 返回：`{ items: [...] }`，条目包含类型、名称、预览图、原路径、图片尺寸、Tag ID 列表与 `category_id`
+  - 前端约定：TrashPage 直接消费返回值中的 `cache_thumb_url` / `thumb_url` / `trash_media_url`，不再额外调用 `/api/thumbnails/cache`；页面切换锚点恢复、瀑布流排布缓存与选择态虚拟化都在前端本地完成
 
 ### 3.4b 主分类接口
 
@@ -362,6 +363,8 @@
 - TrashPage 条目会优先复用 `thumb_url` / `cache_thumb_url`；若只有 trash payload，则通过 `/trash-media/...` 作为预览回退。
 - TrashPage header 左侧提供“返回”按钮；选择态右下角操作岛包含“详情 / 还原 / 删除 / 全选 / 取消选择”。当同时存在相册与图片时，“全选”沿用类型锁定逻辑，通过二级按钮选择“相册 / 图片”。
 - BrowsePage 的“删除到回收站”和 TrashPage 的“还原 / 删除 / 清空回收站”都应使用应用内居中确认弹窗，不再依赖浏览器原生提示框。
+- TrashPage 与 BrowsePage 保持一致的视觉锚点策略：瀑布流和选择态切换时，优先恢复当前首屏条目到第一排附近，而不是简单回到顶部。
+- TrashPage 的瀑布流布局也采用精确宽度 key 的内存缓存；若回收站条目缺失 `width/height`，才在图片加载后批量回填尺寸，避免每张图触发一次全量重排。
 - BrowsePage 的普通模式与选择模式都应优先显示 cache/temp 缩略图；若缓存尚未生成，则显示骨架占位并沿用 `/api/thumbnails/cache` 的异步生成链路，而不是把原图当作常态展示源。
 - `/api/dates/*` 与 `/api/albums/*` 的图片条目现在还会返回 `file_size`、`imported_at`、`file_created_at`，供选择模式详情浮层直接展示，不需要额外请求单图详情接口。
 - `/api/dates/*` 与 `/api/albums/*` 的图片条目现在还会返回 `media_index` 与 `media_rel_path`；前端调用 `/api/images/{image_id}/open` 时应优先传入 `path=media_rel_path`，而不是默认取 `media_path[0]`。

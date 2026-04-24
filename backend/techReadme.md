@@ -110,6 +110,7 @@
   - TrashPage header 左侧提供“返回”按钮，右侧项目数前提供“清空回收站”按钮；选择态右下角操作岛提供“详情 / 还原 / 删除 / 全选 / 取消选择”。
   - TrashPage 详情浮层复用 `SelectionDetailOverlay.vue`，但主动作切换为“还原”，危险动作切换为“删除”，并隐藏普通浏览页才需要的“分析”按钮。
   - BrowsePage 的“删除到回收站”与 TrashPage 的“还原 / 删除 / 清空回收站”统一改为 `ConfirmationDialog.vue` 居中弹窗确认，不再使用浏览器原生 `confirm/alert`。
+  - TrashPage 的瀑布流与选择态切换现在也会捕获首屏视觉锚点，并在切换后恢复到对应条目附近；选择态卡片按可视窗口虚拟渲染，避免大回收站一次性挂载全部卡片。
   - 批量删除/清空/还原确认后，页面会立即进入 busy 锁定态：确认按钮不可重复点击，主界面显示“处理中”遮罩，降低大批量操作下的重复误触风险。
 
 ### 3.3 `app/services/import_service.py`（门面）
@@ -477,6 +478,7 @@
   - **导入缩略图**（月份封面）：仅对每月代表图生成 `TEMP_DIR/{file_hash}.webp`，400×400 方形裁剪
   - **缓存展示缩略图**（相册内浏览）：按需生成 `CACHE_DIR/{file_hash}_cache.webp`，最短边 600，保持原始比例
   - 回收站条目优先复用 `cache_thumb_url`；若 cache 缺失，则通过 `/trash-media/...` 提供预览回退，不再额外生成回收站专用 temp 缩略图
+  - 因为 `GET /api/trash/items` 已直接返回 `cache_thumb_url` 与宽高，TrashPage 不走 BrowsePage 的 generation/cursor 轮询协议；页面只在前端维护精确宽度排布缓存、视觉锚点恢复和缺失尺寸的 `img.onload` 兜底回填
   - 重复上传同 hash 文件时不会重复写缩略图
 - 目录组织：
   - 原图存储：`MEDIA_DIR/<date_group>/[top_subdir/]...`（`YYYY-MM`）
