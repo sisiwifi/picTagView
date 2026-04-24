@@ -34,6 +34,7 @@
   - `app/api/routers/trash.py`：`GET /api/trash/items`、`POST /api/trash/move`、`POST /api/trash/restore`、`POST /api/trash/hard-delete`、`DELETE /api/trash`
   - `app/api/routers/system.py`：`/api/system/*` 相关接口
   - `app/api/routers/cache.py`：`DELETE /api/cache`、`/api/thumbnails/cache*`
+    - `POST /api/thumbnails/cache` 已改为 generation 感知的共享缓存队列入口；`GET /api/thumbnails/cache/status/{task_id}` 支持 `cursor` 增量轮询
 - 共享查询与路径工具在 `app/api/common.py`：缩略图 URL 解析、存储路径解析、`media_path` 实例选择与路径谓词匹配。
 
 补充（2026-04）：
@@ -58,7 +59,7 @@
   - 选择详情浮层会显示 `Category.display_name` 作为“主分类”字段。
 - 前端结构补充：日期详情页与相册页的 header 已统一为面包屑样式，并组件化为 `frontend/src/components/BreadcrumbHeader.vue`，用于复用“返回按钮 + 面包屑 + 项目数 + 排序控件 + 右侧扩展操作区”。
 - 前端交互补充：BrowsePage 已启用 header 上预留的“选择”按钮。进入选择模式后，列表强制切换为固定比例媒体卡片网格；卡片由 `frontend/src/components/MediaItemCard.vue` 组件承载，结构为“正方形图片区 + 固定 56px 信息区”。当前网格列数策略为：横屏固定 5 列，竖屏固定 3 列，用于控制同屏资源消耗。
-- 渲染策略补充：BrowsePage 仅对列表模式与选择模式启用窗口化渲染，滚动时按可视区切片更新 DOM；“大缩略图”照片墙继续保留原有全量 `justifiedRows` 布局与滚动锚点逻辑。
+- 渲染策略补充：BrowsePage 仅对列表模式与选择模式启用窗口化渲染，滚动时按可视区切片更新 DOM；“大缩略图”照片墙继续保留全量 `justifiedRows` 布局，但新增“精确容器宽度 + 布局指纹”级别的内存排布缓存，减少重复重算。
 - 选择模式交互补充：
   - 第一项选中的类型会锁定当前批量选择类型（`image` 或 `album`），另一类型卡片置灰且不可选。
   - 支持单击单选、`Ctrl`/`Cmd` 追加切换、`Shift` 范围选择；若范围内出现异类项则跳过。
@@ -77,7 +78,9 @@
   - 相册标识从列表右侧移至缩略图右侧，改为圆角矩形 `ALB` 标签后接相册名，右侧预留为空白区域。
 - 信息区显示补充：选择模式信息区默认显示文件名；点击任一卡片的信息区后，当前页面所有卡片统一切换为 Tag 文本显示，再次点击切回文件名。
 - 缩略图策略补充：BrowsePage 普通模式与选择模式统一优先显示 `data/cache/*.webp` 或 `temp/*.webp` 缩略图；当 `cache_thumb_url` 缺失时，前端先显示骨架占位，并通过 `/api/thumbnails/cache` 按需异步生成缓存后再更新显示。原图回退不再作为常规浏览路径。
-- 照片墙布局补充：BrowsePage 的“大缩略图”模式会优先使用浏览接口返回的 `width` / `height` 初始化 `justifiedRows` 布局，避免依赖图片逐张加载后再回填宽高，从而降低首轮重排频率；现有基于滚动锚点的缓存缩略图预取逻辑保持不变。
+- 浏览锚点补充：BrowsePage 现区分“视觉锚点”和“缓存锚点”。视觉锚点用于 grid / list / 选择模式互切时恢复同一内容的位置，保证目标内容至少落在新布局的第一排内；缓存锚点则专门用于缓存缩略图生成请求。
+- 照片墙布局补充：BrowsePage 的“大缩略图”模式会优先使用浏览接口返回的 `width` / `height` 初始化 `justifiedRows` 布局，避免依赖图片逐张加载后再回填宽高，从而降低首轮重排频率；`onImgLoad` 现在只在 `width` / `height` 缺失时做异常兜底回填，不再作为常规排布来源。
+- 缓存队列补充：BrowsePage 与 CalendarOverview 发起的缓存缩略图请求已改为 `page_token + generation` 协议。前端会先按“缓存锚点、当前首排、前后 50 张”构造优先级列表，再交给后端共享 worker 池；同页新 generation 到来时，未启动的旧 job 会被丢弃，状态轮询通过 `cursor` 增量返回新增完成项。
 - Tag 请求策略补充：前端仅在信息区切换到 Tag 模式时，才会从当前页面条目中去重收集 `tags` ID，并分批调用 `GET /api/tags?ids=...` 批量换取 `display_name/name`；普通浏览与默认文件名模式不触发该请求，以减少 DB 压力与事务占用。
 - 返回与面包屑导航行为：
   - 前端路由已重构为层级结构（2026-04）：
@@ -221,6 +224,12 @@
     - `set_month_cover_size_px(value)`（限制范围 100~2000）
   - 该配置被 `cache_thumb_service` 在生成 `data/cache/*.webp` 时使用
   - `parallel_processor` 会使用月份封面尺寸配置生成 `temp/*.webp`
+
+### 3.4d `app/services/cache_thumb_service.py`
+- 浏览缓存缩略图服务：
+  - `generate_cache_thumb_entry(key, file_path, cache_dir)`：单张图片缓存生成入口，供共享队列 worker 使用
+  - `generate_cache_thumbs_progressively(...)`：兼容其它批量场景的渐进式生成接口
+  - `get_cache_thumb_worker_count()`：按 CPU 核数动态计算 worker 数，默认保留 2 个核心给系统，并设置 8 个 worker 上限
 
 ### 3.5 `app/models/image_asset.py`
 - 数据模型 `ImageAsset`：

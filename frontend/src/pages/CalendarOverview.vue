@@ -58,6 +58,8 @@ export default {
       cacheUrls: {},
       pollTimer: null,
       taskId: null,
+      cacheGeneration: 0,
+      cacheStatusCursor: 0,
     }
   },
 
@@ -99,15 +101,24 @@ export default {
 
         if (missingIds.length > 0) {
           try {
+            const generation = this.cacheGeneration + 1
             const cacheRes = await fetch(`${API_BASE}/api/thumbnails/cache`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ image_ids: missingIds }),
+              body: JSON.stringify({
+                ordered_image_ids: missingIds,
+                generation,
+                page_token: 'calendar-overview',
+                sort_signature: `months:${missingIds.length}`,
+                direction: 'none',
+              }),
             })
             if (cacheRes.ok) {
               const { task_id } = await cacheRes.json()
+              this.cacheGeneration = generation
+              this.cacheStatusCursor = 0
               this.taskId = task_id
-              this.startPoll()
+              this.startPoll(generation)
             }
           } catch { /* ignore */ }
         }
@@ -119,14 +130,15 @@ export default {
       this.$router.push(`/calendar/${mg.group}`)
     },
 
-    startPoll() {
-      this.stopPoll()
+    startPoll(expectedGeneration = this.cacheGeneration) {
+      this.stopPoll(false)
       const poll = async () => {
-        if (!this.taskId) return
+        if (!this.taskId || expectedGeneration !== this.cacheGeneration) return
         try {
-          const res = await fetch(`${API_BASE}/api/thumbnails/cache/status/${this.taskId}`)
+          const res = await fetch(`${API_BASE}/api/thumbnails/cache/status/${this.taskId}?cursor=${this.cacheStatusCursor}`)
           if (!res.ok) return
           const data = await res.json()
+          if (expectedGeneration !== this.cacheGeneration) return
           const newUrls = {}
           for (const it of (data.items || [])) {
             if (it.id && it.cache_thumb_url) newUrls[it.id] = it.cache_thumb_url
@@ -134,16 +146,25 @@ export default {
           if (Object.keys(newUrls).length > 0) {
             this.cacheUrls = { ...this.cacheUrls, ...newUrls }
           }
+          if (Number.isInteger(data.next_cursor)) {
+            this.cacheStatusCursor = data.next_cursor
+          } else {
+            this.cacheStatusCursor += (data.items || []).length
+          }
           if (data.status === 'running') {
-            this.pollTimer = setTimeout(poll, 80)
+            this.pollTimer = setTimeout(poll, 180)
           }
         } catch { /* ignore */ }
       }
-      this.pollTimer = setTimeout(poll, 80)
+      this.pollTimer = setTimeout(poll, 180)
     },
 
-    stopPoll() {
+    stopPoll(resetTask = true) {
       if (this.pollTimer) { clearTimeout(this.pollTimer); this.pollTimer = null }
+      if (resetTask) {
+        this.taskId = null
+      }
+      this.cacheStatusCursor = 0
     },
   },
 }

@@ -254,7 +254,7 @@ import ActionProgressOverlay from '../components/ActionProgressOverlay.vue'
 import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
 
 const API_BASE = 'http://127.0.0.1:8000'
-const POLL_MS = 80
+const POLL_MS = 180
 const RADIUS = 50
 const DEBOUNCE_MS = 300
 const LONG_PRESS_MS = 220
@@ -267,6 +267,23 @@ const SELECTION_LANDSCAPE_COLS = 5
 const SELECTION_PORTRAIT_COLS = 3
 const SELECTION_LANDSCAPE_GAP = 16
 const SELECTION_PORTRAIT_GAP = 12
+const FIRST_ROW_TOLERANCE_PX = 12
+const RESTORE_ANCHOR_PADDING_PX = 12
+const DIMENSION_CORRECTION_BATCH_MS = 60
+const JUSTIFIED_LAYOUT_CACHE = new Map()
+const JUSTIFIED_LAYOUT_CACHE_LIMIT = 36
+
+function rememberJustifiedLayout(cacheKey, rows) {
+  if (JUSTIFIED_LAYOUT_CACHE.has(cacheKey)) {
+    JUSTIFIED_LAYOUT_CACHE.delete(cacheKey)
+  }
+  JUSTIFIED_LAYOUT_CACHE.set(cacheKey, rows)
+  while (JUSTIFIED_LAYOUT_CACHE.size > JUSTIFIED_LAYOUT_CACHE_LIMIT) {
+    const oldestKey = JUSTIFIED_LAYOUT_CACHE.keys().next().value
+    JUSTIFIED_LAYOUT_CACHE.delete(oldestKey)
+  }
+  return rows
+}
 
 function createDialogState() {
   return {
@@ -298,7 +315,16 @@ export default {
       debounceTimer: null,
       resizeObserver: null,
       lastCenter: -1,
+      lastScrollDirection: 'none',
+      lastObservedScrollTop: typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0,
+      cacheRequestGeneration: 0,
+      cacheStatusCursor: 0,
+      lastCacheRequestSignature: '',
       imgDimensions: {},
+      layoutFingerprint: '',
+      pendingViewAnchor: null,
+      pendingDimensionCorrections: {},
+      dimensionFlushTimer: null,
       containerWidth: 0,
       viewMode: 'grid',
       sortBy: 'alpha',
@@ -399,6 +425,15 @@ export default {
     totalCount() {
       return this.items.length
     },
+    cachePageToken() {
+      if (this.isAlbumMode) {
+        return `browse:${this.fullAlbumPath}`
+      }
+      return `browse:${this.dateGroup}`
+    },
+    cacheSortSignature() {
+      return `${this.sortBy}:${this.sortDir}:${this.items.length}`
+    },
     isPhotoGridMode() {
       return this.viewMode === 'grid' && !this.selectionMode
     },
@@ -477,6 +512,11 @@ export default {
       const items = this.items
       if (!items.length) return []
 
+      const cacheKey = `${this.cachePageToken}|${this.cacheSortSignature}|${Math.max(1, Math.round(width))}|${this.layoutFingerprint}`
+      if (JUSTIFIED_LAYOUT_CACHE.has(cacheKey)) {
+        return JUSTIFIED_LAYOUT_CACHE.get(cacheKey)
+      }
+
       const rows = []
       let rowStart = 0
       let rowAspectRatio = 0
@@ -510,7 +550,7 @@ export default {
           rowAspectRatio = 0
         }
       }
-      return rows
+      return rememberJustifiedLayout(cacheKey, rows)
     },
     selectedCount() {
       return Object.keys(this.selectedMap).length
@@ -688,18 +728,57 @@ export default {
       cancelAnimationFrame(this.scrollFrameId)
       this.scrollFrameId = null
     }
+    if (this.dimensionFlushTimer) {
+      clearTimeout(this.dimensionFlushTimer)
+      this.dimensionFlushTimer = null
+    }
   },
 
   methods: {
+    logBrowseDebug(event, payload = {}) {
+      console.debug('[BrowsePage]', { event, ...payload })
+    },
+
+    computeLayoutFingerprint(items, dimensions) {
+      let hash = 2166136261
+      const updateHash = (value) => {
+        const text = String(value)
+        for (let idx = 0; idx < text.length; idx++) {
+          hash ^= text.charCodeAt(idx)
+          hash = Math.imul(hash, 16777619)
+        }
+      }
+
+      for (let index = 0; index < items.length; index++) {
+        const item = items[index]
+        const key = item?.id || item?.public_id || index
+        const dims = dimensions[key] || {}
+        updateHash(`${key}:${dims.w || 0}x${dims.h || 0};`)
+      }
+      return (hash >>> 0).toString(36)
+    },
+
     async loadData() {
       this.loading = true
       this.sortBy = this.isAlbumMode ? 'alpha' : 'date'
       this.sortDir = 'asc'
       this.cacheUrls = {}
       this.imgDimensions = {}
+      this.layoutFingerprint = ''
       this.lastCenter = -1
+      this.lastScrollDirection = 'none'
+      this.lastObservedScrollTop = typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0
+      this.cacheRequestGeneration = 0
+      this.cacheStatusCursor = 0
+      this.lastCacheRequestSignature = ''
       this.selectionRowHeight = 0
       this.albumInfo = null
+      this.pendingViewAnchor = null
+      this.pendingDimensionCorrections = {}
+      if (this.dimensionFlushTimer) {
+        clearTimeout(this.dimensionFlushTimer)
+        this.dimensionFlushTimer = null
+      }
       this.closeSelectionDetails()
       this.closeSelectAllMenu()
       this.clearSelection()
@@ -785,6 +864,7 @@ export default {
       this.virtualEndIndex = nextItems.length
       this.cacheUrls = nextCacheUrls
       this.imgDimensions = nextDimensions
+      this.layoutFingerprint = this.computeLayoutFingerprint(nextItems, nextDimensions)
     },
 
     getAncestorTitle(segIndex, fallback) {
@@ -1153,9 +1233,41 @@ export default {
       if (!width || !height) return
       const key = item.id || item.public_id
       const existing = this.imgDimensions[key]
-      if (!existing || existing.w !== width || existing.h !== height) {
-        this.imgDimensions = { ...this.imgDimensions, [key]: { w: width, h: height } }
+      if (existing && existing.w > 0 && existing.h > 0) return
+      this.pendingDimensionCorrections = {
+        ...this.pendingDimensionCorrections,
+        [key]: { w: width, h: height },
       }
+      if (this.dimensionFlushTimer) {
+        clearTimeout(this.dimensionFlushTimer)
+      }
+      this.dimensionFlushTimer = window.setTimeout(() => {
+        this.flushDimensionCorrections()
+      }, DIMENSION_CORRECTION_BATCH_MS)
+    },
+
+    flushDimensionCorrections() {
+      if (this.dimensionFlushTimer) {
+        clearTimeout(this.dimensionFlushTimer)
+        this.dimensionFlushTimer = null
+      }
+      const corrections = this.pendingDimensionCorrections
+      const keys = Object.keys(corrections)
+      if (!keys.length) return
+
+      const nextDimensions = { ...this.imgDimensions }
+      for (const key of keys) {
+        const correction = corrections[key]
+        if (!correction?.w || !correction?.h) continue
+        const existing = nextDimensions[key]
+        if (existing && existing.w > 0 && existing.h > 0) continue
+        nextDimensions[key] = correction
+      }
+
+      this.pendingDimensionCorrections = {}
+      this.imgDimensions = nextDimensions
+      this.layoutFingerprint = this.computeLayoutFingerprint(this.items, nextDimensions)
+      this.logBrowseDebug('layout-dimension-fallback', { count: keys.length })
     },
 
     onResize() {
@@ -1175,6 +1287,14 @@ export default {
     },
 
     onWindowScroll() {
+      const nextScrollTop = window.scrollY || window.pageYOffset || 0
+      if (nextScrollTop > this.lastObservedScrollTop) {
+        this.lastScrollDirection = 'forward'
+      } else if (nextScrollTop < this.lastObservedScrollTop) {
+        this.lastScrollDirection = 'backward'
+      }
+      this.lastObservedScrollTop = nextScrollTop
+
       if (!this.isVirtualizedMode && !this.selectionDetailsOpen) return
       if (this.scrollFrameId) return
 
@@ -1190,15 +1310,250 @@ export default {
       })
     },
 
-    queueCacheTrigger(centerIdx) {
-      if (!Number.isInteger(centerIdx) || centerIdx < 0) return
-      clearTimeout(this.debounceTimer)
-      this.debounceTimer = setTimeout(() => {
-        if (centerIdx !== this.lastCenter) {
-          this.lastCenter = centerIdx
-          this.triggerCacheAt(centerIdx)
+    isCacheableImage(item) {
+      return item?.type === 'image' && Number.isInteger(item?.id)
+    },
+
+    hasCachedThumb(item) {
+      if (!item?.id) return false
+      return Boolean(this.cacheUrls[item.id] || item.cache_thumb_url)
+    },
+
+    collectVisibleDomEntries() {
+      if (!this.$refs.itemGrid || typeof window === 'undefined') return []
+      return Array.from(this.$refs.itemGrid.querySelectorAll('[data-index]'))
+        .map((element) => {
+          const index = Number(element.getAttribute('data-index'))
+          if (!Number.isInteger(index)) return null
+          const rect = element.getBoundingClientRect()
+          if (rect.bottom <= 0 || rect.top >= window.innerHeight) return null
+          return {
+            index,
+            left: rect.left,
+            top: rect.top,
+          }
+        })
+        .filter(Boolean)
+        .sort((leftEntry, rightEntry) => {
+          if (Math.abs(leftEntry.top - rightEntry.top) <= FIRST_ROW_TOLERANCE_PX) {
+            return leftEntry.left - rightEntry.left
+          }
+          return leftEntry.top - rightEntry.top
+        })
+    },
+
+    captureViewportAnchor() {
+      const visibleEntries = this.collectVisibleDomEntries()
+      if (visibleEntries.length) {
+        const entry = visibleEntries[0]
+        const item = this.items[entry.index]
+        if (item) {
+          const hostRect = this.$refs.itemGrid?.getBoundingClientRect?.() || { left: 0 }
+          return {
+            index: entry.index,
+            itemKey: this.itemKey(item, entry.index),
+            anchorOffset: Math.max(0, Math.round(entry.left - hostRect.left)),
+          }
         }
-      }, DEBOUNCE_MS)
+      }
+
+      const fallbackIndex = Number.isInteger(this.virtualAnchorIndex) && this.virtualAnchorIndex >= 0
+        ? this.virtualAnchorIndex
+        : 0
+      const item = this.items[fallbackIndex]
+      if (!item) return null
+      return {
+        index: fallbackIndex,
+        itemKey: this.itemKey(item, fallbackIndex),
+        anchorOffset: 0,
+      }
+    },
+
+    resolveRestoreAnchorIndex(anchor) {
+      if (!anchor || !this.items.length) return -1
+      if (Number.isInteger(anchor.index) && anchor.index >= 0 && anchor.index < this.items.length) {
+        return anchor.index
+      }
+      if (anchor.itemKey) {
+        const matchedIndex = this.items.findIndex((item, index) => this.itemKey(item, index) === anchor.itemKey)
+        if (matchedIndex >= 0) return matchedIndex
+      }
+      return Math.min(this.items.length - 1, Math.max(0, anchor.index || 0))
+    },
+
+    restorePendingViewAnchor() {
+      const anchor = this.pendingViewAnchor
+      this.pendingViewAnchor = null
+      if (!anchor) {
+        if (this.isPhotoGridMode) {
+          this.queuePhotoGridCachePlan(0, true, 'refresh')
+        }
+        return
+      }
+
+      const targetIndex = this.resolveRestoreAnchorIndex(anchor)
+      if (!Number.isInteger(targetIndex) || targetIndex < 0) return
+
+      if (this.viewMode === 'list') {
+        const desiredTop = this.virtualContainerTop + (targetIndex * LIST_ROW_HEIGHT) - RESTORE_ANCHOR_PADDING_PX
+        window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
+        this.logBrowseDebug('anchor-restore', { mode: 'list', targetIndex })
+        window.requestAnimationFrame(() => {
+          this.syncVirtualWindow(true)
+        })
+        return
+      }
+
+      if (this.isSelectionGridMode) {
+        const rowIndex = Math.floor(targetIndex / this.selectionColumnCount)
+        const desiredTop = this.virtualContainerTop + (rowIndex * (this.effectiveSelectionRowHeight + this.selectionGridGapPx)) - RESTORE_ANCHOR_PADDING_PX
+        window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
+        this.logBrowseDebug('anchor-restore', { mode: 'selection-grid', targetIndex, rowIndex })
+        window.requestAnimationFrame(() => {
+          this.syncVirtualWindow(true)
+        })
+        return
+      }
+
+      this.$nextTick(() => {
+        const target = this.$refs.itemGrid?.querySelector?.(`[data-index="${targetIndex}"]`)
+        if (!target) return
+        const rect = target.getBoundingClientRect()
+        const desiredTop = (window.scrollY || window.pageYOffset || 0) + rect.top - RESTORE_ANCHOR_PADDING_PX
+        window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
+        this.logBrowseDebug('anchor-restore', { mode: 'photo-grid', targetIndex })
+        window.requestAnimationFrame(() => {
+          this.queuePhotoGridCachePlan(targetIndex, true, 'restore')
+        })
+      })
+    },
+
+    resolveNearestImageIndex(anchorIndex, preferredIndices = []) {
+      for (const index of preferredIndices) {
+        if (!Number.isInteger(index)) continue
+        const item = this.items[index]
+        if (this.isCacheableImage(item)) return index
+      }
+
+      if (!Number.isInteger(anchorIndex) || anchorIndex < 0) return -1
+      for (let offset = 0; offset <= RADIUS; offset++) {
+        const forwardIndex = anchorIndex + offset
+        if (this.isCacheableImage(this.items[forwardIndex])) return forwardIndex
+        const backwardIndex = anchorIndex - offset
+        if (offset && this.isCacheableImage(this.items[backwardIndex])) return backwardIndex
+      }
+      return -1
+    },
+
+    collectPhotoGridRowIndices(anchorIndex) {
+      for (const row of this.justifiedRows) {
+        const indices = row.items.map(item => item._idx)
+        if (indices.includes(anchorIndex)) {
+          return indices
+        }
+      }
+      return [anchorIndex]
+    },
+
+    collectVirtualFirstRowIndices(anchorIndex) {
+      if (this.viewMode === 'list') {
+        return [anchorIndex]
+      }
+      const rowStart = Math.floor(anchorIndex / this.selectionColumnCount) * this.selectionColumnCount
+      return Array.from({ length: this.selectionColumnCount }, (_value, offset) => rowStart + offset)
+        .filter(index => index >= 0 && index < this.items.length)
+    },
+
+    buildPhotoGridCachePlan(anchorIndex, anchorSnapshot = null) {
+      if (!Number.isInteger(anchorIndex) || anchorIndex < 0 || anchorIndex >= this.items.length) return null
+      const item = this.items[anchorIndex]
+      if (!item) return null
+      const firstRowIndices = this.collectPhotoGridRowIndices(anchorIndex)
+      const cacheAnchorIndex = this.resolveNearestImageIndex(anchorIndex, firstRowIndices)
+      if (cacheAnchorIndex < 0) return null
+      return {
+        visualAnchorIndex: anchorIndex,
+        cacheAnchorIndex,
+        firstRowIndices,
+        anchorItemKey: this.itemKey(item, anchorIndex),
+        anchorOffset: anchorSnapshot?.anchorOffset || 0,
+        direction: this.lastScrollDirection,
+      }
+    },
+
+    buildVirtualCachePlan(anchorIndex) {
+      if (!Number.isInteger(anchorIndex) || anchorIndex < 0 || anchorIndex >= this.items.length) return null
+      const item = this.items[anchorIndex]
+      if (!item) return null
+      const firstRowIndices = this.collectVirtualFirstRowIndices(anchorIndex)
+      const cacheAnchorIndex = this.resolveNearestImageIndex(anchorIndex, firstRowIndices)
+      if (cacheAnchorIndex < 0) return null
+      return {
+        visualAnchorIndex: anchorIndex,
+        cacheAnchorIndex,
+        firstRowIndices,
+        anchorItemKey: this.itemKey(item, anchorIndex),
+        anchorOffset: 0,
+        direction: this.lastScrollDirection,
+      }
+    },
+
+    buildPrioritizedCacheIds(plan) {
+      if (!plan) return []
+      const orderedIds = []
+      const seenIds = new Set()
+      const pushIndex = (index) => {
+        if (!Number.isInteger(index) || index < 0 || index >= this.items.length) return
+        const item = this.items[index]
+        if (!this.isCacheableImage(item) || this.hasCachedThumb(item)) return
+        if (seenIds.has(item.id)) return
+        seenIds.add(item.id)
+        orderedIds.push(item.id)
+      }
+
+      pushIndex(plan.cacheAnchorIndex)
+      for (const index of plan.firstRowIndices || []) {
+        pushIndex(index)
+      }
+      for (let offset = 1; offset <= RADIUS; offset++) {
+        pushIndex(plan.cacheAnchorIndex + offset)
+        pushIndex(plan.cacheAnchorIndex - offset)
+      }
+      return orderedIds
+    },
+
+    queueCachePlan(plan, immediate = false, reason = 'unknown') {
+      if (!plan) return
+      const orderedImageIds = this.buildPrioritizedCacheIds(plan)
+      if (!orderedImageIds.length) return
+
+      const requestSignature = [
+        this.cachePageToken,
+        this.cacheSortSignature,
+        plan.visualAnchorIndex,
+        plan.cacheAnchorIndex,
+        orderedImageIds.join(','),
+      ].join('|')
+
+      const dispatch = () => {
+        if (requestSignature === this.lastCacheRequestSignature) return
+        this.lastCacheRequestSignature = requestSignature
+        this.lastCenter = plan.cacheAnchorIndex
+        this.triggerCacheForPlan(plan, orderedImageIds, reason)
+      }
+
+      clearTimeout(this.debounceTimer)
+      if (immediate) {
+        dispatch()
+        return
+      }
+      this.debounceTimer = setTimeout(dispatch, DEBOUNCE_MS)
+    },
+
+    queuePhotoGridCachePlan(anchorIndex, immediate = false, reason = 'photo-grid') {
+      const anchorSnapshot = this.captureViewportAnchor()
+      const plan = this.buildPhotoGridCachePlan(anchorIndex, anchorSnapshot)
+      this.queueCachePlan(plan, immediate, reason)
     },
 
     syncVirtualWindow(force = false) {
@@ -1261,7 +1616,7 @@ export default {
       this.virtualStartIndex = startIndex
       this.virtualEndIndex = endIndex
       this.virtualAnchorIndex = anchorIndex
-      this.queueCacheTrigger(anchorIndex)
+      this.queueCachePlan(this.buildVirtualCachePlan(anchorIndex), force, 'virtual-window')
 
       if (this.isSelectionGridMode) {
         this.$nextTick(() => {
@@ -1350,6 +1705,8 @@ export default {
 
     refreshSortResult() {
       this.items = this.sortItems(this.items)
+      this.layoutFingerprint = this.computeLayoutFingerprint(this.items, this.imgDimensions)
+      this.lastCacheRequestSignature = ''
       if (this.loading) return
       this.clearSelection()
       this.refreshObservedGrid()
@@ -1374,6 +1731,7 @@ export default {
       if (!['grid', 'list'].includes(mode)) return
       const modeChanged = this.viewMode !== mode
       const wasSelecting = this.selectionMode
+      const anchor = (modeChanged || wasSelecting) ? this.captureViewportAnchor() : null
       this.closeSelectAllMenu()
 
       this.viewMode = mode
@@ -1385,6 +1743,10 @@ export default {
         this.suppressNextListClick = false
       }
 
+      if (anchor) {
+        this.pendingViewAnchor = anchor
+      }
+
       if (wasSelecting || !modeChanged) {
         this.refreshObservedGrid()
       }
@@ -1393,6 +1755,7 @@ export default {
     toggleSelectionMode(forceValue = null) {
       const nextValue = typeof forceValue === 'boolean' ? forceValue : !this.selectionMode
       if (nextValue === this.selectionMode) return
+      const anchor = this.captureViewportAnchor()
       this.closeSelectAllMenu()
 
       if (nextValue) {
@@ -1405,6 +1768,10 @@ export default {
         this.clearSelection()
         this.clearPointerGesture()
         this.suppressNextListClick = false
+      }
+
+      if (anchor) {
+        this.pendingViewAnchor = anchor
       }
 
       if (this.selectionInfoMode === 'tags') {
@@ -2013,48 +2380,69 @@ export default {
       this.moveSelectedToTrash()
     },
 
-    idsAround(centerIdx) {
-      const items = this.items
-      const start = Math.max(0, centerIdx - RADIUS)
-      const end = Math.min(items.length - 1, centerIdx + RADIUS)
-      return items
-        .slice(start, end + 1)
-        .filter(item => item.id && !this.cacheUrls[item.id] && !item.cache_thumb_url)
-        .map(item => item.id)
-    },
+    async triggerCacheForPlan(plan, orderedImageIds, reason = 'cache-anchor') {
+      if (!plan || !orderedImageIds.length) return
+      const anchorItem = this.items[plan.cacheAnchorIndex]
+      if (!anchorItem?.id) return
 
-    async triggerCacheAt(centerIdx) {
-      const ids = this.idsAround(centerIdx)
-      if (!ids.length) return
+      const generation = ++this.cacheRequestGeneration
+      const body = {
+        ordered_image_ids: orderedImageIds,
+        generation,
+        page_token: this.cachePageToken,
+        sort_signature: this.cacheSortSignature,
+        direction: plan.direction || 'none',
+        anchor_image_id: anchorItem.id,
+        anchor_item_key: plan.anchorItemKey,
+        anchor_offset: plan.anchorOffset || 0,
+      }
+
+      this.logBrowseDebug('cache-request', {
+        reason,
+        generation,
+        visualAnchorIndex: plan.visualAnchorIndex,
+        cacheAnchorIndex: plan.cacheAnchorIndex,
+        orderedCount: orderedImageIds.length,
+        firstRowIndices: plan.firstRowIndices,
+      })
+
       try {
         const res = await fetch(`${API_BASE}/api/thumbnails/cache`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image_ids: ids }),
+          body: JSON.stringify(body),
         })
         if (!res.ok) return
-        const { task_id } = await res.json()
-        this.taskId = task_id
-        this.startPoll()
+        const data = await res.json()
+        if (generation !== this.cacheRequestGeneration) return
+        this.taskId = data.task_id
+        this.cacheStatusCursor = 0
+        this.startPoll(generation)
       } catch {
         // ignore thumbnail trigger failures
       }
     },
 
-    startPoll() {
-      this.stopPoll()
+    startPoll(expectedGeneration = this.cacheRequestGeneration) {
+      this.stopPoll(false)
       const poll = async () => {
-        if (!this.taskId) return
+        if (!this.taskId || expectedGeneration !== this.cacheRequestGeneration) return
         try {
-          const res = await fetch(`${API_BASE}/api/thumbnails/cache/status/${this.taskId}`)
+          const res = await fetch(`${API_BASE}/api/thumbnails/cache/status/${this.taskId}?cursor=${this.cacheStatusCursor}`)
           if (!res.ok) return
           const data = await res.json()
+          if (expectedGeneration !== this.cacheRequestGeneration) return
           const newUrls = {}
           for (const item of (data.items || [])) {
             if (item.id && item.cache_thumb_url) newUrls[item.id] = item.cache_thumb_url
           }
           if (Object.keys(newUrls).length > 0) {
             this.cacheUrls = { ...this.cacheUrls, ...newUrls }
+          }
+          if (Number.isInteger(data.next_cursor)) {
+            this.cacheStatusCursor = data.next_cursor
+          } else {
+            this.cacheStatusCursor += (data.items || []).length
           }
           if (data.status === 'running') {
             this.pollTimer = setTimeout(poll, POLL_MS)
@@ -2066,11 +2454,15 @@ export default {
       this.pollTimer = setTimeout(poll, POLL_MS)
     },
 
-    stopPoll() {
+    stopPoll(resetTask = true) {
       if (this.pollTimer) {
         clearTimeout(this.pollTimer)
         this.pollTimer = null
       }
+      if (resetTask) {
+        this.taskId = null
+      }
+      this.cacheStatusCursor = 0
     },
 
     refreshObservedGrid() {
@@ -2081,12 +2473,19 @@ export default {
         this.containerWidth = this.$refs.itemGrid.offsetWidth
         this.syncVirtualWindow(true)
         if (this.isPhotoGridMode) {
-          this.triggerCacheAt(0)
           this.setupObserver()
         }
         this.setupResizeObserver()
         if (this.isSelectionGridMode) {
           this.measureSelectionRowHeight()
+        }
+        if (this.pendingViewAnchor) {
+          this.restorePendingViewAnchor()
+        } else if (this.isPhotoGridMode) {
+          const anchor = this.captureViewportAnchor()
+          if (anchor) {
+            this.queuePhotoGridCachePlan(anchor.index, true, 'refresh')
+          }
         }
       })
     },
@@ -2100,13 +2499,7 @@ export default {
             .map(entry => parseInt(entry.target.dataset.index, 10))
           if (!visible.length) return
           const topIndex = Math.min(...visible)
-          clearTimeout(this.debounceTimer)
-          this.debounceTimer = setTimeout(() => {
-            if (topIndex !== this.lastCenter) {
-              this.lastCenter = topIndex
-              this.triggerCacheAt(topIndex)
-            }
-          }, DEBOUNCE_MS)
+          this.queuePhotoGridCachePlan(topIndex, false, 'observer')
         },
         { root: null, rootMargin: '0px', threshold: 0.1 },
       )

@@ -32,7 +32,9 @@
   - process_from_bytes(entries, temp_dir)
   - process_hash_only_from_bytes(entries)
 - app/services/cache_thumb_service.py
+  - generate_cache_thumb_entry(key, file_path, cache_dir)
   - generate_cache_thumbs_progressively(entries, cache_dir, on_complete)
+  - 说明：缓存缩略图 worker 数量会按 CPU 核数动态确定，默认保留 2 个核心给系统并设置 8 个 worker 上限
 - app/services/trash_service.py
   - list_trash_items()
   - move_targets_to_trash(items)
@@ -283,13 +285,22 @@
 
 - POST /api/thumbnails/cache
   - 实现：app/api/routers/cache.py，生成逻辑调用 app/services/cache_thumb_service.py
-  - 用途：异步启动缓存缩略图生成任务
-  - 说明：短边尺寸来自 `app_settings.json` 的 `cache_thumb_short_side_px`（默认 600）
-  - 返回：{"task_id": "<uuid>"}
+  - 用途：把当前页面当前 generation 的缓存缩略图请求提交到共享队列
+  - Body：兼容旧格式 `{"image_ids": [...]}`；BrowsePage / CalendarOverview 现使用新格式：
+    - `ordered_image_ids`: 前端按优先级排好的图片 ID 列表
+    - `generation`: 当前页面代次，新 generation 会覆盖同一 `page_token` 的旧 generation
+    - `page_token`: 当前页面逻辑标识，如某个 BrowsePage 路径
+    - `sort_signature`: 当前排序签名，便于日志与排障
+    - `direction`: 当前滚动方向（`forward` / `backward` / `none`）
+    - `anchor_image_id` / `anchor_item_key` / `anchor_offset`: 当前缓存锚点与视觉锚点信息
+  - 说明：短边尺寸来自 `app_settings.json` 的 `cache_thumb_short_side_px`（默认 600）；同一 `page_token` 下未启动的旧任务会直接丢弃，已启动 worker 允许完成，但结果只会回流到当前仍需要该图片的 generation
+  - 返回：`{"task_id": "<uuid>", "generation": <int>}`
 
 - GET /api/thumbnails/cache/status/{task_id}
   - 实现：app/api/routers/cache.py
-  - 用途：轮询任务状态与新增缓存缩略图 URL
+  - 参数：可选 `cursor=<int>`，用于增量轮询
+  - 用途：轮询任务状态与本次 cursor 之后新增的缓存缩略图 URL
+  - 返回：`{ status, items, next_cursor, generation }`
 
 ### 3.7 标签接口
 
@@ -357,8 +368,10 @@
 - `/api/dates/*` 与 `/api/albums/*` 的相册条目现在还会返回 `photo_count` 与 `created_at`，供相册选择详情浮层显示“图片数量”和相册创建时间。
 - `GET /api/images/meta?ids=1,2,3` 用于按需回填图片元数据；当前主要供 BrowsePage 在详情浮层打开时，为旧列表数据或缺字段条目补齐 `file_size`、`imported_at`、`file_created_at`、`tags` 与缩略图地址。
 - `GET /api/albums/open-by-path/{album_path:path}` 用于在系统文件管理器中打开相册目录；当前由 BrowsePage 在相册详情浮层点击“查看相册”时调用。
-- BrowsePage 的“大缩略图”照片墙应优先消费 `/api/dates/*` 与 `/api/albums/*` 返回的 `width` / `height` 初始化布局；前端 `onload` 只作为缺失元数据时的兜底修正，不应再把图片实际加载当作首选布局来源。
-- BrowsePage 当前仅对列表模式与选择模式启用窗口化渲染，借此减少 DOM 数量与选择态下的重排压力；“大缩略图”照片墙保持原有全量渲染与滚动锚点策略不变。
+- BrowsePage 的“大缩略图”照片墙应优先消费 `/api/dates/*` 与 `/api/albums/*` 返回的 `width` / `height` 初始化布局；前端 `onload` 仅在元数据缺失时做异常兜底回填，不再把图片实际加载当作常态排布来源。
+- BrowsePage 当前仅对列表模式与选择模式启用窗口化渲染，借此减少 DOM 数量与选择态下的重排压力；“大缩略图”照片墙仍保留全量渲染，但会按“页面标识 + 排序签名 + 精确容器宽度 + 布局指纹”缓存 `justifiedRows` 结果，降低反复重算的成本。
+- BrowsePage 现把“视觉锚点”和“缓存锚点”拆开：视觉锚点用于浏览态 / 选择态切换时把同一内容恢复到新布局首排内，缓存锚点用于向 `/api/thumbnails/cache` 发送 generation 请求；普通照片墙优先请求“缓存锚点 + 当前首排 + 前后 50 张”。
+- 缓存缩略图请求不再为每次滚动单独开启一组后台批处理，而是统一进入共享 worker 队列；前端通过 `cursor` 增量轮询，只拉取新的完成项。
 - BrowsePage 的选择逻辑现已扩展到列表显示：列表模式可通过长按进入选择态，并继续使用与卡片选择界面相同的 Ctrl/Shift、多选与统一选择符号；该行为仅是前端交互扩展，不新增后端接口。
 - BrowsePage 选择模式的详情浮层只使用 cache/temp 缩略图做预览，不把原图当作弹层内展示源；弹层尺寸由主视图区当前可视宽高共同约束，左侧图片区内的缩略图按原图比例自适应显示；多选时左侧预览列表需可滚动且隐藏滚动条，右下保留删除占位按钮；若选中图片则主操作继续复用 `/api/images/{image_id}/open`，若选中相册则主操作改为调用 `/api/albums/open-by-path/{album_path:path}` 打开目录。
 - BrowsePage 详情浮层打开时会锁定页面滚动，避免滚轮、空白区拖动或中键自动滚动穿透到底层页面。

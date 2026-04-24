@@ -59,7 +59,20 @@ class DateItemsResponse(BaseModel):
 # ── Cache generation ──────────────────────────────────────────────────────────
 
 class CacheRequest(BaseModel):
-    image_ids: List[int]
+    image_ids: List[int] = Field(default_factory=list)
+    ordered_image_ids: List[int] = Field(default_factory=list)
+    generation: Optional[int] = None
+    page_token: Optional[str] = None
+    sort_signature: Optional[str] = None
+    direction: str = "none"
+    anchor_image_id: Optional[int] = None
+    anchor_item_key: Optional[str] = None
+    anchor_offset: float = 0.0
+
+
+class CacheStartResponse(BaseModel):
+    task_id: str
+    generation: Optional[int] = None
 
 
 class CacheStatusItem(BaseModel):
@@ -69,7 +82,9 @@ class CacheStatusItem(BaseModel):
 
 class CacheStatusResponse(BaseModel):
     status: str                  # "running" | "done" | "error"
-    items: List[CacheStatusItem] = []
+    items: List[CacheStatusItem] = Field(default_factory=list)
+    next_cursor: int = 0
+    generation: Optional[int] = None
 
 
 class ImageMetaItem(BaseModel):
