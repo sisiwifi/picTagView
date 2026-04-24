@@ -5,7 +5,10 @@
       <main class="flex-1 min-w-0 p-10">
         <router-view v-slot="{ Component, route }">
           <Transition name="page" mode="out-in">
-            <component :is="Component" :key="route.meta?.reuseKey || route.name" />
+            <KeepAlive v-if="route.meta?.keepAlive">
+              <component :is="Component" :key="route.meta?.reuseKey || route.name" />
+            </KeepAlive>
+            <component v-else :is="Component" :key="route.meta?.reuseKey || route.name" />
           </Transition>
         </router-view>
       </main>
@@ -14,11 +17,13 @@
 </template>
 
 <script>
+import { KeepAlive } from 'vue'
 import AppSidebar from './components/Sidebar.vue'
 
 export default {
   name: 'App',
   components: {
+    KeepAlive,
     AppSidebar
   },
   created() {

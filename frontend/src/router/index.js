@@ -22,7 +22,8 @@ const routes = [
   {
     path: '/gallery',
     name: 'gallery',
-    component: GalleryPage
+    component: GalleryPage,
+    meta: { keepAlive: true }
   },
   {
     path: '/calendar',

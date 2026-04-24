@@ -31,10 +31,11 @@
 
 ## 4. 主要功能说明
 ### 4.1 上传与导入
-- 上线 `HomePage` 提供文件上传 UI
+- `GalleryPage` 提供多行文件夹导入 UI，可为每一行单独选择主分类
 - 调用 `POST /api/import`
 - 传递 `files` 与 `lastModifiedJson`
-- 成功后刷新目录数据
+- 按 groupByDate 规则顺序组批上传，单批最多 50 个文件
+- `/gallery` 路由启用 `meta.keepAlive`，切换到其他页面时不会销毁导入队列；返回后继续显示当前进度
 
 ### 4.2 日历总览
 - `CalendarOverview` 获取 `GET /api/dates`
@@ -51,10 +52,12 @@
 
 ## 5. 前端路由说明 (`router/index.js`)
 - `/` -> `HomePage`
-- `/gallery` -> `GalleryPage`
+- `/gallery` -> `GalleryPage`（`meta.keepAlive = true`，保留导入页面实例）
 - `/calendar` -> `CalendarOverview`
 - `/calendar/:group` -> `BrowsePage`
 - `/calendar/:group/:albumPath+` -> `BrowsePage`
+
+* `App.vue` 会对声明 `meta.keepAlive` 的路由使用 `KeepAlive` 包裹；当前仅 `GalleryPage` 依赖该机制来保留导入状态
 
 * 具体文件中有嵌套路由、组件复用与参数处理
 

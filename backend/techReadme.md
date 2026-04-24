@@ -89,6 +89,7 @@
   - 面包屑结构：日期视图 › YYYY-MM › 相册1 › 相册2（当前），完全由 URL 路径段驱动，无需异步补标题。
   - BrowsePage 同时承载月份列表和相册浏览，通过 `$route.params` 判断模式：无 `albumPath` 为月份模式，有则为相册模式，调用 `GET /api/albums/by-path/{path}` 获取数据。
   - 组件复用策略：两个 browse 路由共享 `meta.reuseKey = 'browse'`，App.vue 使用 `:key="route.meta?.reuseKey || route.name"` 避免组件销毁重建，消除跨层级导航闪动。
+  - Gallery 路由额外声明 `meta.keepAlive = true`；`App.vue` 会对该类路由用 `<KeepAlive>` 包裹，使 Gallery 导入队列与进度状态在切换页面时只停用不销毁。
   - 返回按钮语义统一为"目录上一级"：在相册内返回上一级相册或月份列表，月份列表返回日期总览。
   - CalendarOverview 为纯月份网格页面，不再内含详情子视图。
   - CalendarOverview 的月份网格按页面方向切换列数：横向（`orientation: landscape`）固定 6 列，纵向（`orientation: portrait`）固定 3 列，不再使用最小宽度断点控制。
@@ -148,7 +149,8 @@
   - 线程池并行 `process_from_bytes` 只为"每月封面所需图片"生成 temp 缩略图
   - 其他图片调用 `process_hash_only_from_bytes`（`_compute_hash_only` worker）：并行完成 SHA-256 + xxhash + **cv2.imdecode 尺寸读取**，不生成缩略图
   - DB 串行写入循环中仅使用已并行得到的宽高，不再在主线程调用 cv2（性能优化方案 A）
-  - 导入不中断行为：前端在开始导入时会设置全局标记 `window.__ptvImporting = true`（见 `frontend/src/pages/GalleryPage.vue`），导入结束时恢复为 `false`。
+  - 导入不中断行为：`GalleryPage.vue` 仍在本地维护导入队列、当前目录与累计进度，但 `/gallery` 路由现在通过 `meta.keepAlive = true` 保活；用户切到其它页面时组件进入 deactivated 状态而不是被销毁，返回 Gallery 后会继续显示同一轮导入。
+  - `window.__ptvImporting` 在导入开始/结束时仍会置为 `true/false`，但它只作为导入期状态标记；真正保证“切换页面不打断导入”的实现是前端路由保活。
   - 前端多行队列采用“单行失败不阻塞后续行”的策略；失败行会在导入结束后保留在表单中，供用户修正后重试。
   - 前端刷新策略变更（路由切换相关）：项目已移除“路由切换自动触发全库刷新”的行为，`frontend/src/router/index.js` 不再在每次路由变更时发起后台 `POST /api/admin/refresh`。当前前端刷新策略为：
     - 仅在 Gallery 页面由用户点击的“刷新”按钮触发完整的 `POST /api/admin/refresh?mode=full`（保留为手动触发的全库修复/补齐与新文件收编）。
