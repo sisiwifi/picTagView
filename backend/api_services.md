@@ -58,9 +58,6 @@
   - get_preferred_viewer_id() / set_preferred_viewer_id()
   - launch_with_preferred_viewer(command_template, file_path)
   - ensure_viewer_icon(viewer)
-- app/services/tag_style_service.py
-  - ensure_tag_style_scheme(session)
-  - 说明：按 Tag ID 升序轮回写入 7 色显色方案到 `Tag.metadata`（color / border_color / background_color）
 
 ## 2. 路由组织
 
@@ -375,10 +372,10 @@
   - 用途：批量导入 Tag；on_conflict=skip（默认）跳过同名，overwrite 覆盖可更新字段
   - 返回：`{ imported, updated, skipped, errors }`
 
-- Tag 显色元数据方案（后端写入）
+- Tag 显色元数据
   - 写入位置：`Tag.metadata.color`、`Tag.metadata.border_color`、`Tag.metadata.background_color`
-  - 触发位置：Tag 列表/详情/创建/更新/导入与文件名匹配接口都会自动确保写入
-  - 分配规则：按 Tag ID 升序采用 7 色轮回（id 顺序赋色后循环）
+  - 维护方式：由 Tag 创建、更新或导入时显式提供；后端不再按固定规则自动分配或回写颜色
+  - 消费方式：前端从 Tag 元数据读取显色字段并渲染 tag chip
 
 ## 4. 业务数据库汇总
 

@@ -374,21 +374,28 @@
 - 数据模型 `Tag`（标签库）：
   - `id` (int): 主键自增
   - `public_id` (str): 对外稳定标识符，格式 `tag_{id}`，唯一索引；写入 DB 后由系统自动回填
-  - `name` (str): 规范化名称，全小写英文，数据库唯一约束，最大 256 字节
+  - `name` (str): 规范化名称，仅允许小写字母 / 数字 / 下划线，数据库唯一约束，最大 256 字节
   - `display_name` (str): 前端展示名称，默认与 name 相同
-  - `type` (str): 标签种类，取值为 `normal` / `artist` / `artwork` / `series`，默认 `normal`
+  - `type` (str): 标签种类，取值为 `normal` / `artist` / `copyright` / `character` / `series`，默认 `normal`
   - `description` (str | null): 描述，最大 1024 字节
-  - `usage_count` (int): 缓存字段，表示当前有多少张图片关联了该 Tag，由写入侧维护
+  - `usage_count` (int): 缓存字段，表示当前有多少张图片0关联了该 Tag，由写入侧维护
   - `last_used_at` (str | null): Tag 最后被关联或访问的时间，格式 `YYYYMMDDHHMMSS`；Tag 菜单输入为空时会按该字段倒序读取最近使用 5 条
   - `metadata_` (JSON dict): 存储为数据库列 `metadata`，可扩展扩展字段，结构如下：
     - `schema_version` (int): Tag 元信息版本号，当前为 1
-    - `color` (str): 展示颜色，十六进制如 `#FF9900`
+    - `color` (str): 展示颜色，统一使用 HEX8，如 `#FF9900FF`
+    - `border_color` (str): 边框颜色，统一使用 HEX8，如 `#FF9900FF`
+    - `background_color` (str): 背景颜色，统一使用 HEX8，如 `#FF990066`
     - `created_via` (str): 创建来源，合法值见下表
     - `ui_hint` (dict): 前端 UI 展示提示，如 `{"badge": "city", "promote": true}`
     - `notes` (str): 备注，默认留空
   - `created_at` (datetime): 记录创建时间（UTC）
-  - `created_by` (str): 创建者，主控生成为 `admin`，导入为 `import`
+  - `created_by` (str): 创建者，主控生成为 `admin`，导入为 `import`；系统预占草稿使用 `system:draft-reserve`
   - `updated_at` (datetime): 最后更新时间（UTC）
+
+  **草稿 Tag 说明：**
+  - 前端“新增标签”会先调用 `POST /api/tags/draft` 预占一个真实 `id/public_id`
+  - 草稿 Tag 以 `created_by=system:draft-reserve` 标记，不会出现在 `/api/tags` 列表、导出 JSON、最近使用标签、文件名自动匹配与图片批量打标接口中
+  - 用户取消新增弹窗时，前端会调用 `DELETE /api/tags/{id}` 清理草稿；提交时通过 `PATCH /api/tags/{id}` 将草稿转正
 
   **`type` 合法值说明：**
 
@@ -504,9 +511,11 @@
   - `GET /api/dates/{date_group}/items` 列出直图/子相册（图片条目含 `media_index` 与 `media_rel_path`）
   - `GET /api/albums/by-path/{album_path:path}` / `GET /api/albums/open-by-path/{album_path:path}` 相册浏览与在资源管理器打开目录
   - `GET /api/images/{image_id}/open?path=...` 按指定 `media_path` 实例打开图片
-    - `POST /api/images/tags/filename-match` 按文件名自动匹配并批量回写标签
-    - `POST /api/images/tags/apply` 批量添加/覆盖/移除标签（`merge_mode=append_unique|replace|remove`）
+    - `POST /api/images/tags/filename-match` 按文件名自动匹配并批量回写标签（自动忽略草稿 Tag）
+    - `POST /api/images/tags/apply` 批量添加/覆盖/移除标签（`merge_mode=append_unique|replace|remove`，自动忽略草稿 Tag）
     - `GET /api/tags?sort_by=last_used_desc&limit=5` 获取最近使用标签
+    - `POST /api/tags/draft` 预占真实 `id/public_id` 并创建隐藏草稿 Tag
+    - `PATCH /api/tags/{id}` 支持更新 `name / display_name / type / description / metadata`
   - `GET /api/trash/items`、`POST /api/trash/move`、`POST /api/trash/restore`、`POST /api/trash/hard-delete`、`DELETE /api/trash` 回收站相关操作
 
 ## 7. 常见问题与排查

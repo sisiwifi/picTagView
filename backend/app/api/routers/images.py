@@ -24,7 +24,6 @@ from app.models.image_asset import ImageAsset
 from app.models.tag import Tag
 from app.services.category_service import DEFAULT_CATEGORY_ID
 from app.services.app_settings_service import get_tag_match_setting
-from app.services.tag_style_service import ensure_tag_style_scheme
 from app.services.viewer_service import (
     get_preferred_viewer_id,
     launch_with_preferred_viewer,
@@ -32,6 +31,7 @@ from app.services.viewer_service import (
 )
 
 router = APIRouter()
+_DRAFT_CREATED_BY = "system:draft-reserve"
 
 
 def _now_tag_timestamp() -> str:
@@ -305,11 +305,12 @@ def filename_match_tags(body: ImageTagMatchRequest) -> ImageTagMatchResponse:
     drop_numeric_only = bool(setting.get("drop_numeric_only", True)) if enabled else False
 
     with get_session() as session:
-        ensure_tag_style_scheme(session)
         assets = session.exec(
             select(ImageAsset).where(ImageAsset.id.in_(unique_image_ids))  # type: ignore[arg-type]
         ).all()
-        tags = session.exec(select(Tag)).all()
+        tags = session.exec(
+            select(Tag).where(Tag.created_by != _DRAFT_CREATED_BY)  # type: ignore[attr-defined]
+        ).all()
 
         asset_by_id = {asset.id: asset for asset in assets if asset.id is not None}
         tags_by_name = {
@@ -417,12 +418,13 @@ def apply_tags(body: ImageTagApplyRequest) -> ImageTagApplyResponse:
         return ImageTagApplyResponse(items=[], common_tag_ids=[], common_tags=[], multi_display="empty", applied_count=0)
 
     with get_session() as session:
-        ensure_tag_style_scheme(session)
 
         assets = session.exec(
             select(ImageAsset).where(ImageAsset.id.in_(unique_image_ids))  # type: ignore[arg-type]
         ).all()
-        tags = session.exec(select(Tag)).all()
+        tags = session.exec(
+            select(Tag).where(Tag.created_by != _DRAFT_CREATED_BY)  # type: ignore[attr-defined]
+        ).all()
         tags_by_id = {
             int(tag.id): tag
             for tag in tags

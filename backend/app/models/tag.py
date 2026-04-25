@@ -26,7 +26,7 @@ class Tag(SQLModel, table=True):
     # 前端展示名称
     display_name: str = Field(default="", max_length=256)
 
-    # 标签种类：normal / artist / artwork / series
+    # 标签种类：normal / artist / copyright / character / series
     type: str = Field(default="normal", index=True, max_length=32)
 
     # 描述（最大 1024 字节）
@@ -41,7 +41,9 @@ class Tag(SQLModel, table=True):
     # 扩展元信息，结构：
     # {
     #   "schema_version": 1,
-    #   "color": "#FF9900",
+    #   "color": "#FF9900FF",
+    #   "border_color": "#FF9900FF",
+    #   "background_color": "#FF990066",
     #   "created_via": "manual|auto:filename|import|merge|split|sync|migration",
     #   "ui_hint": {"badge": "city", "promote": true},
     #   "notes": ""
@@ -52,5 +54,6 @@ class Tag(SQLModel, table=True):
     )
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # 预占草稿标签使用 created_by=system:draft-reserve，并在列表/导出/打标接口中被过滤。
     created_by: str = Field(default="admin", max_length=64)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

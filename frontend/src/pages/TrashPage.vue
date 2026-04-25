@@ -186,6 +186,7 @@ import LoadingSpinner from '../components/LoadingSpinner.vue'
 import MediaItemCard from '../components/MediaItemCard.vue'
 import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
 import TrashPageHeader from '../components/TrashPageHeader.vue'
+import { normalizeTagColors } from '../utils/tagColors'
 
 const API_BASE = 'http://127.0.0.1:8000'
 const FIRST_ROW_TOLERANCE_PX = 12
@@ -1282,16 +1283,7 @@ export default {
 
     buildTagLookupEntry(rawTag) {
       if (!Number.isInteger(rawTag?.id)) return null
-      const metadata = rawTag?.metadata && typeof rawTag.metadata === 'object' ? rawTag.metadata : {}
-      const color = typeof rawTag?.color === 'string'
-        ? rawTag.color
-        : (typeof metadata.color === 'string' ? metadata.color : '')
-      const borderColor = typeof rawTag?.border_color === 'string'
-        ? rawTag.border_color
-        : (typeof metadata.border_color === 'string' ? metadata.border_color : '')
-      const backgroundColor = typeof rawTag?.background_color === 'string'
-        ? rawTag.background_color
-        : (typeof metadata.background_color === 'string' ? metadata.background_color : '')
+      const { color, borderColor, backgroundColor } = normalizeTagColors(rawTag)
       return {
         id: rawTag.id,
         name: String(rawTag?.name || ''),

@@ -48,7 +48,7 @@
 ### 4.3 展示图库内容
 - `BrowsePage` 调用 `GET /api/dates/{date_group}/items` 或 `GET /api/albums/by-path/{album_path:path}`
 - 直图显示 `ThumbCard`，子目录显示相册封面并支持物理路径继续下钻
-- 选择模式详情浮层中的 Tag 使用 `TagChipList` 渲染，显色来自后端返回的 Tag 元数据字段：
+- 选择模式详情浮层中的 Tag 使用 `TagChipList` 渲染，显色来自后端返回的 Tag 元数据字段，统一为 HEX8：
    - `color`
    - `border_color`
    - `background_color`
@@ -63,7 +63,9 @@
 - 菜单顶部“现有标签”在多选时显示所选图片的公共标签，右侧 `x` 按钮可移除该标签
 - 菜单输入框为空时，固定高度建议容器显示最近使用的 5 个标签（`last_used_at` 最新）
 - 菜单输入框有内容时按 `name` 与 `display_name` 搜索，建议项显示 `display_name`
-- 每条建议右侧提供 `+` 与笔形按钮：`+` 先写入当前弹层草稿，笔形按钮为元数据编辑预留入口
+- 每条建议右侧提供 `+` 与笔形按钮：`+` 先写入当前弹层草稿，笔形按钮可打开标签元数据编辑弹窗
+- “添加新标签”会先调用 `POST /api/tags/draft` 预占真实 `public_id`，再进入标签表单弹窗；取消时删除草稿，保存时通过 `PATCH /api/tags/{id}` 转正
+- 标签表单弹窗支持 `name` 正则校验、`type` 下拉选择、Tag 预览、7 个预设配色，以及 HEX8 + HSV + 透明度取色器
 - 菜单底部保留“添加新标签（预留）”入口，原“编辑标签”位置改为“自动标签”按钮
 - “自动标签”在菜单内调用 `POST /api/images/tags/filename-match` 做预分析并合并到草稿，不会立即回写
 - 菜单右下角提供“取消 / 确定”：

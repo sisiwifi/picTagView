@@ -246,6 +246,17 @@
       @auto-tag="applyAutoTagFromMenu"
     />
 
+    <TagFormDialog
+      :visible="tagFormVisible"
+      :saving="tagFormSaving"
+      :mode="tagFormMode"
+      :initial-tag="tagFormTag"
+      :existing-names="tagFormExistingNames"
+      :error-message="tagFormError"
+      @close="closeTagForm"
+      @submit="submitTagForm"
+    />
+
     <ConfirmationDialog
       :visible="confirmDialog.visible"
       :title="confirmDialog.title"
@@ -276,6 +287,8 @@ import ConfirmationDialog from '../components/ConfirmationDialog.vue'
 import ActionProgressOverlay from '../components/ActionProgressOverlay.vue'
 import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
 import TagMenuDialog from '../components/TagMenuDialog.vue'
+import TagFormDialog from '../components/TagFormDialog.vue'
+import { normalizeTagColors } from '../utils/tagColors'
 
 const API_BASE = 'http://127.0.0.1:8000'
 const POLL_MS = 180
@@ -326,7 +339,7 @@ function createDialogState() {
 
 export default {
   name: 'BrowsePage',
-  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, ConfirmationDialog, ActionProgressOverlay, SelectionDetailOverlay, TagMenuDialog },
+  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, ConfirmationDialog, ActionProgressOverlay, SelectionDetailOverlay, TagMenuDialog, TagFormDialog },
 
   data() {
     return {
@@ -398,6 +411,12 @@ export default {
       tagMenuOriginalByImageId: {},
       tagMenuDirty: false,
       tagMenuSearchTimer: null,
+      tagFormVisible: false,
+      tagFormMode: 'create',
+      tagFormSaving: false,
+      tagFormError: '',
+      tagFormTag: null,
+      tagFormExistingNames: [],
       selectAllMenuOpen: false,
       actionBusy: false,
       actionBusyText: '',
@@ -1736,6 +1755,11 @@ export default {
     },
 
     onWindowKeydown(event) {
+      if (this.tagFormVisible && event.key === 'Escape') {
+        event.preventDefault()
+        this.closeTagForm()
+        return
+      }
       if (this.tagMenuVisible && event.key === 'Escape') {
         event.preventDefault()
         this.closeTagMenu()
@@ -2250,19 +2274,15 @@ export default {
     buildTagLookupEntry(rawTag) {
       if (!Number.isInteger(rawTag?.id)) return null
       const metadata = rawTag?.metadata && typeof rawTag.metadata === 'object' ? rawTag.metadata : {}
-      const color = typeof rawTag?.color === 'string'
-        ? rawTag.color
-        : (typeof metadata.color === 'string' ? metadata.color : '')
-      const borderColor = typeof rawTag?.border_color === 'string'
-        ? rawTag.border_color
-        : (typeof metadata.border_color === 'string' ? metadata.border_color : '')
-      const backgroundColor = typeof rawTag?.background_color === 'string'
-        ? rawTag.background_color
-        : (typeof metadata.background_color === 'string' ? metadata.background_color : '')
+      const { color, borderColor, backgroundColor } = normalizeTagColors(rawTag)
       return {
         id: rawTag.id,
+        publicId: String(rawTag?.public_id || ''),
         name: String(rawTag?.name || ''),
         displayName: String(rawTag?.display_name || rawTag?.name || `#${rawTag.id}`),
+        type: String(rawTag?.type || 'normal'),
+        description: String(rawTag?.description || ''),
+        metadata,
         color: String(color || ''),
         borderColor: String(borderColor || ''),
         backgroundColor: String(backgroundColor || ''),
@@ -2289,8 +2309,12 @@ export default {
         if (!tag) {
           return {
             id,
+            public_id: '',
             name: `#${id}`,
             display_name: `#${id}`,
+            type: 'normal',
+            description: '',
+            metadata: {},
             color: '',
             border_color: '',
             background_color: '',
@@ -2298,8 +2322,12 @@ export default {
         }
         return {
           id,
+          public_id: tag.publicId || '',
           name: tag.name || `#${id}`,
           display_name: tag.displayName || tag.name || `#${id}`,
+          type: tag.type || 'normal',
+          description: tag.description || '',
+          metadata: tag.metadata || {},
           color: tag.color || '',
           border_color: tag.borderColor || '',
           background_color: tag.backgroundColor || '',
@@ -2357,8 +2385,12 @@ export default {
         nextTagMap[normalizedTag.id] = normalizedTag
         normalizedItems.push({
           id: normalizedTag.id,
+          public_id: normalizedTag.publicId,
           name: normalizedTag.name,
           display_name: normalizedTag.displayName,
+          type: normalizedTag.type,
+          description: normalizedTag.description,
+          metadata: normalizedTag.metadata,
           color: normalizedTag.color,
           border_color: normalizedTag.borderColor,
           background_color: normalizedTag.backgroundColor,
@@ -2392,6 +2424,9 @@ export default {
     },
 
     closeTagMenu() {
+      if (this.tagFormVisible) {
+        void this.closeTagForm()
+      }
       this.tagMenuVisible = false
       this.tagMenuBusy = false
       this.tagMenuSearchBusy = false
@@ -2406,6 +2441,89 @@ export default {
       if (this.tagMenuSearchTimer) {
         clearTimeout(this.tagMenuSearchTimer)
         this.tagMenuSearchTimer = null
+      }
+    },
+
+    async fetchTagFormExistingNames() {
+      const fallbackNames = Object.values(this.tagLookupMap)
+        .map(tag => String(tag?.name || '').trim())
+        .filter(Boolean)
+
+      try {
+        const res = await fetch(`${API_BASE}/api/tags?offset=0&limit=1000`)
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`)
+        }
+        const data = await res.json()
+        return [...new Set((data.items || []).map(item => String(item?.name || '').trim()).filter(Boolean))].sort()
+      } catch {
+        return [...new Set(fallbackNames)].sort()
+      }
+    },
+
+    async fetchTagDetail(tagId) {
+      const res = await fetch(`${API_BASE}/api/tags/${tagId}`)
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}))
+        throw new Error(payload.detail || `HTTP ${res.status}`)
+      }
+      return res.json()
+    },
+
+    async reserveTagDraft() {
+      const res = await fetch(`${API_BASE}/api/tags/draft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}))
+        throw new Error(payload.detail || `HTTP ${res.status}`)
+      }
+      return res.json()
+    },
+
+    resetTagFormState() {
+      this.tagFormVisible = false
+      this.tagFormMode = 'create'
+      this.tagFormSaving = false
+      this.tagFormError = ''
+      this.tagFormTag = null
+      this.tagFormExistingNames = []
+    },
+
+    async closeTagForm() {
+      if (this.tagFormSaving) return
+      const shouldDeleteDraft = this.tagFormMode === 'create' && Number.isInteger(this.tagFormTag?.id)
+      const draftId = shouldDeleteDraft ? this.tagFormTag.id : null
+      this.resetTagFormState()
+
+      if (!draftId) return
+      try {
+        await fetch(`${API_BASE}/api/tags/${draftId}`, { method: 'DELETE' })
+      } catch {
+        // ignore draft cleanup failure and keep UI responsive
+      }
+    },
+
+    async refreshTagCollectionsAfterSave(savedTag, options = {}) {
+      const { attachToSelection = false } = options
+      const normalizedTag = this.buildTagLookupEntry(savedTag)
+      if (normalizedTag) {
+        this.tagLookupMap = {
+          ...this.tagLookupMap,
+          [normalizedTag.id]: normalizedTag,
+        }
+      }
+
+      if (attachToSelection) {
+        await this.addTagFromMenu(savedTag)
+      } else {
+        this.refreshTagMenuExistingTags()
+      }
+
+      if (this.tagMenuVisible) {
+        await this.fetchTagMenuSuggestions(this.tagMenuQuery)
       }
     },
 
@@ -2593,13 +2711,82 @@ export default {
       }
     },
 
-    editTagMetadataFromMenu(tagItem) {
-      const label = String(tagItem?.display_name || tagItem?.name || '')
-      this.tagMenuError = `${label || '该标签'} 的元数据编辑功能暂未开放。`
+    async editTagMetadataFromMenu(tagItem) {
+      const tagId = Number(tagItem?.id)
+      if (!this.canOpenTagMenu || !Number.isInteger(tagId) || this.tagMenuBusy) return
+
+      this.tagMenuBusy = true
+      this.tagFormError = ''
+      this.tagMenuError = ''
+      try {
+        const [detail, existingNames] = await Promise.all([
+          this.fetchTagDetail(tagId),
+          this.fetchTagFormExistingNames(),
+        ])
+        this.tagFormMode = 'edit'
+        this.tagFormTag = detail
+        this.tagFormExistingNames = existingNames
+        this.tagFormVisible = true
+      } catch (err) {
+        this.tagMenuError = `标签详情读取失败：${err?.message || '未知错误'}`
+      } finally {
+        this.tagMenuBusy = false
+      }
     },
 
-    addNewTagFromMenu() {
-      this.tagMenuError = '添加新标签功能暂未开放。'
+    async addNewTagFromMenu() {
+      if (!this.canOpenTagMenu || this.tagMenuBusy) return
+
+      this.tagMenuBusy = true
+      this.tagFormError = ''
+      this.tagMenuError = ''
+      try {
+        const [draftTag, existingNames] = await Promise.all([
+          this.reserveTagDraft(),
+          this.fetchTagFormExistingNames(),
+        ])
+        this.tagFormMode = 'create'
+        this.tagFormTag = draftTag
+        this.tagFormExistingNames = existingNames
+        this.tagFormVisible = true
+      } catch (err) {
+        this.tagMenuError = `新建标签初始化失败：${err?.message || '未知错误'}`
+      } finally {
+        this.tagMenuBusy = false
+      }
+    },
+
+    async submitTagForm(payload) {
+      const mode = this.tagFormMode
+      const tagId = mode === 'create'
+        ? Number(this.tagFormTag?.id)
+        : Number(payload?.id || this.tagFormTag?.id)
+      if (!Number.isInteger(tagId) || this.tagFormSaving) return
+
+      this.tagFormSaving = true
+      this.tagFormError = ''
+      try {
+        const requestBody = mode === 'create'
+          ? { ...payload, created_by: 'admin' }
+          : payload
+        const res = await fetch(`${API_BASE}/api/tags/${tagId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        })
+        if (!res.ok) {
+          const responsePayload = await res.json().catch(() => ({}))
+          throw new Error(responsePayload.detail || `HTTP ${res.status}`)
+        }
+
+        const savedTag = await res.json()
+        this.resetTagFormState()
+        await this.refreshTagCollectionsAfterSave(savedTag, { attachToSelection: mode === 'create' })
+      } catch (err) {
+        this.tagFormError = `标签保存失败：${err?.message || '未知错误'}`
+      } finally {
+        this.tagFormSaving = false
+      }
     },
 
     tagTextForItem(item) {
