@@ -30,7 +30,7 @@
   - `app/api/routers/categories.py`：`GET /api/categories`、`POST /api/categories`、`PATCH /api/categories/{category_id}`、`DELETE /api/categories/{category_id}`、`POST /api/categories/bulk`
   - `app/api/routers/dates.py`：`GET /api/dates`、`GET /api/dates/{date_group}/items`
   - `app/api/routers/albums.py`：`GET /api/albums/by-path/{album_path:path}`、`GET /api/albums/open-by-path/{album_path:path}`、`GET /api/albums/{album_id}`
-  - `app/api/routers/images.py`：`GET /api/images/meta`、`GET /api/images/{image_id}/open`
+  - `app/api/routers/images.py`：`GET /api/images/meta`、`GET /api/images/{image_id}/open`、`POST /api/images/tags/filename-match`、`POST /api/images/tags/apply`
   - `app/api/routers/trash.py`：`GET /api/trash/items`、`POST /api/trash/move`、`POST /api/trash/restore`、`POST /api/trash/hard-delete`、`DELETE /api/trash`
   - `app/api/routers/system.py`：`/api/system/*` 相关接口
   - `app/api/routers/cache.py`：`DELETE /api/cache`、`/api/thumbnails/cache*`
@@ -110,7 +110,8 @@
 - 回收站交互补充：
   - 设置页右上角新增更显眼的“回收站”入口，跳转到独立的 `TrashPage`，不复用 BrowsePage 路由状态。
   - TrashPage header 左侧提供“返回”按钮，右侧项目数前提供“清空回收站”按钮；选择态右下角操作岛提供“详情 / 还原 / 删除 / 全选 / 取消选择”。
-  - TrashPage 详情浮层复用 `SelectionDetailOverlay.vue`，但主动作切换为“还原”，危险动作切换为“删除”，并隐藏普通浏览页才需要的“分析”按钮。
+  - TrashPage 详情浮层复用 `SelectionDetailOverlay.vue`，但主动作切换为“还原”，危险动作切换为“删除”，并禁用 Tag 编辑入口（无 `+` 按钮）。
+  - TrashPage 详情浮层的 Tag 区改为复用 `TagChipList` 显示，与 BrowsePage 保持同款显色样式；该页面仅展示，不提供编辑能力。
   - BrowsePage 的“删除到回收站”与 TrashPage 的“还原 / 删除 / 清空回收站”统一改为 `ConfirmationDialog.vue` 居中弹窗确认，不再使用浏览器原生 `confirm/alert`。
   - TrashPage 的瀑布流与选择态切换现在也会捕获首屏视觉锚点，并在切换后恢复到对应条目附近；选择态卡片按可视窗口虚拟渲染，避免大回收站一次性挂载全部卡片。
   - 批量删除/清空/还原确认后，页面会立即进入 busy 锁定态：确认按钮不可重复点击，主界面显示“处理中”遮罩，降低大批量操作下的重复误触风险。
@@ -378,7 +379,7 @@
   - `type` (str): 标签种类，取值为 `normal` / `artist` / `artwork` / `series`，默认 `normal`
   - `description` (str | null): 描述，最大 1024 字节
   - `usage_count` (int): 缓存字段，表示当前有多少张图片关联了该 Tag，由写入侧维护
-  - `last_used_at` (str | null): Tag 最后被关联或访问的时间，格式 `YYYYMMDDHHMMSS`
+  - `last_used_at` (str | null): Tag 最后被关联或访问的时间，格式 `YYYYMMDDHHMMSS`；Tag 菜单输入为空时会按该字段倒序读取最近使用 5 条
   - `metadata_` (JSON dict): 存储为数据库列 `metadata`，可扩展扩展字段，结构如下：
     - `schema_version` (int): Tag 元信息版本号，当前为 1
     - `color` (str): 展示颜色，十六进制如 `#FF9900`
@@ -503,6 +504,9 @@
   - `GET /api/dates/{date_group}/items` 列出直图/子相册（图片条目含 `media_index` 与 `media_rel_path`）
   - `GET /api/albums/by-path/{album_path:path}` / `GET /api/albums/open-by-path/{album_path:path}` 相册浏览与在资源管理器打开目录
   - `GET /api/images/{image_id}/open?path=...` 按指定 `media_path` 实例打开图片
+    - `POST /api/images/tags/filename-match` 按文件名自动匹配并批量回写标签
+    - `POST /api/images/tags/apply` 批量添加/覆盖/移除标签（`merge_mode=append_unique|replace|remove`）
+    - `GET /api/tags?sort_by=last_used_desc&limit=5` 获取最近使用标签
   - `GET /api/trash/items`、`POST /api/trash/move`、`POST /api/trash/restore`、`POST /api/trash/hard-delete`、`DELETE /api/trash` 回收站相关操作
 
 ## 7. 常见问题与排查

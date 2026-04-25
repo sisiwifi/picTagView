@@ -182,6 +182,27 @@ class ImageTagMatchResponse(BaseModel):
     applied_count: int = 0
 
 
+class ImageTagApplyRequest(BaseModel):
+    image_ids: List[int] = Field(default_factory=list)
+    tag_ids: List[int] = Field(default_factory=list)
+    merge_mode: str = "append_unique"
+
+
+class ImageTagApplyItem(BaseModel):
+    image_id: int
+    before_tag_ids: List[int] = Field(default_factory=list)
+    after_tag_ids: List[int] = Field(default_factory=list)
+    changed: bool = False
+
+
+class ImageTagApplyResponse(BaseModel):
+    items: List[ImageTagApplyItem] = Field(default_factory=list)
+    common_tag_ids: List[int] = Field(default_factory=list)
+    common_tags: List[TagBriefItem] = Field(default_factory=list)
+    multi_display: str = "empty"
+    applied_count: int = 0
+
+
 # ── Album views ───────────────────────────────────────────────────────────────
 
 class BreadcrumbItem(BaseModel):

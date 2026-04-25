@@ -69,7 +69,11 @@
           </div>
         </div>
 
-        <div class="detail-panel__aside">
+        <div
+          class="detail-panel__aside"
+          :class="{ 'detail-panel__aside--scrolling': asideScrolling }"
+          @scroll.passive="onAsideScroll"
+        >
           <p v-if="isMulti" class="detail-panel__summary">已选择 {{ previewItems.length }} 项</p>
 
           <div class="detail-field">
@@ -90,25 +94,24 @@
 
           <div class="detail-field detail-field--tags">
             <span class="detail-field__label">标签</span>
-            <div class="detail-field__tag-row" :class="{ 'detail-field__tag-row--single': !showAnalysisButton }">
+            <div class="detail-field__tag-row detail-field__tag-row--single">
               <div class="detail-field__value detail-field__value--tags">
-                <em v-if="tagsField.isVarious" class="detail-field__various">various</em>
-                <span v-else-if="tagsField.isEmpty" class="detail-field__placeholder"></span>
-                <TagChipList
-                  v-else-if="Array.isArray(tagsField.items) && tagsField.items.length"
-                  :tags="tagsField.items"
-                  :compact="true"
-                />
-                <span v-else class="detail-field__text">{{ tagsField.text }}</span>
+                <div class="detail-field__tag-stack">
+                  <em v-if="tagsField.isVarious" class="detail-field__various">various</em>
+                  <span v-else-if="tagsField.isEmpty" class="detail-field__text">无标签</span>
+                  <span
+                    v-else-if="tagsField.text && !(Array.isArray(tagsField.items) && tagsField.items.length)"
+                    class="detail-field__text"
+                  >{{ tagsField.text }}</span>
+                  <TagChipList
+                    :tags="Array.isArray(tagsField.items) ? tagsField.items : []"
+                    :compact="true"
+                    :show-add-button="canEditTags"
+                    :add-disabled="tagMenuDisabled"
+                    @add-click="$emit('open-tag-menu')"
+                  />
+                </div>
               </div>
-
-              <button
-                v-if="showAnalysisButton"
-                class="detail-field__ghost"
-                type="button"
-                :disabled="analysisDisabled"
-                @click="$emit('analysis')"
-              >分析</button>
             </div>
           </div>
 
@@ -204,16 +207,50 @@ export default {
     primaryActionDisabled: { type: Boolean, default: false },
     dangerActionLabel: { type: String, default: '删除' },
     dangerActionDisabled: { type: Boolean, default: false },
-    showAnalysisButton: { type: Boolean, default: true },
-    analysisDisabled: { type: Boolean, default: false },
+    canEditTags: { type: Boolean, default: false },
+    tagMenuDisabled: { type: Boolean, default: false },
   },
-  emits: ['analysis', 'close', 'delete', 'open-primary'],
+  emits: ['close', 'delete', 'open-primary', 'open-tag-menu'],
+  data() {
+    return {
+      asideScrolling: false,
+      asideScrollTimer: null,
+    }
+  },
   computed: {
     primaryPreview() {
       return this.previewItems[0] || null
     },
     showCategoryField() {
       return this.previewItems.some(item => item?.type === 'image')
+    },
+  },
+  watch: {
+    visible(nextVisible) {
+      if (!nextVisible) {
+        this.clearAsideScrollState()
+      }
+    },
+  },
+  beforeUnmount() {
+    this.clearAsideScrollState()
+  },
+  methods: {
+    onAsideScroll() {
+      this.asideScrolling = true
+      if (this.asideScrollTimer) {
+        clearTimeout(this.asideScrollTimer)
+      }
+      this.asideScrollTimer = setTimeout(() => {
+        this.asideScrollTimer = null
+        this.asideScrolling = false
+      }, 620)
+    },
+    clearAsideScrollState() {
+      this.asideScrolling = false
+      if (!this.asideScrollTimer) return
+      clearTimeout(this.asideScrollTimer)
+      this.asideScrollTimer = null
     },
   },
 }
@@ -405,6 +442,31 @@ export default {
   overscroll-behavior: contain;
   padding: clamp(1.35rem, 2.4vw, 2.1rem);
   border-left: 1px solid rgba(226, 232, 240, 0.9);
+  scrollbar-width: none;
+}
+
+.detail-panel__aside::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.detail-panel__aside--scrolling {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(203, 213, 225, 0.92) transparent;
+}
+
+.detail-panel__aside--scrolling::-webkit-scrollbar {
+  width: 9px;
+}
+
+.detail-panel__aside--scrolling::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.detail-panel__aside--scrolling::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  background: rgba(203, 213, 225, 0.96);
 }
 
 .detail-panel__summary {
@@ -443,6 +505,13 @@ export default {
   align-items: flex-start;
 }
 
+.detail-field__tag-stack {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
 .detail-field__text {
   display: block;
   width: 100%;
@@ -470,36 +539,6 @@ export default {
 
 .detail-field__tag-row--single {
   grid-template-columns: minmax(0, 1fr);
-}
-
-.detail-field__ghost {
-  flex-shrink: 0;
-  border: 1px solid rgba(148, 163, 184, 0.34);
-  border-radius: 14px;
-  padding: 0.55rem 0.95rem;
-  background: transparent;
-  color: #334155;
-  font-size: 0.82rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
-}
-
-.detail-field__ghost:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.detail-field__ghost:hover {
-  background: #f8fafc;
-  border-color: rgba(100, 116, 139, 0.4);
-  color: #0f172a;
-}
-
-.detail-field__ghost:disabled:hover {
-  background: transparent;
-  border-color: rgba(148, 163, 184, 0.34);
-  color: #334155;
 }
 
 .detail-panel__actions {
@@ -597,8 +636,7 @@ export default {
     display: grid;
   }
 
-  .detail-panel__action,
-  .detail-field__ghost {
+  .detail-panel__action {
     width: 100%;
   }
 }

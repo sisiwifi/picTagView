@@ -24,6 +24,7 @@
     - `Sidebar.vue`
     - `ThumbCard.vue`
       - `TagChipList.vue`（按 Tag 元数据显色）
+         - `TagMenuDialog.vue`（可复用的 Tag 菜单弹层）
   - `pages/`：路由页面
     - `HomePage.vue`
     - `GalleryPage.vue`
@@ -53,9 +54,21 @@
    - `background_color`
 
 ### 4.5 文件名分析回写 Tag
-- 选择模式详情浮层点击“分析”后，前端调用 `POST /api/images/tags/filename-match`
+- 前端保留文件名分析回写能力，可调用 `POST /api/images/tags/filename-match`
 - 支持批量图片分析并回写 tags，前端会即时刷新当前选择项的标签显示
 - 多选显示规则：优先显示公共标签；没有公共标签但存在差异时显示 `various`
+
+### 4.6 Tag 菜单手动回写
+- 选择模式详情浮层的 Tag 区末尾提供 `+` 按钮，点击后弹出 Tag 标签菜单
+- 菜单顶部“现有标签”在多选时显示所选图片的公共标签，右侧 `x` 按钮可移除该标签
+- 菜单输入框为空时，固定高度建议容器显示最近使用的 5 个标签（`last_used_at` 最新）
+- 菜单输入框有内容时按 `name` 与 `display_name` 搜索，建议项显示 `display_name`
+- 每条建议右侧提供 `+` 与笔形按钮：`+` 先写入当前弹层草稿，笔形按钮为元数据编辑预留入口
+- 菜单底部保留“添加新标签（预留）”入口，原“编辑标签”位置改为“自动标签”按钮
+- “自动标签”在菜单内调用 `POST /api/images/tags/filename-match` 做预分析并合并到草稿，不会立即回写
+- 菜单右下角提供“取消 / 确定”：
+   - 取消或右上角关闭：丢弃草稿，不改动任何图片标签
+   - 确定：对所有变更图片调用 `POST /api/images/tags/apply`（`merge_mode=replace`）一次性提交
 
 ### 4.4 管理与重建
 - 交互按钮触发 `POST /api/admin/refresh`
@@ -125,6 +138,8 @@ npm run lint
    - `/api/albums/by-path/{album_path:path}` 用于物理路径相册详情
    - `/api/images/count` 可用于统计呈现
    - `/api/images/tags/filename-match` 用于文件名分析并回写图片标签
+   - `/api/images/tags/apply` 用于标签菜单手动批量添加/移除标签
+   - `/api/tags?sort_by=last_used_desc&limit=5` 用于输入为空时加载最近使用标签
    - `/api/system/tag-match-setting` 用于读取/保存文件名匹配过滤配置
 - `ThumbCard` 负责显示缩略图，统一尺寸对齐
 - `Sidebar` 负责导航历史分组与用户操作按钮

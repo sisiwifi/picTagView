@@ -8,7 +8,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlmodel import select
 
 from app.db.session import get_session
@@ -102,6 +102,7 @@ def list_tags(
     category: Optional[str] = Query(default=None, description="已废弃；标签不再属于主分类"),
     tag_type: Optional[str] = Query(default=None, alias="type"),
     q: Optional[str] = Query(default=None, description="按 name/display_name 模糊搜索"),
+    sort_by: str = Query(default="name_asc", description="排序：name_asc | last_used_desc"),
     limit: int = Query(default=200, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
@@ -123,6 +124,15 @@ def list_tags(
             stmt = stmt.where(
                 (Tag.name.like(pattern)) | (Tag.display_name.like(pattern))  # type: ignore[attr-defined]
             )
+        if sort_by == "last_used_desc":
+            stmt = stmt.order_by(
+                case((Tag.last_used_at.is_(None), 1), else_=0),
+                Tag.last_used_at.desc(),
+                Tag.updated_at.desc(),
+                Tag.id.desc(),
+            )
+        else:
+            stmt = stmt.order_by(Tag.name.asc(), Tag.id.asc())
         tags = session.exec(stmt.offset(offset).limit(limit)).all()
         total = int(session.exec(select(func.count()).select_from(stmt.subquery())).one())
         return {"total": total, "offset": offset, "limit": limit, "items": [_tag_to_dict(t) for t in tags]}

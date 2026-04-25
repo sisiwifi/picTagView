@@ -82,6 +82,7 @@
   - GET /api/images/meta
   - GET /api/images/{image_id}/open
   - POST /api/images/tags/filename-match
+  - POST /api/images/tags/apply
 - app/api/routers/trash.py
   - GET /api/trash/items
   - POST /api/trash/move
@@ -195,6 +196,14 @@
   - Body：`{ image_ids, apply, merge_mode, include_tokens }`
   - 匹配规则：按空格分词，不拆分下划线 `_`；支持噪声词、最小长度、纯数字 token 过滤
   - 返回：逐图片匹配详情、回写前后 tag id、公共标签集合与 `multi_display`
+
+- POST /api/images/tags/apply
+  - 实现：app/api/routers/images.py
+  - 用途：把指定 Tag 批量回写到图片 tags（用于详情浮层 Tag 菜单确认操作）
+  - Body：`{ image_ids, tag_ids, merge_mode }`
+  - merge_mode：`append_unique`（默认，去重追加）| `replace`（覆盖为指定 tag 列表）| `remove`（从已选图片中移除指定 tag）
+  - 返回：逐图片回写前后 tag id、公共标签集合与 `multi_display`
+  - 说明：当 merge_mode 为 `append_unique` / `replace` 时，会刷新相关 Tag 的 `last_used_at`；并同步受影响 Tag 的 `usage_count`
 
 ### 3.4 回收站接口
 
@@ -332,8 +341,9 @@
 
 - GET /api/tags
   - 实现：app/api/routers/tags.py
-  - 参数：ids（逗号分隔 ID 列表，批量查）、type（标签种类过滤）、q（名称模糊搜索）、limit/offset（分页）；历史 `category_id` / `category` 参数仍可传入但已忽略
+  - 参数：ids（逗号分隔 ID 列表，批量查）、type（标签种类过滤）、q（名称模糊搜索）、sort_by（`name_asc` / `last_used_desc`）、limit/offset（分页）；历史 `category_id` / `category` 参数仍可传入但已忽略
   - 用途：列出/搜索/批量查询 Tag；前端展示图片标签时通过 ids 参数批量拉取
+  - 补充：`sort_by=last_used_desc&limit=5` 可用于获取最近使用标签
   - 性能补充：总数统计已改为数据库 `COUNT(*)` 查询，避免批量 ids 请求时先全量取回记录再在 Python 内计数
 
 - GET /api/tags/{tag_id}

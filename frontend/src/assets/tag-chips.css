@@ -23,6 +23,27 @@
   user-select: none;
 }
 
+.tag-chip--add {
+  min-width: 1.36rem;
+  padding: 0.14rem 0.44rem;
+  border-color: rgba(148, 163, 184, 0.5);
+  background: rgba(226, 232, 240, 0.55);
+  color: #475569;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+
+.tag-chip--add:hover:not(:disabled) {
+  border-color: rgba(100, 116, 139, 0.55);
+  background: rgba(226, 232, 240, 0.88);
+  color: #0f172a;
+}
+
+.tag-chip--add:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .tag-chip-list--compact .tag-chip {
   min-height: 1.36rem;
   padding: 0.14rem 0.5rem;

@@ -217,11 +217,33 @@
       :primary-action-label="selectionDetailPrimaryActionLabel"
       :can-open-primary-action="canOpenPrimaryActionFromDetails && !actionBusy"
       :danger-action-disabled="actionBusy"
-      :analysis-disabled="analysisBusy || actionBusy"
+      :can-edit-tags="canOpenTagMenu"
+      :tag-menu-disabled="tagMenuBusy || actionBusy"
       @close="closeSelectionDetails"
-      @analysis="onReservedAnalysisClick"
+      @open-tag-menu="openTagMenu"
       @delete="onReservedDeleteClick"
       @open-primary="openPrimaryFromDetails"
+    />
+
+    <TagMenuDialog
+      :visible="tagMenuVisible"
+      :busy="tagMenuBusy"
+      :search-busy="tagMenuSearchBusy"
+      :error-message="tagMenuError"
+      :query="tagMenuQuery"
+      :existing-tags="tagMenuExistingTags"
+      :suggestions="tagMenuSuggestions"
+      :recent-tags="tagMenuRecentTags"
+      :confirm-disabled="!tagMenuDirty"
+      @close="closeTagMenu"
+      @cancel="closeTagMenu"
+      @confirm="confirmTagMenuChanges"
+      @query-change="onTagMenuQueryChange"
+      @add-tag="addTagFromMenu"
+      @remove-tag="removeTagFromMenu"
+      @edit-tag="editTagMetadataFromMenu"
+      @add-new-tag="addNewTagFromMenu"
+      @auto-tag="applyAutoTagFromMenu"
     />
 
     <ConfirmationDialog
@@ -253,6 +275,7 @@ import MediaItemCard from '../components/MediaItemCard.vue'
 import ConfirmationDialog from '../components/ConfirmationDialog.vue'
 import ActionProgressOverlay from '../components/ActionProgressOverlay.vue'
 import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
+import TagMenuDialog from '../components/TagMenuDialog.vue'
 
 const API_BASE = 'http://127.0.0.1:8000'
 const POLL_MS = 180
@@ -303,7 +326,7 @@ function createDialogState() {
 
 export default {
   name: 'BrowsePage',
-  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, ConfirmationDialog, ActionProgressOverlay, SelectionDetailOverlay },
+  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, ConfirmationDialog, ActionProgressOverlay, SelectionDetailOverlay, TagMenuDialog },
 
   data() {
     return {
@@ -344,7 +367,6 @@ export default {
       categoryDisplayMap: {},
       tagsLoading: false,
       tagFetchSerial: 0,
-      analysisBusy: false,
       scrollTop: typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0,
       viewportHeight: typeof window !== 'undefined' ? window.innerHeight : 0,
       virtualStartIndex: 0,
@@ -364,6 +386,18 @@ export default {
       selectionDetailsHostHeight: 0,
       scrollLockState: null,
       selectionDetailFetchSerial: 0,
+      tagMenuVisible: false,
+      tagMenuBusy: false,
+      tagMenuSearchBusy: false,
+      tagMenuError: '',
+      tagMenuQuery: '',
+      tagMenuSuggestions: [],
+      tagMenuRecentTags: [],
+      tagMenuExistingTags: [],
+      tagMenuDraftByImageId: {},
+      tagMenuOriginalByImageId: {},
+      tagMenuDirty: false,
+      tagMenuSearchTimer: null,
       selectAllMenuOpen: false,
       actionBusy: false,
       actionBusyText: '',
@@ -721,6 +755,15 @@ export default {
       }
       return entry?.item?.type === 'album' && typeof entry?.item?.album_path === 'string' && entry.item.album_path.length > 0
     },
+    selectedImageIds() {
+      return this.selectedEntries
+        .map(({ item }) => item)
+        .filter(item => item?.type === 'image' && Number.isInteger(item?.id))
+        .map(item => item.id)
+    },
+    canOpenTagMenu() {
+      return this.selectedImageIds.length > 0
+    },
   },
 
   watch: {
@@ -747,6 +790,11 @@ export default {
       if (!nextValue) {
         this.closeSelectionDetails()
         this.closeSelectAllMenu()
+      }
+    },
+    selectionDetailsOpen(nextValue) {
+      if (!nextValue) {
+        this.closeTagMenu()
       }
     },
   },
@@ -776,6 +824,10 @@ export default {
     if (this.dimensionFlushTimer) {
       clearTimeout(this.dimensionFlushTimer)
       this.dimensionFlushTimer = null
+    }
+    if (this.tagMenuSearchTimer) {
+      clearTimeout(this.tagMenuSearchTimer)
+      this.tagMenuSearchTimer = null
     }
   },
 
@@ -1684,6 +1736,11 @@ export default {
     },
 
     onWindowKeydown(event) {
+      if (this.tagMenuVisible && event.key === 'Escape') {
+        event.preventDefault()
+        this.closeTagMenu()
+        return
+      }
       if (this.selectionDetailsOpen && event.key === 'Escape') {
         event.preventDefault()
         this.closeSelectionDetails()
@@ -2250,6 +2307,301 @@ export default {
       })
     },
 
+    tagIdsForImage(imageId) {
+      const item = this.items.find(candidate => candidate?.type === 'image' && candidate?.id === imageId)
+      const ids = Array.isArray(item?.tags) ? item.tags.filter(id => Number.isInteger(id)) : []
+      return this.sortTagIdsByName([...new Set(ids)])
+    },
+
+    collectCommonTagIdsFromMap(imageIds, tagMap) {
+      if (!imageIds.length) return []
+      const tagIdLists = imageIds.map((imageId) => {
+        const ids = Array.isArray(tagMap?.[imageId]) ? tagMap[imageId].filter(id => Number.isInteger(id)) : []
+        return this.sortTagIdsByName([...new Set(ids)])
+      })
+
+      const commonTagIds = tagIdLists.reduce((previous, current) => {
+        if (!previous.length) return []
+        const currentSet = new Set(current)
+        return previous.filter(id => currentSet.has(id))
+      }, [...(tagIdLists[0] || [])])
+
+      return this.sortTagIdsByName([...new Set(commonTagIds)])
+    },
+
+    updateTagMenuDirty() {
+      const imageIds = this.selectedImageIds
+      this.tagMenuDirty = imageIds.some((imageId) => {
+        const beforeIds = this.sortTagIdsByName([...(this.tagMenuOriginalByImageId[imageId] || [])])
+        const afterIds = this.sortTagIdsByName([...(this.tagMenuDraftByImageId[imageId] || [])])
+        if (beforeIds.length !== afterIds.length) return true
+        for (let index = 0; index < beforeIds.length; index++) {
+          if (beforeIds[index] !== afterIds[index]) return true
+        }
+        return false
+      })
+    },
+
+    refreshTagMenuExistingTags() {
+      const commonTagIds = this.collectCommonTagIdsFromMap(this.selectedImageIds, this.tagMenuDraftByImageId)
+      this.tagMenuExistingTags = this.buildTagItemsByIds(commonTagIds)
+      this.updateTagMenuDirty()
+    },
+
+    normalizeTagMenuItems(rawItems) {
+      const nextTagMap = { ...this.tagLookupMap }
+      const normalizedItems = []
+      for (const rawTag of (rawItems || [])) {
+        const normalizedTag = this.buildTagLookupEntry(rawTag)
+        if (!normalizedTag) continue
+        nextTagMap[normalizedTag.id] = normalizedTag
+        normalizedItems.push({
+          id: normalizedTag.id,
+          name: normalizedTag.name,
+          display_name: normalizedTag.displayName,
+          color: normalizedTag.color,
+          border_color: normalizedTag.borderColor,
+          background_color: normalizedTag.backgroundColor,
+          last_used_at: String(rawTag?.last_used_at || ''),
+        })
+      }
+      this.tagLookupMap = nextTagMap
+      return normalizedItems
+    },
+
+    async openTagMenu() {
+      if (!this.canOpenTagMenu || this.tagMenuBusy) return
+      this.tagMenuVisible = true
+      this.tagMenuError = ''
+      this.tagMenuQuery = ''
+      this.tagMenuSuggestions = []
+      this.tagMenuRecentTags = []
+      this.tagMenuDraftByImageId = {}
+      this.tagMenuOriginalByImageId = {}
+      this.tagMenuDirty = false
+
+      for (const imageId of this.selectedImageIds) {
+        const ids = this.tagIdsForImage(imageId)
+        this.tagMenuDraftByImageId[imageId] = [...ids]
+        this.tagMenuOriginalByImageId[imageId] = [...ids]
+      }
+
+      await this.ensureTagLabelsLoaded(true)
+      this.refreshTagMenuExistingTags()
+      this.fetchTagMenuSuggestions('')
+    },
+
+    closeTagMenu() {
+      this.tagMenuVisible = false
+      this.tagMenuBusy = false
+      this.tagMenuSearchBusy = false
+      this.tagMenuError = ''
+      this.tagMenuQuery = ''
+      this.tagMenuSuggestions = []
+      this.tagMenuRecentTags = []
+      this.tagMenuExistingTags = []
+      this.tagMenuDraftByImageId = {}
+      this.tagMenuOriginalByImageId = {}
+      this.tagMenuDirty = false
+      if (this.tagMenuSearchTimer) {
+        clearTimeout(this.tagMenuSearchTimer)
+        this.tagMenuSearchTimer = null
+      }
+    },
+
+    onTagMenuQueryChange(nextQuery) {
+      this.tagMenuError = ''
+      this.tagMenuQuery = String(nextQuery || '')
+      if (this.tagMenuSearchTimer) {
+        clearTimeout(this.tagMenuSearchTimer)
+      }
+      this.tagMenuSearchTimer = setTimeout(() => {
+        this.tagMenuSearchTimer = null
+        this.fetchTagMenuSuggestions(this.tagMenuQuery)
+      }, 180)
+    },
+
+    async fetchTagMenuSuggestions(rawQuery) {
+      if (!this.tagMenuVisible) return
+      const query = String(rawQuery || '').trim()
+      this.tagMenuSearchBusy = true
+      this.tagMenuError = ''
+
+      try {
+        if (!query) {
+          const res = await fetch(`${API_BASE}/api/tags?offset=0&limit=5&sort_by=last_used_desc`)
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`)
+          }
+          const data = await res.json()
+          this.tagMenuRecentTags = this.normalizeTagMenuItems(data.items || [])
+          this.tagMenuSuggestions = []
+          return
+        }
+
+        const q = `&q=${encodeURIComponent(query)}`
+        const res = await fetch(`${API_BASE}/api/tags?offset=0&limit=24${q}`)
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`)
+        }
+
+        const data = await res.json()
+        this.tagMenuSuggestions = this.normalizeTagMenuItems(data.items || [])
+        this.tagMenuRecentTags = []
+      } catch (err) {
+        this.tagMenuSuggestions = []
+        this.tagMenuRecentTags = []
+        this.tagMenuError = `标签搜索失败：${err?.message || '未知错误'}`
+      } finally {
+        this.tagMenuSearchBusy = false
+      }
+    },
+
+    async addTagFromMenu(tagItem) {
+      const tagId = Number(tagItem?.id)
+      if (!this.canOpenTagMenu || !Number.isInteger(tagId) || this.tagMenuBusy) return
+
+      this.tagMenuError = ''
+      for (const imageId of this.selectedImageIds) {
+        const nextIds = this.sortTagIdsByName([...(this.tagMenuDraftByImageId[imageId] || [])])
+        if (!nextIds.includes(tagId)) {
+          nextIds.push(tagId)
+        }
+        this.tagMenuDraftByImageId[imageId] = this.sortTagIdsByName(nextIds)
+      }
+
+      const normalizedTag = this.buildTagLookupEntry(tagItem)
+      if (normalizedTag) {
+        this.tagLookupMap = {
+          ...this.tagLookupMap,
+          [normalizedTag.id]: normalizedTag,
+        }
+      }
+      this.refreshTagMenuExistingTags()
+    },
+
+    async removeTagFromMenu(tagItem) {
+      const tagId = Number(tagItem?.id)
+      if (!this.canOpenTagMenu || !Number.isInteger(tagId) || this.tagMenuBusy) return
+
+      this.tagMenuError = ''
+      for (const imageId of this.selectedImageIds) {
+        const nextIds = (this.tagMenuDraftByImageId[imageId] || []).filter(id => id !== tagId)
+        this.tagMenuDraftByImageId[imageId] = this.sortTagIdsByName(nextIds)
+      }
+      this.refreshTagMenuExistingTags()
+    },
+
+    async applyAutoTagFromMenu() {
+      if (!this.canOpenTagMenu || this.tagMenuBusy) return
+      this.tagMenuBusy = true
+      this.tagMenuError = ''
+
+      try {
+        const res = await fetch(`${API_BASE}/api/images/tags/filename-match`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image_ids: this.selectedImageIds,
+            apply: false,
+            merge_mode: 'append_unique',
+            include_tokens: false,
+          }),
+        })
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}))
+          throw new Error(payload.detail || `HTTP ${res.status}`)
+        }
+
+        const payload = await res.json()
+        const nextTagMap = { ...this.tagLookupMap }
+        for (const row of (payload?.items || [])) {
+          if (Number.isInteger(row?.image_id) && Array.isArray(row?.matched_tag_ids)) {
+            const imageId = row.image_id
+            const beforeIds = this.sortTagIdsByName([...(this.tagMenuDraftByImageId[imageId] || [])])
+            const mergedSet = new Set(beforeIds)
+            for (const tagId of row.matched_tag_ids) {
+              if (Number.isInteger(tagId)) mergedSet.add(tagId)
+            }
+            this.tagMenuDraftByImageId[imageId] = this.sortTagIdsByName(Array.from(mergedSet))
+          }
+          for (const tag of (row?.matched_tags || [])) {
+            const normalizedTag = this.buildTagLookupEntry(tag)
+            if (!normalizedTag) continue
+            nextTagMap[normalizedTag.id] = normalizedTag
+          }
+        }
+        this.tagLookupMap = nextTagMap
+        this.refreshTagMenuExistingTags()
+      } catch (err) {
+        this.tagMenuError = `自动标签失败：${err?.message || '未知错误'}`
+      } finally {
+        this.tagMenuBusy = false
+      }
+    },
+
+    async confirmTagMenuChanges() {
+      if (!this.canOpenTagMenu || !this.tagMenuDirty || this.tagMenuBusy) return
+
+      this.tagMenuBusy = true
+      this.tagMenuError = ''
+      try {
+        const changedImageIds = this.selectedImageIds.filter((imageId) => {
+          const beforeIds = this.sortTagIdsByName([...(this.tagMenuOriginalByImageId[imageId] || [])])
+          const afterIds = this.sortTagIdsByName([...(this.tagMenuDraftByImageId[imageId] || [])])
+          if (beforeIds.length !== afterIds.length) return true
+          for (let index = 0; index < beforeIds.length; index++) {
+            if (beforeIds[index] !== afterIds[index]) return true
+          }
+          return false
+        })
+
+        for (const imageId of changedImageIds) {
+          const res = await fetch(`${API_BASE}/api/images/tags/apply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              image_ids: [imageId],
+              tag_ids: this.sortTagIdsByName([...(this.tagMenuDraftByImageId[imageId] || [])]),
+              merge_mode: 'replace',
+            }),
+          })
+          if (!res.ok) {
+            const payload = await res.json().catch(() => ({}))
+            throw new Error(payload.detail || `HTTP ${res.status}`)
+          }
+        }
+
+        if (changedImageIds.length) {
+          const changedIdSet = new Set(changedImageIds)
+          this.items = this.items.map((item) => {
+            if (item?.type !== 'image' || !Number.isInteger(item?.id)) return item
+            if (!changedIdSet.has(item.id)) return item
+            return {
+              ...item,
+              tags: this.sortTagIdsByName([...(this.tagMenuDraftByImageId[item.id] || [])]),
+            }
+          })
+        }
+
+        await this.ensureTagLabelsLoaded(true)
+        this.closeTagMenu()
+      } catch (err) {
+        this.tagMenuError = `标签回写失败：${err?.message || '未知错误'}`
+      } finally {
+        this.tagMenuBusy = false
+      }
+    },
+
+    editTagMetadataFromMenu(tagItem) {
+      const label = String(tagItem?.display_name || tagItem?.name || '')
+      this.tagMenuError = `${label || '该标签'} 的元数据编辑功能暂未开放。`
+    },
+
+    addNewTagFromMenu() {
+      this.tagMenuError = '添加新标签功能暂未开放。'
+    },
+
     tagTextForItem(item) {
       const ids = Array.isArray(item?.tags)
         ? item.tags.filter(id => Number.isInteger(id))
@@ -2358,66 +2710,6 @@ export default {
         if (requestSerial === this.tagFetchSerial) {
           this.tagsLoading = false
         }
-      }
-    },
-
-    async onReservedAnalysisClick() {
-      if (this.analysisBusy) return
-
-      const imageIds = this.selectedEntries
-        .map(({ item }) => item)
-        .filter(item => item?.type === 'image' && Number.isInteger(item?.id))
-        .map(item => item.id)
-
-      if (!imageIds.length) return
-
-      this.analysisBusy = true
-      try {
-        const res = await fetch(`${API_BASE}/api/images/tags/filename-match`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            image_ids: imageIds,
-            apply: true,
-            merge_mode: 'append_unique',
-            include_tokens: false,
-          }),
-        })
-        if (!res.ok) return
-        const payload = await res.json()
-        const resultItems = Array.isArray(payload?.items) ? payload.items : []
-
-        const nextTagMap = { ...this.tagLookupMap }
-        const tagUpdateByImageId = new Map()
-        for (const row of resultItems) {
-          if (Number.isInteger(row?.image_id) && Array.isArray(row?.after_tag_ids)) {
-            tagUpdateByImageId.set(row.image_id, row.after_tag_ids.filter(id => Number.isInteger(id)))
-          }
-          for (const tag of (row?.matched_tags || [])) {
-            const normalizedTag = this.buildTagLookupEntry(tag)
-            if (!normalizedTag) continue
-            nextTagMap[normalizedTag.id] = normalizedTag
-          }
-        }
-
-        this.tagLookupMap = nextTagMap
-        if (tagUpdateByImageId.size) {
-          this.items = this.items.map((item) => {
-            if (item?.type !== 'image' || !Number.isInteger(item?.id)) return item
-            if (!tagUpdateByImageId.has(item.id)) return item
-            const nextTagIds = this.sortTagIdsByName(tagUpdateByImageId.get(item.id) || [])
-            return {
-              ...item,
-              tags: nextTagIds,
-            }
-          })
-        }
-
-        await this.ensureTagLabelsLoaded(true)
-      } catch {
-        // keep UI silent here; analysis is best-effort and should not interrupt overlay workflow
-      } finally {
-        this.analysisBusy = false
       }
     },
 
@@ -3131,5 +3423,6 @@ export default {
     left: 0;
     right: 0;
   }
+
 }
 </style>

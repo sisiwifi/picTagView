@@ -9,6 +9,16 @@
     >
       {{ tag.display_name || tag.name || '' }}
     </span>
+    <button
+      v-if="showAddButton"
+      class="tag-chip tag-chip--add"
+      type="button"
+      :disabled="addDisabled"
+      title="添加标签"
+      @click="$emit('add-click')"
+    >
+      +
+    </button>
   </div>
 </template>
 
@@ -38,6 +48,7 @@ function hexToRgba(hexColor, alpha = 0.4) {
 
 export default {
   name: 'TagChipList',
+  emits: ['add-click'],
   props: {
     tags: {
       type: Array,
@@ -46,6 +57,14 @@ export default {
     compact: {
       type: Boolean,
       default: true,
+    },
+    showAddButton: {
+      type: Boolean,
+      default: false,
+    },
+    addDisabled: {
+      type: Boolean,
+      default: false,
     },
   },
   computed: {

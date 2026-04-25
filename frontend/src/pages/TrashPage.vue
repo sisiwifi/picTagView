@@ -151,7 +151,7 @@
       :can-open-primary-action="selectedCount > 0 && !actionBusy"
       danger-action-label="删除"
       :danger-action-disabled="actionBusy"
-      :show-analysis-button="false"
+      :can-edit-tags="false"
       @close="closeSelectionDetails"
       @open-primary="restoreSelection"
       @delete="hardDeleteSelection"
@@ -276,7 +276,7 @@ export default {
       actionBusy: false,
       actionBusyTitle: '',
       actionBusyText: '',
-      tagNameMap: {},
+      tagLookupMap: {},
       categoryDisplayMap: {},
       selectAllMenuOpen: false,
       confirmDialog: createDialogState(),
@@ -490,7 +490,53 @@ export default {
     },
 
     selectionDetailTagsField() {
-      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailTagTextForItem(item)), { emptyText: '' })
+      const imageEntries = this.selectedEntries.filter(({ item }) => item?.type === 'image')
+      if (!imageEntries.length) {
+        return {
+          text: '',
+          isVarious: false,
+          isEmpty: true,
+          items: [],
+        }
+      }
+
+      const tagIdLists = imageEntries.map(({ item }) => {
+        const ids = Array.isArray(item?.tags) ? item.tags.filter(id => Number.isInteger(id)) : []
+        return this.sortTagIdsByName([...new Set(ids)])
+      })
+
+      const commonTagIds = tagIdLists.reduce((previous, current) => {
+        if (!previous.length) return []
+        const currentSet = new Set(current)
+        return previous.filter(id => currentSet.has(id))
+      }, [...(tagIdLists[0] || [])])
+
+      const sortedCommonTagIds = this.sortTagIdsByName([...new Set(commonTagIds)])
+      if (sortedCommonTagIds.length) {
+        return {
+          text: '',
+          isVarious: false,
+          isEmpty: false,
+          items: this.buildTagItemsByIds(sortedCommonTagIds),
+        }
+      }
+
+      const hasAnyTag = tagIdLists.some(ids => ids.length > 0)
+      if (hasAnyTag) {
+        return {
+          text: 'various',
+          isVarious: true,
+          isEmpty: false,
+          items: [],
+        }
+      }
+
+      return {
+        text: '',
+        isVarious: false,
+        isEmpty: true,
+        items: [],
+      }
     },
 
     selectionDetailSizeField() {
@@ -1234,10 +1280,74 @@ export default {
       return `${dims.w} / ${dims.h}`
     },
 
+    buildTagLookupEntry(rawTag) {
+      if (!Number.isInteger(rawTag?.id)) return null
+      const metadata = rawTag?.metadata && typeof rawTag.metadata === 'object' ? rawTag.metadata : {}
+      const color = typeof rawTag?.color === 'string'
+        ? rawTag.color
+        : (typeof metadata.color === 'string' ? metadata.color : '')
+      const borderColor = typeof rawTag?.border_color === 'string'
+        ? rawTag.border_color
+        : (typeof metadata.border_color === 'string' ? metadata.border_color : '')
+      const backgroundColor = typeof rawTag?.background_color === 'string'
+        ? rawTag.background_color
+        : (typeof metadata.background_color === 'string' ? metadata.background_color : '')
+      return {
+        id: rawTag.id,
+        name: String(rawTag?.name || ''),
+        displayName: String(rawTag?.display_name || rawTag?.name || `#${rawTag.id}`),
+        color: String(color || ''),
+        borderColor: String(borderColor || ''),
+        backgroundColor: String(backgroundColor || ''),
+      }
+    },
+
+    sortTagIdsByName(tagIds) {
+      return [...tagIds].sort((leftId, rightId) => {
+        const leftName = String(this.tagLookupMap[leftId]?.name || '')
+        const rightName = String(this.tagLookupMap[rightId]?.name || '')
+        if (leftName && rightName && leftName !== rightName) {
+          return leftName.localeCompare(rightName)
+        }
+        if (leftName && !rightName) return -1
+        if (!leftName && rightName) return 1
+        return leftId - rightId
+      })
+    },
+
+    buildTagItemsByIds(tagIds) {
+      const sortedIds = this.sortTagIdsByName(tagIds)
+      return sortedIds.map((id) => {
+        const tag = this.tagLookupMap[id]
+        if (!tag) {
+          return {
+            id,
+            name: `#${id}`,
+            display_name: `#${id}`,
+            color: '',
+            border_color: '',
+            background_color: '',
+          }
+        }
+        return {
+          id,
+          name: tag.name || `#${id}`,
+          display_name: tag.displayName || tag.name || `#${id}`,
+          color: tag.color || '',
+          border_color: tag.borderColor || '',
+          background_color: tag.backgroundColor || '',
+        }
+      })
+    },
+
     detailTagTextForItem(item) {
       const tags = Array.isArray(item?.tags) ? item.tags : []
       if (!tags.length) return ''
-      return tags.map(id => this.tagNameMap[id] || `#${id}`).filter(Boolean).join(', ')
+      const sortedIds = this.sortTagIdsByName(tags.filter(id => Number.isInteger(id)))
+      return sortedIds
+        .map(id => this.tagLookupMap[id]?.displayName || `#${id}`)
+        .filter(Boolean)
+        .join(', ')
     },
 
     detailCategoryText(item) {
@@ -1288,11 +1398,13 @@ export default {
         const res = await fetch(`${API_BASE}/api/tags?ids=${tagIds.join(',')}&limit=${tagIds.length}`)
         if (!res.ok) return
         const data = await res.json()
-        const nextMap = { ...this.tagNameMap }
+        const nextMap = { ...this.tagLookupMap }
         for (const tag of (data.items || [])) {
-          nextMap[tag.id] = tag.display_name || tag.name || `#${tag.id}`
+          const normalizedTag = this.buildTagLookupEntry(tag)
+          if (!normalizedTag) continue
+          nextMap[normalizedTag.id] = normalizedTag
         }
-        this.tagNameMap = nextMap
+        this.tagLookupMap = nextMap
       } catch {
         // ignore tag load failure in trash detail view
       }
