@@ -58,6 +58,9 @@
   - get_preferred_viewer_id() / set_preferred_viewer_id()
   - launch_with_preferred_viewer(command_template, file_path)
   - ensure_viewer_icon(viewer)
+- app/services/tag_style_service.py
+  - ensure_tag_style_scheme(session)
+  - 说明：按 Tag ID 升序轮回写入 7 色显色方案到 `Tag.metadata`（color / border_color / background_color）
 
 ## 2. 路由组织
 
@@ -78,6 +81,7 @@
 - app/api/routers/images.py
   - GET /api/images/meta
   - GET /api/images/{image_id}/open
+  - POST /api/images/tags/filename-match
 - app/api/routers/trash.py
   - GET /api/trash/items
   - POST /api/trash/move
@@ -89,6 +93,8 @@
   - POST /api/system/cache-thumb-setting
   - GET /api/system/month-cover-setting
   - POST /api/system/month-cover-setting
+  - GET /api/system/tag-match-setting
+  - POST /api/system/tag-match-setting
   - GET /api/system/viewer-info
   - GET /api/system/image-viewers
   - GET /api/system/viewer-preference
@@ -181,6 +187,13 @@
   - 用途：在本机系统中打开原图
   - 参数：可选 `path` 查询参数；若提供，则必须命中该图片的某个 `media_path` 实例，否则返回 404
 
+- POST /api/images/tags/filename-match
+  - 实现：app/api/routers/images.py
+  - 用途：按文件名批量匹配 Tag，并按选项回写图片 tags
+  - Body：`{ image_ids, apply, merge_mode, include_tokens }`
+  - 匹配规则：按空格分词，不拆分下划线 `_`；支持噪声词、最小长度、纯数字 token 过滤
+  - 返回：逐图片匹配详情、回写前后 tag id、公共标签集合与 `multi_display`
+
 ### 3.4 回收站接口
 
 - GET /api/trash/items
@@ -266,6 +279,16 @@
   - 用途：更新月份封面尺寸（影响 `temp/` 内月份封面与后续导入生成规则）
   - 说明：前端设置页保存后会调用 `DELETE /api/cache` 清空缓存，随后按新尺寸重建
 
+- GET /api/system/tag-match-setting
+  - 实现：app/api/routers/system.py
+  - 用途：读取文件名匹配 Tag 的过滤配置
+  - 返回：`{ enabled, noise_tokens, min_token_length, drop_numeric_only, sort_mode }`
+
+- POST /api/system/tag-match-setting
+  - 实现：app/api/routers/system.py
+  - Body：`{ enabled, noise_tokens, min_token_length, drop_numeric_only }`
+  - 用途：保存文件名匹配 Tag 的过滤配置
+
 - GET /api/system/image-viewers
   - 实现：app/api/routers/system.py
   - 用途：扫描可用看图程序（Windows）
@@ -339,6 +362,11 @@
   - Body：`{ tags: [...], on_conflict: "skip"|"overwrite" }`
   - 用途：批量导入 Tag；on_conflict=skip（默认）跳过同名，overwrite 覆盖可更新字段
   - 返回：`{ imported, updated, skipped, errors }`
+
+- Tag 显色元数据方案（后端写入）
+  - 写入位置：`Tag.metadata.color`、`Tag.metadata.border_color`、`Tag.metadata.background_color`
+  - 触发位置：Tag 列表/详情/创建/更新/导入与文件名匹配接口都会自动确保写入
+  - 分配规则：按 Tag ID 升序采用 7 色轮回（id 顺序赋色后循环）
 
 ## 4. 业务数据库汇总
 

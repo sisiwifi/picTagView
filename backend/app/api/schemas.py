@@ -132,6 +132,56 @@ class MonthCoverSettingResponse(BaseModel):
     max_size_px: int
 
 
+class TagMatchSettingRequest(BaseModel):
+    enabled: bool = True
+    noise_tokens: List[str] = Field(default_factory=list)
+    min_token_length: int = 2
+    drop_numeric_only: bool = True
+
+
+class TagMatchSettingResponse(BaseModel):
+    enabled: bool
+    noise_tokens: List[str] = Field(default_factory=list)
+    min_token_length: int
+    drop_numeric_only: bool
+    sort_mode: str = "name_asc"
+
+
+class ImageTagMatchRequest(BaseModel):
+    image_ids: List[int] = Field(default_factory=list)
+    apply: bool = True
+    merge_mode: str = "append_unique"
+    include_tokens: bool = False
+
+
+class TagBriefItem(BaseModel):
+    id: int
+    name: str
+    display_name: str = ""
+    color: str = ""
+    border_color: str = ""
+    background_color: str = ""
+
+
+class ImageTagMatchItem(BaseModel):
+    image_id: int
+    filename: str = ""
+    tokens: List[str] = Field(default_factory=list)
+    matched_tag_ids: List[int] = Field(default_factory=list)
+    matched_tags: List[TagBriefItem] = Field(default_factory=list)
+    before_tag_ids: List[int] = Field(default_factory=list)
+    after_tag_ids: List[int] = Field(default_factory=list)
+    changed: bool = False
+
+
+class ImageTagMatchResponse(BaseModel):
+    items: List[ImageTagMatchItem] = Field(default_factory=list)
+    common_tag_ids: List[int] = Field(default_factory=list)
+    common_tags: List[TagBriefItem] = Field(default_factory=list)
+    multi_display: str = "empty"
+    applied_count: int = 0
+
+
 # ── Album views ───────────────────────────────────────────────────────────────
 
 class BreadcrumbItem(BaseModel):

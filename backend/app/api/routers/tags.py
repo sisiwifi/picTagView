@@ -13,6 +13,7 @@ from sqlmodel import select
 
 from app.db.session import get_session
 from app.models.tag import Tag
+from app.services.tag_style_service import ensure_tag_style_scheme
 
 router = APIRouter(prefix="/api/tags", tags=["tags"])
 
@@ -67,6 +68,8 @@ def _write_public_id(tag: Tag) -> None:
 class TagMetadata(BaseModel):
     schema_version: int = 1
     color: str = ""
+    border_color: str = ""
+    background_color: str = ""
     created_via: str = "manual"
     ui_hint: dict = Field(default_factory=dict)
     notes: str = ""
@@ -104,6 +107,7 @@ def list_tags(
 ) -> dict:
     """列出所有 Tag；支持按 ID 列表批量查、类型过滤、名称模糊搜索。"""
     with get_session() as session:
+        ensure_tag_style_scheme(session)
         _ = category_id, category
         stmt = select(Tag)
         if ids:
@@ -127,6 +131,7 @@ def list_tags(
 @router.get("/{tag_id}")
 def get_tag(tag_id: int) -> dict:
     with get_session() as session:
+        ensure_tag_style_scheme(session)
         tag = session.get(Tag, tag_id)
         if not tag:
             raise HTTPException(status_code=404, detail=f"Tag {tag_id} 不存在")
@@ -164,6 +169,7 @@ def create_tag(body: TagCreate) -> dict:
         _write_public_id(tag)
         session.add(tag)
         session.commit()
+        ensure_tag_style_scheme(session)
         session.refresh(tag)
         return _tag_to_dict(tag)
 
@@ -171,6 +177,7 @@ def create_tag(body: TagCreate) -> dict:
 @router.patch("/{tag_id}")
 def update_tag(tag_id: int, body: TagUpdate) -> dict:
     with get_session() as session:
+        ensure_tag_style_scheme(session)
         tag = session.get(Tag, tag_id)
         if not tag:
             raise HTTPException(status_code=404, detail=f"Tag {tag_id} 不存在")
@@ -188,6 +195,7 @@ def update_tag(tag_id: int, body: TagUpdate) -> dict:
         tag.updated_at = datetime.utcnow()
         session.add(tag)
         session.commit()
+        ensure_tag_style_scheme(session)
         session.refresh(tag)
         return _tag_to_dict(tag)
 
@@ -195,11 +203,13 @@ def update_tag(tag_id: int, body: TagUpdate) -> dict:
 @router.delete("/{tag_id}")
 def delete_tag(tag_id: int) -> Response:
     with get_session() as session:
+        ensure_tag_style_scheme(session)
         tag = session.get(Tag, tag_id)
         if not tag:
             raise HTTPException(status_code=404, detail=f"Tag {tag_id} 不存在")
         session.delete(tag)
         session.commit()
+        ensure_tag_style_scheme(session)
     return Response(status_code=204)
 
 
@@ -211,6 +221,7 @@ def delete_tag(tag_id: int) -> Response:
 def export_tags() -> JSONResponse:
     """将全库 Tag 导出为 JSON 数组，前端可保存为 .json 文件。"""
     with get_session() as session:
+        ensure_tag_style_scheme(session)
         tags = session.exec(select(Tag)).all()
         data = [_tag_to_dict(t) for t in tags]
     return JSONResponse(
@@ -285,5 +296,6 @@ def import_tags(body: TagImportBody) -> dict:
             imported += 1
 
         session.commit()
+        ensure_tag_style_scheme(session)
 
     return {"imported": imported, "updated": updated, "skipped": skipped, "errors": errors}

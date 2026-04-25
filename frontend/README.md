@@ -18,10 +18,12 @@
   - `main.js`：应用入口，挂载路由与全局样式
   - `router/index.js`：路由配置
   - `assets/tailwind.css`：Tailwind 入口
+   - `assets/tag-chips.css`：Tag 圆角标签通用样式
   - `components/`：通用组件
     - `LoadingSpinner.vue`
     - `Sidebar.vue`
     - `ThumbCard.vue`
+      - `TagChipList.vue`（按 Tag 元数据显色）
   - `pages/`：路由页面
     - `HomePage.vue`
     - `GalleryPage.vue`
@@ -45,6 +47,15 @@
 ### 4.3 展示图库内容
 - `BrowsePage` 调用 `GET /api/dates/{date_group}/items` 或 `GET /api/albums/by-path/{album_path:path}`
 - 直图显示 `ThumbCard`，子目录显示相册封面并支持物理路径继续下钻
+- 选择模式详情浮层中的 Tag 使用 `TagChipList` 渲染，显色来自后端返回的 Tag 元数据字段：
+   - `color`
+   - `border_color`
+   - `background_color`
+
+### 4.5 文件名分析回写 Tag
+- 选择模式详情浮层点击“分析”后，前端调用 `POST /api/images/tags/filename-match`
+- 支持批量图片分析并回写 tags，前端会即时刷新当前选择项的标签显示
+- 多选显示规则：优先显示公共标签；没有公共标签但存在差异时显示 `various`
 
 ### 4.4 管理与重建
 - 交互按钮触发 `POST /api/admin/refresh`
@@ -113,6 +124,8 @@ npm run lint
    - `/api/dates/{date_group}/items` 用于日历内容
    - `/api/albums/by-path/{album_path:path}` 用于物理路径相册详情
    - `/api/images/count` 可用于统计呈现
+   - `/api/images/tags/filename-match` 用于文件名分析并回写图片标签
+   - `/api/system/tag-match-setting` 用于读取/保存文件名匹配过滤配置
 - `ThumbCard` 负责显示缩略图，统一尺寸对齐
 - `Sidebar` 负责导航历史分组与用户操作按钮
 

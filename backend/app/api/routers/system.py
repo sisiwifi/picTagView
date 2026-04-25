@@ -5,6 +5,8 @@ from app.api.schemas import (
     CacheThumbSettingResponse,
     MonthCoverSettingRequest,
     MonthCoverSettingResponse,
+    TagMatchSettingRequest,
+    TagMatchSettingResponse,
     ViewerPreferenceRequest,
 )
 from app.services.app_settings_service import (
@@ -16,8 +18,10 @@ from app.services.app_settings_service import (
     MIN_MONTH_COVER_SIZE_PX,
     get_cache_thumb_short_side_px,
     get_month_cover_size_px,
+    get_tag_match_setting,
     set_cache_thumb_short_side_px,
     set_month_cover_size_px,
+    set_tag_match_setting,
 )
 from app.services.viewer_service import (
     IMAGE_EXTENSIONS,
@@ -90,6 +94,30 @@ def set_month_cover_setting(body: MonthCoverSettingRequest) -> MonthCoverSetting
         default_size_px=DEFAULT_MONTH_COVER_SIZE_PX,
         min_size_px=MIN_MONTH_COVER_SIZE_PX,
         max_size_px=MAX_MONTH_COVER_SIZE_PX,
+    )
+
+
+@router.get("/api/system/tag-match-setting", response_model=TagMatchSettingResponse)
+def get_tag_match_setting_api() -> TagMatchSettingResponse:
+    data = get_tag_match_setting()
+    return TagMatchSettingResponse(
+        enabled=data.get("enabled", True),
+        noise_tokens=data.get("noise_tokens", []),
+        min_token_length=data.get("min_token_length", 2),
+        drop_numeric_only=data.get("drop_numeric_only", True),
+        sort_mode=data.get("sort_mode", "name_asc"),
+    )
+
+
+@router.post("/api/system/tag-match-setting", response_model=TagMatchSettingResponse)
+def set_tag_match_setting_api(body: TagMatchSettingRequest) -> TagMatchSettingResponse:
+    next_setting = set_tag_match_setting(body.model_dump())
+    return TagMatchSettingResponse(
+        enabled=next_setting.get("enabled", True),
+        noise_tokens=next_setting.get("noise_tokens", []),
+        min_token_length=next_setting.get("min_token_length", 2),
+        drop_numeric_only=next_setting.get("drop_numeric_only", True),
+        sort_mode=next_setting.get("sort_mode", "name_asc"),
     )
 
 

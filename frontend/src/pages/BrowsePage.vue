@@ -217,6 +217,7 @@
       :primary-action-label="selectionDetailPrimaryActionLabel"
       :can-open-primary-action="canOpenPrimaryActionFromDetails && !actionBusy"
       :danger-action-disabled="actionBusy"
+      :analysis-disabled="analysisBusy || actionBusy"
       @close="closeSelectionDetails"
       @analysis="onReservedAnalysisClick"
       @delete="onReservedDeleteClick"
@@ -339,10 +340,11 @@ export default {
       pointerSelection: null,
       longPressTimer: null,
       suppressNextListClick: false,
-      tagNameMap: {},
+      tagLookupMap: {},
       categoryDisplayMap: {},
       tagsLoading: false,
       tagFetchSerial: 0,
+      analysisBusy: false,
       scrollTop: typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0,
       viewportHeight: typeof window !== 'undefined' ? window.innerHeight : 0,
       virtualStartIndex: 0,
@@ -645,10 +647,53 @@ export default {
       return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailCategoryText(item)))
     },
     selectionDetailTagsField() {
-      return this.buildDetailField(
-        this.selectedEntries.map(({ item }) => this.detailTagTextForItem(item)),
-        { emptyText: '' },
-      )
+      const imageEntries = this.selectedEntries.filter(({ item }) => item?.type === 'image')
+      if (!imageEntries.length) {
+        return {
+          text: '',
+          isVarious: false,
+          isEmpty: true,
+          items: [],
+        }
+      }
+
+      const tagIdLists = imageEntries.map(({ item }) => {
+        const ids = Array.isArray(item?.tags) ? item.tags.filter(id => Number.isInteger(id)) : []
+        return this.sortTagIdsByName([...new Set(ids)])
+      })
+
+      const commonTagIds = tagIdLists.reduce((previous, current) => {
+        if (!previous.length) return []
+        const currentSet = new Set(current)
+        return previous.filter(id => currentSet.has(id))
+      }, [...(tagIdLists[0] || [])])
+
+      const sortedCommonTagIds = this.sortTagIdsByName([...new Set(commonTagIds)])
+      if (sortedCommonTagIds.length) {
+        return {
+          text: '',
+          isVarious: false,
+          isEmpty: false,
+          items: this.buildTagItemsByIds(sortedCommonTagIds),
+        }
+      }
+
+      const hasAnyTag = tagIdLists.some(ids => ids.length > 0)
+      if (hasAnyTag) {
+        return {
+          text: 'various',
+          isVarious: true,
+          isEmpty: false,
+          items: [],
+        }
+      }
+
+      return {
+        text: '',
+        isVarious: false,
+        isEmpty: true,
+        items: [],
+      }
     },
     selectionDetailSizeField() {
       return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailSizeText(item)))
@@ -2145,6 +2190,66 @@ export default {
       return this.tagTextForItem(item)
     },
 
+    buildTagLookupEntry(rawTag) {
+      if (!Number.isInteger(rawTag?.id)) return null
+      const metadata = rawTag?.metadata && typeof rawTag.metadata === 'object' ? rawTag.metadata : {}
+      const color = typeof rawTag?.color === 'string'
+        ? rawTag.color
+        : (typeof metadata.color === 'string' ? metadata.color : '')
+      const borderColor = typeof rawTag?.border_color === 'string'
+        ? rawTag.border_color
+        : (typeof metadata.border_color === 'string' ? metadata.border_color : '')
+      const backgroundColor = typeof rawTag?.background_color === 'string'
+        ? rawTag.background_color
+        : (typeof metadata.background_color === 'string' ? metadata.background_color : '')
+      return {
+        id: rawTag.id,
+        name: String(rawTag?.name || ''),
+        displayName: String(rawTag?.display_name || rawTag?.name || `#${rawTag.id}`),
+        color: String(color || ''),
+        borderColor: String(borderColor || ''),
+        backgroundColor: String(backgroundColor || ''),
+      }
+    },
+
+    sortTagIdsByName(tagIds) {
+      return [...tagIds].sort((leftId, rightId) => {
+        const leftName = String(this.tagLookupMap[leftId]?.name || '')
+        const rightName = String(this.tagLookupMap[rightId]?.name || '')
+        if (leftName && rightName && leftName !== rightName) {
+          return leftName.localeCompare(rightName)
+        }
+        if (leftName && !rightName) return -1
+        if (!leftName && rightName) return 1
+        return leftId - rightId
+      })
+    },
+
+    buildTagItemsByIds(tagIds) {
+      const sortedIds = this.sortTagIdsByName(tagIds)
+      return sortedIds.map((id) => {
+        const tag = this.tagLookupMap[id]
+        if (!tag) {
+          return {
+            id,
+            name: `#${id}`,
+            display_name: `#${id}`,
+            color: '',
+            border_color: '',
+            background_color: '',
+          }
+        }
+        return {
+          id,
+          name: tag.name || `#${id}`,
+          display_name: tag.displayName || tag.name || `#${id}`,
+          color: tag.color || '',
+          border_color: tag.borderColor || '',
+          background_color: tag.backgroundColor || '',
+        }
+      })
+    },
+
     tagTextForItem(item) {
       const ids = Array.isArray(item?.tags)
         ? item.tags.filter(id => Number.isInteger(id))
@@ -2154,11 +2259,11 @@ export default {
       const names = []
       let allResolved = true
       for (const id of ids) {
-        if (!Object.prototype.hasOwnProperty.call(this.tagNameMap, id)) {
+        if (!Object.prototype.hasOwnProperty.call(this.tagLookupMap, id)) {
           allResolved = false
           continue
         }
-        const label = this.tagNameMap[id]
+        const label = this.tagLookupMap[id]?.displayName || ''
         if (label) names.push(label)
       }
 
@@ -2174,14 +2279,15 @@ export default {
         : []
       if (!ids.length) return ''
 
+      const sortedIds = this.sortTagIdsByName(ids)
       const names = []
       let allResolved = true
-      for (const id of ids) {
-        if (!Object.prototype.hasOwnProperty.call(this.tagNameMap, id)) {
+      for (const id of sortedIds) {
+        if (!Object.prototype.hasOwnProperty.call(this.tagLookupMap, id)) {
           allResolved = false
           continue
         }
-        const label = this.tagNameMap[id]
+        const label = this.tagLookupMap[id]?.displayName || ''
         if (label) names.push(label)
       }
 
@@ -2199,7 +2305,7 @@ export default {
           if (!Number.isInteger(id)) continue
           if (seen.has(id)) continue
           seen.add(id)
-          if (!Object.prototype.hasOwnProperty.call(this.tagNameMap, id)) {
+          if (!Object.prototype.hasOwnProperty.call(this.tagLookupMap, id)) {
             result.push(id)
           }
         }
@@ -2213,7 +2319,7 @@ export default {
       if (!missingIds.length) return
 
       const requestSerial = ++this.tagFetchSerial
-      const nextMap = { ...this.tagNameMap }
+      const nextMap = { ...this.tagLookupMap }
       this.tagsLoading = true
 
       try {
@@ -2224,18 +2330,27 @@ export default {
           const data = await res.json()
           const returnedIds = new Set()
           for (const tag of (data.items || [])) {
+            const normalizedTag = this.buildTagLookupEntry(tag)
+            if (!normalizedTag) continue
             returnedIds.add(tag.id)
-            nextMap[tag.id] = tag.display_name || tag.name || `#${tag.id}`
+            nextMap[tag.id] = normalizedTag
           }
           for (const id of chunk) {
             if (!returnedIds.has(id) && !Object.prototype.hasOwnProperty.call(nextMap, id)) {
-              nextMap[id] = ''
+              nextMap[id] = {
+                id,
+                name: '',
+                displayName: '',
+                color: '',
+                borderColor: '',
+                backgroundColor: '',
+              }
             }
           }
         }
 
         if (requestSerial === this.tagFetchSerial) {
-          this.tagNameMap = nextMap
+          this.tagLookupMap = nextMap
         }
       } catch {
         // ignore tag fetch failures and keep filename mode available
@@ -2243,6 +2358,66 @@ export default {
         if (requestSerial === this.tagFetchSerial) {
           this.tagsLoading = false
         }
+      }
+    },
+
+    async onReservedAnalysisClick() {
+      if (this.analysisBusy) return
+
+      const imageIds = this.selectedEntries
+        .map(({ item }) => item)
+        .filter(item => item?.type === 'image' && Number.isInteger(item?.id))
+        .map(item => item.id)
+
+      if (!imageIds.length) return
+
+      this.analysisBusy = true
+      try {
+        const res = await fetch(`${API_BASE}/api/images/tags/filename-match`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image_ids: imageIds,
+            apply: true,
+            merge_mode: 'append_unique',
+            include_tokens: false,
+          }),
+        })
+        if (!res.ok) return
+        const payload = await res.json()
+        const resultItems = Array.isArray(payload?.items) ? payload.items : []
+
+        const nextTagMap = { ...this.tagLookupMap }
+        const tagUpdateByImageId = new Map()
+        for (const row of resultItems) {
+          if (Number.isInteger(row?.image_id) && Array.isArray(row?.after_tag_ids)) {
+            tagUpdateByImageId.set(row.image_id, row.after_tag_ids.filter(id => Number.isInteger(id)))
+          }
+          for (const tag of (row?.matched_tags || [])) {
+            const normalizedTag = this.buildTagLookupEntry(tag)
+            if (!normalizedTag) continue
+            nextTagMap[normalizedTag.id] = normalizedTag
+          }
+        }
+
+        this.tagLookupMap = nextTagMap
+        if (tagUpdateByImageId.size) {
+          this.items = this.items.map((item) => {
+            if (item?.type !== 'image' || !Number.isInteger(item?.id)) return item
+            if (!tagUpdateByImageId.has(item.id)) return item
+            const nextTagIds = this.sortTagIdsByName(tagUpdateByImageId.get(item.id) || [])
+            return {
+              ...item,
+              tags: nextTagIds,
+            }
+          })
+        }
+
+        await this.ensureTagLabelsLoaded(true)
+      } catch {
+        // keep UI silent here; analysis is best-effort and should not interrupt overlay workflow
+      } finally {
+        this.analysisBusy = false
       }
     },
 
@@ -2261,10 +2436,6 @@ export default {
       }
 
       this.openSelectionDetails()
-    },
-
-    onReservedAnalysisClick() {
-      // reserved for future filename-based tag analysis
     },
 
     openConfirmDialog(options = {}) {

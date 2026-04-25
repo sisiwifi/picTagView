@@ -177,6 +177,97 @@
     </div>
 
     <div class="settings-card">
+      <h3 class="card-title">Tag 过滤（预留）</h3>
+      <p class="card-desc">
+        用于文件名匹配时过滤噪声词。当前为占位配置，后续可扩展为更细的规则编辑器。
+      </p>
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">启用过滤</span>
+          <span class="setting-desc">关闭后将跳过噪声词和数字词过滤。</span>
+        </div>
+        <button
+          class="switch"
+          :class="{ 'switch--on': tagMatchEnabled }"
+          :disabled="tagMatchSettingLoading || tagMatchSettingSaving"
+          :aria-label="tagMatchEnabled ? '关闭 tag 过滤' : '开启 tag 过滤'"
+          @click="tagMatchEnabled = !tagMatchEnabled"
+        >
+          <span class="switch__knob"></span>
+        </button>
+      </div>
+
+      <div class="setting-row setting-row--stack">
+        <div class="setting-info">
+          <span class="setting-label">噪声词列表（每行一个）</span>
+          <span class="setting-desc">匹配文件名 token 时命中这些词会被忽略。</span>
+        </div>
+        <textarea
+          v-model="tagNoiseTokensDraft"
+          class="setting-textarea"
+          :disabled="tagMatchSettingLoading || tagMatchSettingSaving"
+          rows="5"
+          placeholder="sample\npreview\nuntitled"
+        />
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">最小 token 长度</span>
+          <span class="setting-desc">小于该长度的 token 会被忽略。</span>
+        </div>
+        <input
+          v-model.number="tagMatchMinTokenLength"
+          class="thumb-size-input"
+          type="number"
+          min="1"
+          max="32"
+          :disabled="tagMatchSettingLoading || tagMatchSettingSaving"
+        >
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">过滤纯数字 token</span>
+          <span class="setting-desc">例如 001、2025 这类 token。</span>
+        </div>
+        <button
+          class="switch"
+          :class="{ 'switch--on': tagMatchDropNumericOnly }"
+          :disabled="tagMatchSettingLoading || tagMatchSettingSaving"
+          :aria-label="tagMatchDropNumericOnly ? '关闭纯数字过滤' : '开启纯数字过滤'"
+          @click="tagMatchDropNumericOnly = !tagMatchDropNumericOnly"
+        >
+          <span class="switch__knob"></span>
+        </button>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">排序规则</span>
+          <span class="setting-desc">当前固定为 tag.name 字母顺序（name_asc）。</span>
+        </div>
+        <button class="btn btn--outline" disabled>name_asc</button>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">保存过滤配置</span>
+          <span class="setting-desc">仅保存配置，不会触发弹窗提醒。</span>
+        </div>
+        <button
+          class="btn btn--secondary"
+          :disabled="tagMatchSettingLoading || tagMatchSettingSaving"
+          @click="saveTagMatchSetting"
+        >
+          {{ tagMatchSettingSaving ? '保存中…' : '保存配置' }}
+        </button>
+      </div>
+
+      <p v-if="tagMatchSettingError" class="viewer-error">{{ tagMatchSettingError }}</p>
+    </div>
+
+    <div class="settings-card">
       <h3 class="card-title">主分类</h3>
       <p class="card-desc">
         主分类只作用于图片可见性与导入归属；相册仅保留目录结构，标签不再绑定主分类。
@@ -366,6 +457,13 @@ export default {
       tagImportResult: null,
       tagImportConflict: 'skip',
       tagError: '',
+      tagMatchSettingLoading: false,
+      tagMatchSettingSaving: false,
+      tagMatchSettingError: '',
+      tagMatchEnabled: true,
+      tagNoiseTokensDraft: '',
+      tagMatchMinTokenLength: 2,
+      tagMatchDropNumericOnly: true,
     }
   },
 
@@ -405,6 +503,7 @@ export default {
     this.fetchCacheThumbSetting()
     this.fetchMonthCoverSetting()
     this.fetchViewerOptions()
+    this.fetchTagMatchSetting()
   },
 
   beforeUnmount() {
@@ -743,6 +842,60 @@ export default {
         this.tagImporting = false
       }
     },
+
+    async fetchTagMatchSetting() {
+      this.tagMatchSettingLoading = true
+      this.tagMatchSettingError = ''
+      try {
+        const res = await fetch(`${API_BASE}/api/system/tag-match-setting`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        this.tagMatchEnabled = Boolean(data.enabled)
+        this.tagMatchDropNumericOnly = Boolean(data.drop_numeric_only)
+        const minTokenLength = Number.parseInt(String(data.min_token_length ?? 2), 10)
+        this.tagMatchMinTokenLength = Number.isFinite(minTokenLength) ? minTokenLength : 2
+        this.tagNoiseTokensDraft = Array.isArray(data.noise_tokens)
+          ? data.noise_tokens.join('\n')
+          : ''
+      } catch (err) {
+        this.tagMatchSettingError = `加载 tag 过滤配置失败：${toErrorMessage(err)}`
+      } finally {
+        this.tagMatchSettingLoading = false
+      }
+    },
+
+    async saveTagMatchSetting() {
+      this.tagMatchSettingSaving = true
+      this.tagMatchSettingError = ''
+      try {
+        const noiseTokens = String(this.tagNoiseTokensDraft || '')
+          .split(/\r?\n/)
+          .map(token => token.trim())
+          .filter(Boolean)
+
+        const body = {
+          enabled: Boolean(this.tagMatchEnabled),
+          noise_tokens: noiseTokens,
+          min_token_length: Math.max(1, Math.min(32, Number(this.tagMatchMinTokenLength) || 2)),
+          drop_numeric_only: Boolean(this.tagMatchDropNumericOnly),
+        }
+
+        const res = await fetch(`${API_BASE}/api/system/tag-match-setting`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}))
+          throw new Error(payload.detail || `HTTP ${res.status}`)
+        }
+        await this.fetchTagMatchSetting()
+      } catch (err) {
+        this.tagMatchSettingError = `保存 tag 过滤配置失败：${toErrorMessage(err)}`
+      } finally {
+        this.tagMatchSettingSaving = false
+      }
+    },
   },
 }
 </script>
@@ -756,6 +909,28 @@ export default {
 
 .floating-message--success {
   @apply bg-emerald-50 text-emerald-700 border-emerald-300;
+}
+
+.setting-row--stack {
+  align-items: stretch;
+}
+
+.setting-textarea {
+  width: min(420px, 100%);
+  min-height: 108px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 12px;
+  padding: 0.6rem 0.7rem;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  resize: vertical;
+  background: #ffffff;
+  color: #1e293b;
+}
+
+.setting-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .floating-message--error {

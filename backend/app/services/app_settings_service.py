@@ -12,6 +12,13 @@ DEFAULT_MONTH_COVER_SIZE_PX = 400
 MIN_MONTH_COVER_SIZE_PX = 100
 MAX_MONTH_COVER_SIZE_PX = 2000
 
+DEFAULT_TAG_MATCH_ENABLED = True
+DEFAULT_TAG_MATCH_NOISE_TOKENS: list[str] = []
+DEFAULT_TAG_MATCH_MIN_TOKEN_LENGTH = 2
+MIN_TAG_MATCH_MIN_TOKEN_LENGTH = 1
+MAX_TAG_MATCH_MIN_TOKEN_LENGTH = 32
+DEFAULT_TAG_MATCH_DROP_NUMERIC_ONLY = True
+
 
 def load_app_settings() -> dict:
     if not APP_SETTINGS_FILE.exists():
@@ -70,3 +77,81 @@ def set_month_cover_size_px(value: int) -> int:
     data["month_cover_size_px"] = clamped
     save_app_settings(data)
     return clamped
+
+
+def _sanitize_noise_tokens(raw_tokens: object) -> list[str]:
+    if not isinstance(raw_tokens, list):
+        return []
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for token in raw_tokens:
+        if not isinstance(token, str):
+            continue
+        normalized = token.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+def get_tag_match_setting() -> dict:
+    data = load_app_settings()
+    raw = data.get("tag_match_setting")
+    if not isinstance(raw, dict):
+        raw = {}
+
+    min_token_length_raw = raw.get("min_token_length", DEFAULT_TAG_MATCH_MIN_TOKEN_LENGTH)
+    try:
+        min_token_length = int(min_token_length_raw)
+    except Exception:
+        min_token_length = DEFAULT_TAG_MATCH_MIN_TOKEN_LENGTH
+    min_token_length = max(MIN_TAG_MATCH_MIN_TOKEN_LENGTH, min(MAX_TAG_MATCH_MIN_TOKEN_LENGTH, min_token_length))
+
+    enabled = raw.get("enabled", DEFAULT_TAG_MATCH_ENABLED)
+    drop_numeric_only = raw.get("drop_numeric_only", DEFAULT_TAG_MATCH_DROP_NUMERIC_ONLY)
+
+    return {
+        "enabled": bool(enabled),
+        "noise_tokens": _sanitize_noise_tokens(raw.get("noise_tokens", DEFAULT_TAG_MATCH_NOISE_TOKENS)),
+        "min_token_length": min_token_length,
+        "drop_numeric_only": bool(drop_numeric_only),
+        "sort_mode": "name_asc",
+    }
+
+
+def set_tag_match_setting(setting: dict) -> dict:
+    if not isinstance(setting, dict):
+        setting = {}
+
+    current = get_tag_match_setting()
+
+    if "enabled" in setting:
+        current["enabled"] = bool(setting.get("enabled"))
+    if "noise_tokens" in setting:
+        current["noise_tokens"] = _sanitize_noise_tokens(setting.get("noise_tokens"))
+    if "min_token_length" in setting:
+        try:
+            raw_length = int(setting.get("min_token_length"))
+        except Exception:
+            raw_length = DEFAULT_TAG_MATCH_MIN_TOKEN_LENGTH
+        current["min_token_length"] = max(
+            MIN_TAG_MATCH_MIN_TOKEN_LENGTH,
+            min(MAX_TAG_MATCH_MIN_TOKEN_LENGTH, raw_length),
+        )
+    if "drop_numeric_only" in setting:
+        current["drop_numeric_only"] = bool(setting.get("drop_numeric_only"))
+
+    current["sort_mode"] = "name_asc"
+
+    data = load_app_settings()
+    data["tag_match_setting"] = {
+        "enabled": current["enabled"],
+        "noise_tokens": current["noise_tokens"],
+        "min_token_length": current["min_token_length"],
+        "drop_numeric_only": current["drop_numeric_only"],
+        "sort_mode": "name_asc",
+    }
+    save_app_settings(data)
+    return current

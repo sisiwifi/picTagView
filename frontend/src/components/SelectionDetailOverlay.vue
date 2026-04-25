@@ -81,7 +81,7 @@
           </div>
 
           <div v-if="showCategoryField" class="detail-field">
-            <span class="detail-field__label">主分类（图片）</span>
+            <span class="detail-field__label">主分类</span>
             <div class="detail-field__value">
               <em v-if="categoryField.isVarious" class="detail-field__various">various</em>
               <span v-else class="detail-field__text">{{ categoryField.text || '—' }}</span>
@@ -94,10 +94,21 @@
               <div class="detail-field__value detail-field__value--tags">
                 <em v-if="tagsField.isVarious" class="detail-field__various">various</em>
                 <span v-else-if="tagsField.isEmpty" class="detail-field__placeholder"></span>
+                <TagChipList
+                  v-else-if="Array.isArray(tagsField.items) && tagsField.items.length"
+                  :tags="tagsField.items"
+                  :compact="true"
+                />
                 <span v-else class="detail-field__text">{{ tagsField.text }}</span>
               </div>
 
-              <button v-if="showAnalysisButton" class="detail-field__ghost" type="button" @click="$emit('analysis')">分析</button>
+              <button
+                v-if="showAnalysisButton"
+                class="detail-field__ghost"
+                type="button"
+                :disabled="analysisDisabled"
+                @click="$emit('analysis')"
+              >分析</button>
             </div>
           </div>
 
@@ -150,8 +161,13 @@
 </template>
 
 <script>
+import TagChipList from './TagChipList.vue'
+
 export default {
   name: 'SelectionDetailOverlay',
+  components: {
+    TagChipList,
+  },
   props: {
     visible: { type: Boolean, default: false },
     layerStyle: { type: Object, default: () => ({}) },
@@ -168,7 +184,7 @@ export default {
     },
     tagsField: {
       type: Object,
-      default: () => ({ text: '', isVarious: false, isEmpty: true }),
+      default: () => ({ text: '', isVarious: false, isEmpty: true, items: [] }),
     },
     sizeField: {
       type: Object,
@@ -189,6 +205,7 @@ export default {
     dangerActionLabel: { type: String, default: '删除' },
     dangerActionDisabled: { type: Boolean, default: false },
     showAnalysisButton: { type: Boolean, default: true },
+    analysisDisabled: { type: Boolean, default: false },
   },
   emits: ['analysis', 'close', 'delete', 'open-primary'],
   computed: {
@@ -468,10 +485,21 @@ export default {
   transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
+.detail-field__ghost:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .detail-field__ghost:hover {
   background: #f8fafc;
   border-color: rgba(100, 116, 139, 0.4);
   color: #0f172a;
+}
+
+.detail-field__ghost:disabled:hover {
+  background: transparent;
+  border-color: rgba(148, 163, 184, 0.34);
+  color: #334155;
 }
 
 .detail-panel__actions {
