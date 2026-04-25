@@ -1,0 +1,30 @@
+.tag-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+  align-items: center;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.42rem;
+  padding: 0.16rem 0.56rem;
+  border-radius: 999px;
+  border: 1px solid var(--tag-chip-border-color, var(--tag-chip-color, #64748b));
+  color: var(--tag-chip-color, #334155);
+  background: var(--tag-chip-bg, rgba(100, 116, 139, 0.4));
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.tag-chip-list--compact .tag-chip {
+  min-height: 1.36rem;
+  padding: 0.14rem 0.5rem;
+  font-size: 0.72rem;
+}
