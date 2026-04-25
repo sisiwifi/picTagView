@@ -2,18 +2,16 @@ from collections import defaultdict
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
-from sqlalchemy import exists
 from sqlmodel import col, select
 
 from app.api.common import (
-    cache_thumb_url,
+    AssetPreview,
+    AssetPreviewResolver,
+    build_preview_availability_index,
     date_group_media_predicate,
     pick_asset_media_path,
-    resolve_stored_path,
-    thumb_url,
 )
 from app.api.schemas import DateItem, DateItemsResponse, DateViewResponse, MonthGroup, YearGroup
-from app.core.config import CACHE_DIR, TEMP_DIR
 from app.db.session import get_session
 from app.models.album import Album
 from app.models.album_image import AlbumImage
@@ -34,12 +32,32 @@ def _to_unix_ts(dt: datetime | None) -> int | None:
     return int(dt.timestamp())
 
 
+def _pick_representative_asset(
+    assets: list[ImageAsset],
+    preview_resolver: AssetPreviewResolver,
+) -> tuple[ImageAsset | None, AssetPreview | None]:
+    cache_candidate: tuple[ImageAsset, AssetPreview] | None = None
+    for asset in assets:
+        preview = preview_resolver.resolve(asset)
+        if preview.thumb_url:
+            return asset, preview
+        if cache_candidate is None and preview.cache_thumb_url:
+            cache_candidate = (asset, preview)
+    if cache_candidate is not None:
+        return cache_candidate
+    if not assets:
+        return None, None
+    asset = assets[0]
+    return asset, preview_resolver.resolve(asset)
+
+
 @router.get("/api/dates", response_model=DateViewResponse)
 def dates_view() -> DateViewResponse:
     with get_session() as session:
         active_category_ids = get_active_category_ids(session)
         assets = list_visible_assets(session, active_category_ids)
         stats_by_public_id = build_visible_album_stats(session, assets)
+        preview_resolver = AssetPreviewResolver(build_preview_availability_index())
 
         # Build set of image IDs that belong to any album via album_image table
         album_image_ids: set[int] = set(
@@ -92,26 +110,21 @@ def dates_view() -> DateViewResponse:
             row_cache_thumb_url = None
             cover_id = None
 
-            rep = next((a for a in direct_assets if thumb_url(a)), None)
-            if not rep:
-                rep = next((a for a in direct_assets if cache_thumb_url(a)), None)
-            if not rep and direct_assets:
-                rep = direct_assets[0]
+            rep, rep_preview = _pick_representative_asset(direct_assets, preview_resolver)
 
             if rep:
                 cover_id = rep.id
-                row_thumb_url = thumb_url(rep)
-                if not row_thumb_url:
-                    row_cache_thumb_url = cache_thumb_url(rep)
+                row_thumb_url = rep_preview.thumb_url if rep_preview else ""
+                row_cache_thumb_url = None if row_thumb_url else (rep_preview.cache_thumb_url if rep_preview else None)
             else:
                 for album in group_albums:
                     stats = stats_by_public_id.get(album.public_id or "")
                     cover_asset = stats.cover_asset if stats else None
                     if cover_asset:
+                        cover_preview = preview_resolver.resolve(cover_asset)
                         cover_id = cover_asset.id
-                        row_thumb_url = thumb_url(cover_asset)
-                        if not row_thumb_url:
-                            row_cache_thumb_url = cache_thumb_url(cover_asset)
+                        row_thumb_url = cover_preview.thumb_url
+                        row_cache_thumb_url = None if row_thumb_url else cover_preview.cache_thumb_url
                         if row_thumb_url or row_cache_thumb_url:
                             break
 
@@ -137,6 +150,7 @@ def date_group_items(date_group: str) -> DateItemsResponse:
         active_category_ids = get_active_category_ids(session)
         assets = list_visible_assets(session, active_category_ids, date_group)
         stats_by_public_id = build_visible_album_stats(session, assets, date_group)
+        preview_resolver = AssetPreviewResolver(build_preview_availability_index())
 
         # Build set of image IDs that belong to any album via album_image table
         album_image_ids: set[int] = set(
@@ -155,16 +169,15 @@ def date_group_items(date_group: str) -> DateItemsResponse:
             media_index, media_rel_path = pick_asset_media_path(asset, date_group_media_predicate(date_group))
             if media_index is None or not media_rel_path:
                 continue
-            thumb = thumb_url(asset)
-            cache_thumb = cache_thumb_url(asset)
+            preview = preview_resolver.resolve(asset)
             direct_items.append(
                 DateItem(
                     type="image",
                     name=asset.full_filename or "",
-                    thumb_url=thumb,
+                    thumb_url=preview.thumb_url,
                     id=asset.id,
                     category_id=asset.category_id or DEFAULT_CATEGORY_ID,
-                    cache_thumb_url=cache_thumb,
+                    cache_thumb_url=preview.cache_thumb_url,
                     width=asset.width,
                     height=asset.height,
                     sort_ts=_to_unix_ts(asset.file_created_at or asset.imported_at or asset.created_at),
@@ -199,8 +212,9 @@ def date_group_items(date_group: str) -> DateItemsResponse:
             cover_width = cover_asset.width if cover_asset else None
             cover_height = cover_asset.height if cover_asset else None
             if cover_asset:
-                row_thumb_url = thumb_url(cover_asset)
-                row_cache_thumb_url = cache_thumb_url(cover_asset)
+                cover_preview = preview_resolver.resolve(cover_asset)
+                row_thumb_url = cover_preview.thumb_url
+                row_cache_thumb_url = cover_preview.cache_thumb_url
 
             album_items.append(
                 DateItem(

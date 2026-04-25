@@ -35,7 +35,8 @@
   - `app/api/routers/system.py`：`/api/system/*` 相关接口
   - `app/api/routers/cache.py`：`DELETE /api/cache`、`/api/thumbnails/cache*`
     - `POST /api/thumbnails/cache` 已改为 generation 感知的共享缓存队列入口；`GET /api/thumbnails/cache/status/{task_id}` 支持 `cursor` 增量轮询
-- 共享查询与路径工具在 `app/api/common.py`：缩略图 URL 解析、存储路径解析、`media_path` 实例选择与路径谓词匹配。
+  - 共享查询与路径工具在 `app/api/common.py`：缩略图 URL 解析、存储路径解析、`media_path` 实例选择与路径谓词匹配。
+    - 2026-04 补充：`app/api/common.py` 新增请求级预览可用性索引与 `AssetPreviewResolver`。`GET /api/dates*` / `GET /api/albums*` 会在单次请求内各扫描一次 `backend/temp/` 与 `backend/data/cache/`，后续只用内存集合判断缩略图是否存在，避免列表装配阶段按条目重复 `exists()`。
 
 补充（2026-04）：
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的条目模型新增 `sort_ts`（Unix 秒级时间戳，可为空）。
@@ -78,6 +79,7 @@
   - 相册标识从列表右侧移至缩略图右侧，改为圆角矩形 `ALB` 标签后接相册名，右侧预留为空白区域。
 - 信息区显示补充：选择模式信息区默认显示文件名；点击任一卡片的信息区后，当前页面所有卡片统一切换为 Tag 文本显示，再次点击切回文件名。
 - 缩略图策略补充：BrowsePage 普通模式与选择模式统一优先显示 `data/cache/*.webp` 或 `temp/*.webp` 缩略图；当 `cache_thumb_url` 缺失时，前端先显示骨架占位，并通过 `/api/thumbnails/cache` 按需异步生成缓存后再更新显示。原图回退不再作为常规浏览路径。
+- 后端性能补充：日期列表、月份内条目列表和相册详情在组装 `thumb_url` / `cache_thumb_url` 时，会复用同一个请求级目录索引；接口语义仍保持“仅在文件实际存在时返回 URL”，但磁盘存在性判断从逐条 `Path.exists()` 收敛为每请求两次目录扫描。
 - 浏览锚点补充：BrowsePage 现区分“视觉锚点”和“缓存锚点”。视觉锚点用于 grid / list / 选择模式互切时恢复同一内容的位置，保证目标内容至少落在新布局的第一排内；缓存锚点则专门用于缓存缩略图生成请求。
 - 照片墙布局补充：BrowsePage 的“大缩略图”模式会优先使用浏览接口返回的 `width` / `height` 初始化 `justifiedRows` 布局，避免依赖图片逐张加载后再回填宽高，从而降低首轮重排频率；`onImgLoad` 现在只在 `width` / `height` 缺失时做异常兜底回填，不再作为常规排布来源。
 - 缓存队列补充：BrowsePage 与 CalendarOverview 发起的缓存缩略图请求已改为 `page_token + generation` 协议。前端会先按“缓存锚点、当前首排、前后 50 张”构造优先级列表，再交给后端共享 worker 池；同页新 generation 到来时，未启动的旧 job 会被丢弃，状态轮询通过 `cursor` 增量返回新增完成项。

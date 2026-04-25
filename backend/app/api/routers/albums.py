@@ -7,14 +7,13 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import col, select
 
 from app.api.common import (
+    AssetPreviewResolver,
     album_media_predicate,
-    cache_thumb_url,
+    build_preview_availability_index,
     pick_asset_media_path,
-    resolve_stored_path,
-    thumb_url,
 )
 from app.api.schemas import AlbumDetailResponse, AlbumInfo, AlbumItem, BreadcrumbItem
-from app.core.config import CACHE_DIR, MEDIA_DIR, TEMP_DIR
+from app.core.config import MEDIA_DIR
 from app.db.session import get_session
 from app.models.album import Album
 from app.models.album_image import AlbumImage
@@ -39,6 +38,7 @@ def _build_album_response(album: Album, session, active_category_ids: set[int]) 
     """Shared logic for building album detail response."""
     visible_assets = list_visible_assets(session, active_category_ids, album.date_group)
     stats_by_public_id = build_visible_album_stats(session, visible_assets, album.date_group)
+    preview_resolver = AssetPreviewResolver(build_preview_availability_index())
 
     parent_public_id = None
     ancestors: list[BreadcrumbItem] = []
@@ -72,8 +72,9 @@ def _build_album_response(album: Album, session, active_category_ids: set[int]) 
         cover_width = cover_asset.width if cover_asset else None
         cover_height = cover_asset.height if cover_asset else None
         if cover_asset:
-            row_thumb_url = thumb_url(cover_asset)
-            row_cache_thumb_url = cache_thumb_url(cover_asset)
+            cover_preview = preview_resolver.resolve(cover_asset)
+            row_thumb_url = cover_preview.thumb_url
+            row_cache_thumb_url = cover_preview.cache_thumb_url
 
         sub_items.append(AlbumItem(
             type="album",
@@ -117,15 +118,14 @@ def _build_album_response(album: Album, session, active_category_ids: set[int]) 
         media_index, media_rel_path = pick_asset_media_path(asset, album_media_predicate(album.path))
         if media_index is None or not media_rel_path:
             continue
-        thumb = thumb_url(asset)
-        cache_thumb = cache_thumb_url(asset)
+        preview = preview_resolver.resolve(asset)
         image_items.append(AlbumItem(
             type="image",
             name=asset.full_filename or "",
-            thumb_url=thumb,
+            thumb_url=preview.thumb_url,
             id=asset.id,
             category_id=asset.category_id or DEFAULT_CATEGORY_ID,
-            cache_thumb_url=cache_thumb,
+            cache_thumb_url=preview.cache_thumb_url,
             width=asset.width,
             height=asset.height,
             sort_ts=_to_unix_ts(asset.file_created_at or asset.imported_at or asset.created_at),

@@ -157,6 +157,7 @@
   - 说明补充：图片条目额外返回 `tags: list[int]`，供前端选择模式在需要时做 Tag 文本显示；该接口本身不 join Tag 表，保持主查询轻量
   - 元数据补充：图片条目与相册条目都会返回 `width` / `height`；相册项的宽高来自其封面图片，用于前端在“大缩略图”照片墙中稳定初始化行布局
   - 缩略图补充：`cache_thumb_url` 仅在 `data/cache/` 中已有缓存缩略图时返回，不再把原图路径作为常规回退值；前端应在缺失时显示骨架并通过 `/api/thumbnails/cache` 触发生成
+  - 性能补充：该接口会在单次请求内各扫描一次 `backend/temp/` 与 `backend/data/cache/`，构建缩略图可用性索引；后续每个条目的 `thumb_url` / `cache_thumb_url` 解析只做内存 membership 判断，不再逐条调用 `exists()`
 
 - GET /api/albums/by-path/{album_path:path}
   - 实现：app/api/routers/albums.py
@@ -173,6 +174,7 @@
   - 说明补充：直属图片条目同样返回 `tags: list[int]`，前端仅在用户显式切换到 Tag 视图时再批量解析为文本
   - 元数据补充：图片条目返回原图 `width` / `height`；子相册条目返回封面图 `width` / `height`，以便前端优先使用后端元数据预估卡片宽高比
   - 缩略图补充：直属图片条目遵循与日期接口一致的缓存策略，仅在缓存文件实际存在时返回 `cache_thumb_url`
+  - 性能补充：该接口与日期接口共享同一套请求级预览索引策略，避免在子相册封面和直属图片遍历时对每个条目重复执行磁盘存在性检查
 
 ### 3.3 图片与系统集成接口
 
@@ -387,6 +389,7 @@
 
 - thumb_url 表示 temp 预览图路径。
 - cache_thumb_url 表示按需生成的 cache 预览图路径。
+- `/api/dates/*` 与 `/api/albums/*` 在返回列表时，会先按请求构建 temp/cache 目录文件名索引，再解析 `thumb_url` / `cache_thumb_url`；对外行为保持“只有文件实际存在才返回 URL”，但避免了逐项 `exists()` 带来的界面首开延迟。
 - TrashPage 条目会优先复用 `thumb_url` / `cache_thumb_url`；若只有 trash payload，则通过 `/trash-media/...` 作为预览回退。
 - TrashPage header 左侧提供“返回”按钮；选择态右下角操作岛包含“详情 / 还原 / 删除 / 全选 / 取消选择”。当同时存在相册与图片时，“全选”沿用类型锁定逻辑，通过二级按钮选择“相册 / 图片”。
 - BrowsePage 的“删除到回收站”和 TrashPage 的“还原 / 删除 / 清空回收站”都应使用应用内居中确认弹窗，不再依赖浏览器原生提示框。

@@ -1,8 +1,37 @@
+import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
 from app.core.config import CACHE_DIR, PROJECT_ROOT, TEMP_DIR
 from app.models.image_asset import ImageAsset
+
+
+@dataclass(frozen=True)
+class PreviewAvailabilityIndex:
+    temp_file_names: frozenset[str]
+    cache_file_names: frozenset[str]
+
+
+@dataclass(frozen=True)
+class AssetPreview:
+    thumb_url: str = ""
+    cache_thumb_url: Optional[str] = None
+
+
+class AssetPreviewResolver:
+    def __init__(self, availability_index: PreviewAvailabilityIndex):
+        self._availability_index = availability_index
+        self._cache: dict[int, AssetPreview] = {}
+
+    def resolve(self, asset: ImageAsset) -> AssetPreview:
+        cache_key = asset.id if asset.id is not None else id(asset)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        preview = resolve_asset_preview(asset, self._availability_index)
+        self._cache[cache_key] = preview
+        return preview
 
 
 def resolve_stored_path(stored_path: Optional[str]) -> Optional[Path]:
@@ -14,29 +43,82 @@ def resolve_stored_path(stored_path: Optional[str]) -> Optional[Path]:
     return (PROJECT_ROOT / p).resolve()
 
 
-def thumb_url(asset: ImageAsset) -> str:
+def _list_file_names(directory: Path) -> frozenset[str]:
+    try:
+        with os.scandir(directory) as entries:
+            return frozenset(entry.name for entry in entries if entry.is_file())
+    except FileNotFoundError:
+        return frozenset()
+
+
+def build_preview_availability_index() -> PreviewAvailabilityIndex:
+    return PreviewAvailabilityIndex(
+        temp_file_names=_list_file_names(TEMP_DIR),
+        cache_file_names=_list_file_names(CACHE_DIR),
+    )
+
+
+def _thumb_url_from_stored_path(
+    stored_path: str,
+    availability_index: PreviewAvailabilityIndex | None = None,
+) -> str:
+    resolved = resolve_stored_path(stored_path)
+    if not resolved:
+        return ""
+    temp_dir = TEMP_DIR.resolve()
+    try:
+        resolved.relative_to(temp_dir)
+    except ValueError:
+        return ""
+    if availability_index is None:
+        if not resolved.exists():
+            return ""
+    elif resolved.name not in availability_index.temp_file_names:
+        return ""
+    return f"/thumbnails/{resolved.name}"
+
+
+def thumb_url(
+    asset: ImageAsset,
+    availability_index: PreviewAvailabilityIndex | None = None,
+) -> str:
     for thumb in asset.thumbs or []:
         if not isinstance(thumb, dict):
             continue
         p = thumb.get("path")
         if not isinstance(p, str) or not p:
             continue
-        resolved = resolve_stored_path(p)
-        if not resolved or not resolved.exists():
-            continue
-        try:
-            resolved.relative_to(TEMP_DIR)
-        except ValueError:
-            continue
-        return f"/thumbnails/{resolved.name}"
+        url = _thumb_url_from_stored_path(p, availability_index)
+        if url:
+            return url
     return ""
 
 
-def cache_thumb_url(asset: ImageAsset) -> Optional[str]:
-    cache_file = CACHE_DIR / f"{asset.file_hash}_cache.webp"
-    if cache_file.exists():
-        return f"/cache/{asset.file_hash}_cache.webp"
+def cache_thumb_url(
+    asset: ImageAsset,
+    availability_index: PreviewAvailabilityIndex | None = None,
+) -> Optional[str]:
+    if not asset.file_hash:
+        return None
+    cache_name = f"{asset.file_hash}_cache.webp"
+    if availability_index is None:
+        cache_file = CACHE_DIR / cache_name
+        if cache_file.exists():
+            return f"/cache/{cache_name}"
+        return None
+    if cache_name in availability_index.cache_file_names:
+        return f"/cache/{cache_name}"
     return None
+
+
+def resolve_asset_preview(
+    asset: ImageAsset,
+    availability_index: PreviewAvailabilityIndex | None = None,
+) -> AssetPreview:
+    return AssetPreview(
+        thumb_url=thumb_url(asset, availability_index),
+        cache_thumb_url=cache_thumb_url(asset, availability_index),
+    )
 
 
 def media_url(asset: ImageAsset) -> Optional[str]:
