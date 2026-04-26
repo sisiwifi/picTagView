@@ -8,366 +8,335 @@
       {{ floatingMessage.text }}
     </div>
 
-    <header class="page-header">
-      <div class="page-header__main">
-        <h2 class="page-title">设置</h2>
-        <p class="page-subtitle">个性化与系统管理</p>
-      </div>
-      <button class="page-header__action trash-launch" type="button" @click="$router.push('/trash')">
-        <span class="trash-launch__icon" aria-hidden="true">
-          <svg viewBox="0 0 48 48" fill="none">
-            <rect x="6" y="8" width="36" height="32" rx="12" fill="url(#trash-launch-bg)" />
-            <path d="M17 20H31" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
-            <path d="M19 16.5H29" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
-            <path d="M20.5 22.5V31.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
-            <path d="M27.5 22.5V31.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
-            <path d="M15.5 18.5L17.8 14.5L22 16.7" stroke="#047857" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M32.5 29.5L30.2 33.5L26 31.3" stroke="#0f766e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-            <defs>
-              <linearGradient id="trash-launch-bg" x1="10" y1="10" x2="38" y2="38" gradientUnits="userSpaceOnUse">
-                <stop stop-color="#ecfccb" />
-                <stop offset="1" stop-color="#fef3c7" />
-              </linearGradient>
-            </defs>
-          </svg>
-        </span>
-        <span class="trash-launch__copy">
-          <span class="trash-launch__title">回收站</span>
-          <span class="trash-launch__subtitle">查看已删除项目</span>
-        </span>
-        <span class="trash-launch__arrow" aria-hidden="true">→</span>
-      </button>
-    </header>
+    <template v-if="activePanel === 'tag-filter'">
+      <BreadcrumbHeader
+        :show-back="true"
+        :crumbs="tagFilterCrumbs"
+        @back="closeTagFilterPlaceholder"
+      />
 
-    <!-- 外观 -->
-    <div class="settings-card">
-      <h3 class="card-title">外观</h3>
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">深色模式</span>
-          <span class="setting-desc">切换深色 / 浅色界面</span>
+      <div class="settings-card settings-card--subpage">
+        <div class="subpage-intro">
+          <div class="subpage-intro__copy">
+            <h3 class="card-title">Tag过滤</h3>
+            <p class="card-desc">这里预留给文件名匹配相关的规则配置，当前只保留二级页结构与返回入口。</p>
+          </div>
+          <span class="placeholder-badge">占位</span>
         </div>
-        <button
-          class="switch"
-          :class="{ 'switch--on': isDark }"
-          :aria-label="isDark ? '切换为浅色模式' : '切换为深色模式'"
-          @click="toggleDark"
-        >
-          <span class="switch__knob"></span>
-        </button>
-      </div>
-    </div>
 
-    <!-- 缓存管理 -->
-    <div class="settings-card">
-      <h3 class="card-title">缓存管理</h3>
-      <p class="card-desc">
-        清除 <code>data/cache/</code>（相册预览缩略图，短边 {{ thumbShortSide }}px WebP）与
-        <code>temp/</code>（月份封面缩略图，{{ monthCoverSize }}×{{ monthCoverSize }} WebP）内的所有已生成文件。
-        清除后下次浏览时将自动重新生成。
-      </p>
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">缩略图短边尺寸</span>
-          <span class="setting-desc">默认 600px，仅影响后续生成到 data/cache/ 的缩略图</span>
-        </div>
-        <div class="thumb-size-group">
-          <div class="input-check-wrap">
-            <input
-              v-model="thumbShortSideDraft"
-              class="thumb-size-input"
-              type="number"
-              inputmode="numeric"
-              :min="thumbShortSideMin"
-              :max="thumbShortSideMax"
-              :disabled="thumbSettingLoading || thumbSettingSaving"
-              @keydown.enter.prevent="confirmCacheThumbSetting"
-            >
-            <button
-              v-if="thumbShortSideCanConfirm"
-              class="btn-check"
-              :disabled="thumbSettingSaving || clearingCache"
-              @click="confirmCacheThumbSetting"
-            >
-              ✓
-            </button>
+        <div class="placeholder-panel">
+          <p class="placeholder-panel__title">计划纳入的配置</p>
+          <div class="placeholder-chip-list">
+            <span class="placeholder-chip">噪声词列表</span>
+            <span class="placeholder-chip">最小 token 长度</span>
+            <span class="placeholder-chip">纯数字过滤</span>
+            <span class="placeholder-chip">匹配预览</span>
           </div>
         </div>
-      </div>
 
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">月份封面尺寸</span>
-          <span class="setting-desc">默认 400px，影响 temp/ 内月份封面与后续导入时生成规则</span>
-        </div>
-        <div class="thumb-size-group">
-          <div class="input-check-wrap">
-            <input
-              v-model="monthCoverSizeDraft"
-              class="thumb-size-input"
-              type="number"
-              inputmode="numeric"
-              :min="monthCoverSizeMin"
-              :max="monthCoverSizeMax"
-              :disabled="monthCoverSettingLoading || monthCoverSettingSaving"
-              @keydown.enter.prevent="confirmMonthCoverSetting"
-            >
-            <button
-              v-if="monthCoverSizeCanConfirm"
-              class="btn-check"
-              :disabled="monthCoverSettingSaving || clearingCache"
-              @click="confirmMonthCoverSetting"
-            >
-              ✓
-            </button>
+        <div class="setting-row setting-row--compact">
+          <div class="setting-info">
+            <span class="setting-label">当前状态</span>
+            <span class="setting-desc">后续再接入实际配置、保存与预览逻辑；现在仅用于占位和导航结构调整。</span>
           </div>
+          <button class="btn btn--secondary" type="button" @click="closeTagFilterPlaceholder">
+            返回标签管理
+          </button>
         </div>
       </div>
-      <p v-if="thumbSettingError" class="viewer-error">{{ thumbSettingError }}</p>
-      <p v-if="monthCoverSettingError" class="viewer-error">{{ monthCoverSettingError }}</p>
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">清除缓存</span>
-          <span v-if="cacheResult" class="setting-desc">
-            已删除 {{ cacheResult.deleted }} 个缓存文件（临时缩略图已删除 {{ cacheResult.temp_deleted }} 个）
-            <span v-if="cacheResult.error" class="text-red-500"> — 错误：{{ cacheResult.error }}</span>
+    </template>
+
+    <template v-else>
+      <header class="page-header">
+        <div class="page-header__main">
+          <h2 class="page-title">设置</h2>
+          <p class="page-subtitle">系统管理与常用配置入口</p>
+        </div>
+        <button class="page-header__action trash-launch" type="button" @click="$router.push('/trash')">
+          <span class="trash-launch__icon" aria-hidden="true">
+            <svg viewBox="0 0 48 48" fill="none">
+              <rect x="6" y="8" width="36" height="32" rx="12" fill="url(#trash-launch-bg)" />
+              <path d="M17 20H31" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              <path d="M19 16.5H29" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              <path d="M20.5 22.5V31.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              <path d="M27.5 22.5V31.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              <path d="M15.5 18.5L17.8 14.5L22 16.7" stroke="#047857" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M32.5 29.5L30.2 33.5L26 31.3" stroke="#0f766e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              <defs>
+                <linearGradient id="trash-launch-bg" x1="10" y1="10" x2="38" y2="38" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#ecfccb" />
+                  <stop offset="1" stop-color="#fef3c7" />
+                </linearGradient>
+              </defs>
+            </svg>
           </span>
-          <span v-else class="setting-desc">同时清除 data/cache/ 与 temp/ 内所有缩略图文件</span>
-        </div>
-        <button
-          class="btn btn--danger"
-          :disabled="clearingCache"
-          @click="clearCache"
-        >
-          {{ clearingCache ? '清除中…' : '清除缓存' }}
+          <span class="trash-launch__copy">
+            <span class="trash-launch__title">回收站</span>
+            <span class="trash-launch__subtitle">查看已删除项目</span>
+          </span>
+          <span class="trash-launch__arrow" aria-hidden="true">→</span>
         </button>
-      </div>
-    </div>
+      </header>
 
-    <!-- 标签管理 -->
-    <div class="settings-card">
-      <h3 class="card-title">标签管理</h3>
-      <p class="card-desc">
-        将数据库中所有 Tag 导出为 JSON 文件，或从 JSON 文件批量导入 Tag。
-        导入时同名 Tag 默认跳过（可在导入对话框中选择覆盖模式）。
-      </p>
+      <div class="settings-card">
+        <h3 class="card-title">缓存管理</h3>
+        <p class="card-desc">管理浏览缩略图与月份封面缓存，尺寸调整后会自动触发重建。</p>
+        <!-- <div class="card-meta">
+          <span class="info-chip">data/cache · 短边 {{ thumbShortSide }}px</span>
+          <span class="info-chip">temp · 封面 {{ monthCoverSize }}px</span>
+        </div> -->
 
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">标签数据</span>
-          <span v-if="tagImportResult" class="setting-desc">
-            已导入 {{ tagImportResult.imported }}，更新 {{ tagImportResult.updated }}，跳过 {{ tagImportResult.skipped }}
-            <span v-if="tagImportResult.errors && tagImportResult.errors.length" class="text-red-500">
-              — {{ tagImportResult.errors.length }} 条错误
+        <div class="setting-row setting-row--compact">
+          <div class="setting-info">
+            <span class="setting-label">缩略图短边尺寸</span>
+            <span class="setting-desc">影响后续生成到 data/cache 的浏览缩略图。</span>
+          </div>
+          <div class="thumb-size-group">
+            <div class="input-check-wrap">
+              <input
+                v-model="thumbShortSideDraft"
+                class="thumb-size-input"
+                type="number"
+                inputmode="numeric"
+                :min="thumbShortSideMin"
+                :max="thumbShortSideMax"
+                :disabled="thumbSettingLoading || thumbSettingSaving"
+                @keydown.enter.prevent="confirmCacheThumbSetting"
+              >
+              <button
+                v-if="thumbShortSideCanConfirm"
+                class="btn-check"
+                :disabled="thumbSettingSaving || clearingCache"
+                @click="confirmCacheThumbSetting"
+              >
+                ✓
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-row setting-row--compact">
+          <div class="setting-info">
+            <span class="setting-label">月份封面尺寸</span>
+            <span class="setting-desc">影响 temp 内月份封面与后续导入时的封面生成。</span>
+          </div>
+          <div class="thumb-size-group">
+            <div class="input-check-wrap">
+              <input
+                v-model="monthCoverSizeDraft"
+                class="thumb-size-input"
+                type="number"
+                inputmode="numeric"
+                :min="monthCoverSizeMin"
+                :max="monthCoverSizeMax"
+                :disabled="monthCoverSettingLoading || monthCoverSettingSaving"
+                @keydown.enter.prevent="confirmMonthCoverSetting"
+              >
+              <button
+                v-if="monthCoverSizeCanConfirm"
+                class="btn-check"
+                :disabled="monthCoverSettingSaving || clearingCache"
+                @click="confirmMonthCoverSetting"
+              >
+                ✓
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-row setting-row--compact">
+          <div class="setting-info">
+            <span class="setting-label">清除缓存</span>
+            <span v-if="cacheResult" class="setting-desc">
+              已删除 {{ cacheResult.deleted }} 个浏览缓存，临时缩略图 {{ cacheResult.temp_deleted }} 个
+              <span v-if="cacheResult.error" class="text-red-500"> · {{ cacheResult.error }}</span>
             </span>
-          </span>
-          <span v-else class="setting-desc">导出全部标签，或在弹窗中选择 JSON 文件批量导入</span>
-        </div>
-        <div class="setting-actions">
-          <button class="btn btn--primary" :disabled="tagExporting" @click="exportTags">
-            {{ tagExporting ? '导出中…' : '导出 JSON' }}
-          </button>
-          <button class="btn btn--outline" :disabled="tagImporting" @click="openTagImportDialog">
-            {{ tagImporting ? '导入中…' : '导入 JSON' }}
-          </button>
-        </div>
-      </div>
-
-      <p v-if="tagError" class="viewer-error">{{ tagError }}</p>
-    </div>
-
-    <div class="settings-card">
-      <h3 class="card-title">Tag 过滤（预留）</h3>
-      <p class="card-desc">
-        用于文件名匹配时过滤噪声词。当前为占位配置，后续可扩展为更细的规则编辑器。
-      </p>
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">启用过滤</span>
-          <span class="setting-desc">关闭后将跳过噪声词和数字词过滤。</span>
-        </div>
-        <button
-          class="switch"
-          :class="{ 'switch--on': tagMatchEnabled }"
-          :disabled="tagMatchSettingLoading || tagMatchSettingSaving"
-          :aria-label="tagMatchEnabled ? '关闭 tag 过滤' : '开启 tag 过滤'"
-          @click="tagMatchEnabled = !tagMatchEnabled"
-        >
-          <span class="switch__knob"></span>
-        </button>
-      </div>
-
-      <div class="setting-row setting-row--stack">
-        <div class="setting-info">
-          <span class="setting-label">噪声词列表（每行一个）</span>
-          <span class="setting-desc">匹配文件名 token 时命中这些词会被忽略。</span>
-        </div>
-        <textarea
-          v-model="tagNoiseTokensDraft"
-          class="setting-textarea"
-          :disabled="tagMatchSettingLoading || tagMatchSettingSaving"
-          rows="5"
-          placeholder="sample\npreview\nuntitled"
-        />
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">最小 token 长度</span>
-          <span class="setting-desc">小于该长度的 token 会被忽略。</span>
-        </div>
-        <input
-          v-model.number="tagMatchMinTokenLength"
-          class="thumb-size-input"
-          type="number"
-          min="1"
-          max="32"
-          :disabled="tagMatchSettingLoading || tagMatchSettingSaving"
-        >
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">过滤纯数字 token</span>
-          <span class="setting-desc">例如 001、2025 这类 token。</span>
-        </div>
-        <button
-          class="switch"
-          :class="{ 'switch--on': tagMatchDropNumericOnly }"
-          :disabled="tagMatchSettingLoading || tagMatchSettingSaving"
-          :aria-label="tagMatchDropNumericOnly ? '关闭纯数字过滤' : '开启纯数字过滤'"
-          @click="tagMatchDropNumericOnly = !tagMatchDropNumericOnly"
-        >
-          <span class="switch__knob"></span>
-        </button>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">排序规则</span>
-          <span class="setting-desc">当前固定为 tag.name 字母顺序（name_asc）。</span>
-        </div>
-        <button class="btn btn--outline" disabled>name_asc</button>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">保存过滤配置</span>
-          <span class="setting-desc">仅保存配置，不会触发弹窗提醒。</span>
-        </div>
-        <button
-          class="btn btn--secondary"
-          :disabled="tagMatchSettingLoading || tagMatchSettingSaving"
-          @click="saveTagMatchSetting"
-        >
-          {{ tagMatchSettingSaving ? '保存中…' : '保存配置' }}
-        </button>
-      </div>
-
-      <p v-if="tagMatchSettingError" class="viewer-error">{{ tagMatchSettingError }}</p>
-    </div>
-
-    <div class="settings-card">
-      <h3 class="card-title">主分类</h3>
-      <p class="card-desc">
-        主分类只作用于图片可见性与导入归属；相册仅保留目录结构，标签不再绑定主分类。
-      </p>
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">配置主分类</span>
-          <span class="setting-desc">打开独立配置页，管理图片主分类、批量移除与显示开关。</span>
-        </div>
-        <button class="btn btn--secondary" type="button" @click="$router.push('/settings/categories')">
-          配置主分类
-        </button>
-      </div>
-    </div>
-
-    <!-- 图片查看器 -->
-    <div class="settings-card">
-      <h3 class="card-title">图片查看器</h3>
-      <p class="card-desc">
-        点击相册中的图片时，将优先使用你在本应用内选择的默认查看器打开原图，不影响系统全局默认设置。
-      </p>
-
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">当前应用内默认</span>
-          <span class="setting-desc">覆盖常见图片格式（jpg/png/webp/bmp/gif/tiff/heic/avif）</span>
-        </div>
-
-        <button
-          type="button"
-          class="viewer-current"
-          :disabled="viewerLoading || savingViewer"
-          @click="toggleViewerPicker"
-        >
-          <span class="viewer-icon">
-            <img
-              v-if="currentViewer && currentViewer.icon_url"
-              :src="toAbsoluteIconUrl(currentViewer.icon_url)"
-              :alt="currentViewer.display_name"
-              class="viewer-icon__img"
-            >
-            <span v-else>{{ currentViewer ? (currentViewer.icon_text || '?') : 'S' }}</span>
-          </span>
-
-          <span class="viewer-current__name" v-if="currentViewer">
-            {{ currentViewer.display_name }}
-          </span>
-          <span class="viewer-empty" v-else>
-            未选择（跟随系统默认）
-          </span>
-
-          <span class="viewer-current__arrow">{{ viewerPickerOpen ? '▴' : '▾' }}</span>
-        </button>
-      </div>
-
-      <p class="viewer-tip">系统当前默认：{{ systemViewerName || '未知' }}</p>
-
-      <div v-if="viewerLoading" class="viewer-loading">正在加载可选程序…</div>
-
-      <div v-else-if="viewerPickerOpen" class="viewer-picker-panel">
-        <div class="viewer-grid">
+            <span v-else class="setting-desc">同时清除 data/cache 与 temp 内的已生成缩略图。</span>
+          </div>
           <button
-            type="button"
-            class="viewer-item"
-            :class="{ 'viewer-item--active': selectedViewerId === '' }"
-            :disabled="savingViewer"
-            @click="selectViewer('')"
+            class="btn btn--danger"
+            :disabled="clearingCache"
+            @click="clearCache"
           >
-            <span class="viewer-icon viewer-icon--system">S</span>
-            <span class="viewer-item__name">跟随系统默认</span>
+            {{ clearingCache ? '清除中…' : '清除缓存' }}
           </button>
+        </div>
+
+        <p v-if="thumbSettingError" class="viewer-error">{{ thumbSettingError }}</p>
+        <p v-if="monthCoverSettingError" class="viewer-error">{{ monthCoverSettingError }}</p>
+      </div>
+
+      <div class="settings-card">
+        <h3 class="card-title">页面配置</h3>
+        <p class="card-desc">统一控制 BrowsePage 与 TrashPage 的浏览方式；分页模式会启用页码导航，滚动模式保持当前布局。</p>
+
+        <div class="setting-row setting-row--compact">
+          <div class="setting-info">
+            <span class="setting-label">夜间模式</span>
+            <span class="setting-desc">先保留入口，后续接入实际主题切换。</span>
+          </div>
+          <button class="btn btn--secondary" type="button" @click="openNightModePlaceholder">
+            夜间模式
+          </button>
+        </div>
+
+        <div class="setting-row setting-row--compact">
+          <div class="setting-info">
+            <span class="setting-label">浏览方式</span>
+            <span class="setting-desc">滚动浏览保持当前瀑布流与滚动窗口；分页浏览会在浏览页与回收站页启用页码分页。</span>
+          </div>
+          <div class="setting-select-wrap">
+            <select
+              class="setting-select"
+              :value="pageBrowseMode"
+              :disabled="pageConfigLoading || pageConfigSaving"
+              @change="onPageBrowseModeChange"
+            >
+              <option value="scroll">滚动浏览</option>
+              <option value="paged">分页浏览</option>
+            </select>
+          </div>
+        </div>
+
+        <p v-if="pageConfigError" class="viewer-error">{{ pageConfigError }}</p>
+      </div>
+
+      <div class="settings-card">
+        <h3 class="card-title">配置主分类</h3>
+        <div class="setting-row setting-row--compact">
+          <div class="setting-info">
+            <span class="setting-desc">进入独立页面管理主分类。</span>
+          </div>
+          <button class="btn btn--secondary" type="button" @click="$router.push('/settings/categories')">
+            配置主分类
+          </button>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <h3 class="card-title">标签管理</h3>
+        <p class="card-desc">统一处理标签字典导入导出，以及文件名匹配规则的后续配置入口。</p>
+
+        <div class="setting-row setting-row--compact">
+          <div class="setting-info">
+            <span class="setting-label">标签数据</span>
+            <span v-if="tagImportResult" class="setting-desc">
+              已导入 {{ tagImportResult.imported }}，更新 {{ tagImportResult.updated }}，跳过 {{ tagImportResult.skipped }}
+              <span v-if="tagImportResult.errors && tagImportResult.errors.length" class="text-red-500">
+                · {{ tagImportResult.errors.length }} 条错误
+              </span>
+            </span>
+            <span v-else class="setting-desc">导出全部标签，或在弹窗中选择 JSON 文件批量导入。</span>
+          </div>
+          <div class="setting-actions">
+            <button class="btn btn--primary" :disabled="tagExporting" @click="exportTags">
+              {{ tagExporting ? '导出中…' : '导出 JSON' }}
+            </button>
+            <button class="btn btn--outline" :disabled="tagImporting" @click="openTagImportDialog">
+              {{ tagImporting ? '导入中…' : '导入 JSON' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- <div class="setting-row setting-row--compact">
+          <div class="setting-info">
+            <span class="setting-label">Tag过滤</span>
+            <span class="setting-desc">进入二级页配置噪声词与文件名匹配规则，当前仅作占位。</span>
+          </div>
+          <button class="btn btn--secondary" type="button" @click="openTagFilterPlaceholder">
+            进入配置
+          </button>
+        </div> -->
+
+        <p v-if="tagError" class="viewer-error">{{ tagError }}</p>
+      </div>
+
+      <div class="settings-card">
+        <div class="viewer-card-head">
+          <div class="viewer-card-head__copy">
+            <h3 class="card-title">图片查看器</h3>
+            <p class="card-desc">设置应用内默认查看器，不影响系统全局默认程序。</p>
+          </div>
+          <span class="info-chip">系统默认：{{ systemViewerName || '未知' }}</span>
+        </div>
+
+        <div class="setting-row setting-row--compact setting-row--viewer">
+          <div class="setting-info viewer-summary">
+            <span class="setting-label">应用内默认查看器</span>
+            <span class="setting-desc">支持常见图片格式，点击右侧即可切换。</span>
+          </div>
 
           <button
-            v-for="viewer in viewerOptions"
-            :key="viewer.id"
             type="button"
-            class="viewer-item"
-            :class="{ 'viewer-item--active': selectedViewerId === viewer.id }"
-            :disabled="savingViewer"
-            @click="selectViewer(viewer.id)"
+            class="viewer-current viewer-current--compact"
+            :disabled="viewerLoading || savingViewer"
+            @click="toggleViewerPicker"
           >
             <span class="viewer-icon">
               <img
-                v-if="viewer.icon_url"
-                :src="toAbsoluteIconUrl(viewer.icon_url)"
-                :alt="viewer.display_name"
+                v-if="currentViewer && currentViewer.icon_url"
+                :src="toAbsoluteIconUrl(currentViewer.icon_url)"
+                :alt="currentViewer.display_name"
                 class="viewer-icon__img"
               >
-              <span v-else>{{ viewer.icon_text || '?' }}</span>
+              <span v-else>{{ currentViewer ? (currentViewer.icon_text || '?') : 'S' }}</span>
             </span>
-            <span class="viewer-item__name">{{ viewer.display_name }}</span>
-            <span v-if="viewer.is_system_default" class="viewer-item__tag">系统默认</span>
+
+            <span class="viewer-current__name" v-if="currentViewer">
+              {{ currentViewer.display_name }}
+            </span>
+            <span class="viewer-empty" v-else>
+              跟随系统默认
+            </span>
+
+            <span class="viewer-current__arrow">{{ viewerPickerOpen ? '▴' : '▾' }}</span>
           </button>
         </div>
-      </div>
 
-      <p v-if="viewerMessage" class="viewer-message">{{ viewerMessage }}</p>
-      <p v-if="viewerError" class="viewer-error">{{ viewerError }}</p>
-      <p class="viewer-tip" v-if="savingViewer">正在保存默认查看器…</p>
-    </div>
+        <div v-if="viewerLoading" class="viewer-loading">正在加载可选程序…</div>
+
+        <div v-else-if="viewerPickerOpen" class="viewer-picker-panel viewer-picker-panel--compact">
+          <div class="viewer-grid viewer-grid--compact">
+            <button
+              type="button"
+              class="viewer-item"
+              :class="{ 'viewer-item--active': selectedViewerId === '' }"
+              :disabled="savingViewer"
+              @click="selectViewer('')"
+            >
+              <span class="viewer-icon viewer-icon--system">S</span>
+              <span class="viewer-item__name">跟随系统默认</span>
+            </button>
+
+            <button
+              v-for="viewer in viewerOptions"
+              :key="viewer.id"
+              type="button"
+              class="viewer-item"
+              :class="{ 'viewer-item--active': selectedViewerId === viewer.id }"
+              :disabled="savingViewer"
+              @click="selectViewer(viewer.id)"
+            >
+              <span class="viewer-icon">
+                <img
+                  v-if="viewer.icon_url"
+                  :src="toAbsoluteIconUrl(viewer.icon_url)"
+                  :alt="viewer.display_name"
+                  class="viewer-icon__img"
+                >
+                <span v-else>{{ viewer.icon_text || '?' }}</span>
+              </span>
+              <span class="viewer-item__name">{{ viewer.display_name }}</span>
+              <span v-if="viewer.is_system_default" class="viewer-item__tag">系统默认</span>
+            </button>
+          </div>
+        </div>
+
+        <p v-if="viewerMessage" class="viewer-message">{{ viewerMessage }}</p>
+        <p v-if="viewerError" class="viewer-error">{{ viewerError }}</p>
+        <p class="viewer-tip" v-if="savingViewer">正在保存默认查看器…</p>
+      </div>
+    </template>
 
     <input
       ref="tagFileInput"
@@ -394,7 +363,14 @@
 </template>
 
 <script>
+import BreadcrumbHeader from '../components/BreadcrumbHeader.vue'
 import TagImportDialog from '../components/TagImportDialog.vue'
+import {
+  PAGE_BROWSE_MODE_PAGED,
+  PAGE_BROWSE_MODE_SCROLL,
+  fetchPageConfig,
+  savePageConfig,
+} from '../utils/pageConfig'
 
 const API_BASE = 'http://127.0.0.1:8000'
 
@@ -412,12 +388,12 @@ function toErrorMessage(err) {
 export default {
   name: 'SettingsPage',
   components: {
+    BreadcrumbHeader,
     TagImportDialog,
   },
 
   data() {
     return {
-      isDark: false,
       clearingCache: false,
       cacheResult: null,
       thumbSettingLoading: false,
@@ -434,6 +410,10 @@ export default {
       monthCoverSizeMin: 100,
       monthCoverSizeMax: 2000,
       monthCoverSettingError: '',
+      pageConfigLoading: false,
+      pageConfigSaving: false,
+      pageBrowseMode: PAGE_BROWSE_MODE_SCROLL,
+      pageConfigError: '',
       floatingMessage: {
         visible: false,
         type: 'success',
@@ -457,17 +437,19 @@ export default {
       tagImportResult: null,
       tagImportConflict: 'skip',
       tagError: '',
-      tagMatchSettingLoading: false,
-      tagMatchSettingSaving: false,
-      tagMatchSettingError: '',
-      tagMatchEnabled: true,
-      tagNoiseTokensDraft: '',
-      tagMatchMinTokenLength: 2,
-      tagMatchDropNumericOnly: true,
+      activePanel: '',
     }
   },
 
   computed: {
+    tagFilterCrumbs() {
+      return [
+        { label: '设置', title: '设置' },
+        { label: '标签管理', title: '标签管理' },
+        { label: 'Tag过滤', title: 'Tag过滤', current: true },
+      ]
+    },
+
     currentViewer() {
       if (!this.selectedViewerId) return null
       return this.viewerOptions.find(v => v.id === this.selectedViewerId) || null
@@ -499,11 +481,10 @@ export default {
   },
 
   created() {
-    this.isDark = document.documentElement.classList.contains('dark')
     this.fetchCacheThumbSetting()
     this.fetchMonthCoverSetting()
+    this.fetchPageConfigSetting()
     this.fetchViewerOptions()
-    this.fetchTagMatchSetting()
   },
 
   beforeUnmount() {
@@ -514,14 +495,47 @@ export default {
   },
 
   methods: {
-    toggleDark() {
-      this.isDark = !this.isDark
-      if (this.isDark) {
-        document.documentElement.classList.add('dark')
-        localStorage.setItem('theme', 'dark')
-      } else {
-        document.documentElement.classList.remove('dark')
-        localStorage.setItem('theme', 'light')
+    openTagFilterPlaceholder() {
+      this.activePanel = 'tag-filter'
+    },
+
+    closeTagFilterPlaceholder() {
+      this.activePanel = ''
+    },
+
+    openNightModePlaceholder() {
+      this.showFloatingMessage('success', '夜间模式暂未开放。')
+    },
+
+    async fetchPageConfigSetting() {
+      this.pageConfigLoading = true
+      this.pageConfigError = ''
+      try {
+        const config = await fetchPageConfig()
+        this.pageBrowseMode = config.browseMode || PAGE_BROWSE_MODE_SCROLL
+      } catch (err) {
+        this.pageConfigError = `加载页面配置失败：${toErrorMessage(err)}`
+      } finally {
+        this.pageConfigLoading = false
+      }
+    },
+
+    async onPageBrowseModeChange(event) {
+      const nextMode = String(event?.target?.value || PAGE_BROWSE_MODE_SCROLL)
+      const normalizedMode = nextMode === PAGE_BROWSE_MODE_PAGED ? PAGE_BROWSE_MODE_PAGED : PAGE_BROWSE_MODE_SCROLL
+      if (normalizedMode === this.pageBrowseMode) return
+
+      this.pageConfigSaving = true
+      this.pageConfigError = ''
+      try {
+        const savedConfig = await savePageConfig({ browseMode: normalizedMode })
+        this.pageBrowseMode = savedConfig.browseMode
+        this.showFloatingMessage('success', `浏览方式已切换为${savedConfig.browseMode === PAGE_BROWSE_MODE_PAGED ? '分页浏览' : '滚动浏览'}。`)
+      } catch (err) {
+        this.pageConfigError = `保存页面配置失败：${toErrorMessage(err)}`
+        this.showFloatingMessage('error', this.pageConfigError)
+      } finally {
+        this.pageConfigSaving = false
       }
     },
 
@@ -842,66 +856,12 @@ export default {
         this.tagImporting = false
       }
     },
-
-    async fetchTagMatchSetting() {
-      this.tagMatchSettingLoading = true
-      this.tagMatchSettingError = ''
-      try {
-        const res = await fetch(`${API_BASE}/api/system/tag-match-setting`)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const data = await res.json()
-        this.tagMatchEnabled = Boolean(data.enabled)
-        this.tagMatchDropNumericOnly = Boolean(data.drop_numeric_only)
-        const minTokenLength = Number.parseInt(String(data.min_token_length ?? 2), 10)
-        this.tagMatchMinTokenLength = Number.isFinite(minTokenLength) ? minTokenLength : 2
-        this.tagNoiseTokensDraft = Array.isArray(data.noise_tokens)
-          ? data.noise_tokens.join('\n')
-          : ''
-      } catch (err) {
-        this.tagMatchSettingError = `加载 tag 过滤配置失败：${toErrorMessage(err)}`
-      } finally {
-        this.tagMatchSettingLoading = false
-      }
-    },
-
-    async saveTagMatchSetting() {
-      this.tagMatchSettingSaving = true
-      this.tagMatchSettingError = ''
-      try {
-        const noiseTokens = String(this.tagNoiseTokensDraft || '')
-          .split(/\r?\n/)
-          .map(token => token.trim())
-          .filter(Boolean)
-
-        const body = {
-          enabled: Boolean(this.tagMatchEnabled),
-          noise_tokens: noiseTokens,
-          min_token_length: Math.max(1, Math.min(32, Number(this.tagMatchMinTokenLength) || 2)),
-          drop_numeric_only: Boolean(this.tagMatchDropNumericOnly),
-        }
-
-        const res = await fetch(`${API_BASE}/api/system/tag-match-setting`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-        if (!res.ok) {
-          const payload = await res.json().catch(() => ({}))
-          throw new Error(payload.detail || `HTTP ${res.status}`)
-        }
-        await this.fetchTagMatchSetting()
-      } catch (err) {
-        this.tagMatchSettingError = `保存 tag 过滤配置失败：${toErrorMessage(err)}`
-      } finally {
-        this.tagMatchSettingSaving = false
-      }
-    },
   },
 }
 </script>
 
 <style scoped lang="css">
-.page { @apply flex flex-col gap-6; }
+.page { @apply flex flex-col gap-4; }
 
 .floating-message {
   @apply fixed top-5 right-5 z-50 text-sm px-3 py-2 rounded-lg shadow-lg border;
@@ -909,28 +869,6 @@ export default {
 
 .floating-message--success {
   @apply bg-emerald-50 text-emerald-700 border-emerald-300;
-}
-
-.setting-row--stack {
-  align-items: stretch;
-}
-
-.setting-textarea {
-  width: min(420px, 100%);
-  min-height: 108px;
-  border: 1px solid rgba(148, 163, 184, 0.45);
-  border-radius: 12px;
-  padding: 0.6rem 0.7rem;
-  font-size: 0.84rem;
-  line-height: 1.5;
-  resize: vertical;
-  background: #ffffff;
-  color: #1e293b;
-}
-
-.setting-textarea:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .floating-message--error {
@@ -1026,16 +964,64 @@ export default {
 }
 
 .settings-card {
-  @apply bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col gap-4;
+  @apply bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3;
+}
+.settings-card--subpage {
+  min-height: 260px;
 }
 .card-title { @apply text-base font-semibold text-slate-700 m-0; }
 .card-desc { @apply text-xs text-slate-400 m-0 leading-relaxed; }
 
-.setting-row {
-  @apply flex items-center justify-between gap-4;
+.card-meta {
+  @apply flex flex-wrap items-center gap-2;
 }
-.setting-info { @apply flex flex-col gap-0.5; }
+
+.info-chip {
+  @apply inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium text-slate-500 bg-slate-100 border border-slate-200;
+}
+
+.setting-row {
+  @apply flex items-start justify-between gap-3;
+}
+.setting-row--compact {
+  @apply gap-3;
+}
+
+.setting-row--viewer {
+  @apply items-center;
+}
+
+.setting-info { @apply flex flex-col gap-0.5 min-w-0; }
 .setting-label { @apply text-sm font-medium text-slate-700; }
+.setting-desc { @apply text-xs text-slate-400 leading-5; }
+
+.subpage-intro {
+  @apply flex items-start justify-between gap-3;
+}
+
+.subpage-intro__copy {
+  @apply flex flex-col gap-1 min-w-0;
+}
+
+.placeholder-badge {
+  @apply inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200;
+}
+
+.placeholder-panel {
+  @apply rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 flex flex-col gap-2;
+}
+
+.placeholder-panel__title {
+  @apply text-xs font-semibold text-slate-600 m-0;
+}
+
+.placeholder-chip-list {
+  @apply flex flex-wrap gap-2;
+}
+
+.placeholder-chip {
+  @apply inline-flex items-center rounded-full px-2.5 py-1 text-[11px] text-slate-500 bg-white border border-slate-200;
+}
 
 @media (max-width: 640px) {
   .page-header {
@@ -1046,12 +1032,32 @@ export default {
     width: 100%;
     min-width: 0;
   }
+
+  .subpage-intro,
+  .setting-row,
+  .setting-row--viewer {
+    @apply flex-col items-stretch;
+  }
 }
-.setting-desc { @apply text-xs text-slate-400; }
+
+.viewer-card-head {
+  @apply flex flex-wrap items-center justify-between gap-2;
+}
+
+.viewer-card-head__copy {
+  @apply flex flex-col gap-1 min-w-0;
+}
+
+.viewer-summary {
+  @apply pr-2;
+}
 
 .viewer-current {
   @apply inline-flex items-center gap-2 bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-200
          transition-colors duration-150 cursor-pointer;
+}
+.viewer-current--compact {
+  min-height: 40px;
 }
 .viewer-current:hover:not(:disabled) {
   @apply border-indigo-400 bg-indigo-100;
@@ -1059,19 +1065,25 @@ export default {
 .viewer-current:disabled {
   @apply opacity-50 cursor-not-allowed;
 }
-.viewer-current__name { @apply text-sm font-medium max-w-48 truncate; }
-.viewer-current__arrow { @apply text-xs text-indigo-600 ml-1; }
+.viewer-current__name { @apply text-xs font-semibold max-w-40 truncate; }
+.viewer-current__arrow { @apply text-[10px] text-indigo-600 ml-1; }
 .viewer-empty { @apply text-xs text-slate-500; }
 
 .viewer-loading { @apply text-xs text-slate-500; }
 .viewer-picker-panel {
   @apply border border-slate-200 rounded-xl bg-slate-50 p-2;
 }
+.viewer-picker-panel--compact {
+  @apply p-1.5;
+}
 .viewer-grid {
   @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2;
 }
+.viewer-grid--compact {
+  @apply gap-1.5;
+}
 .viewer-item {
-  @apply flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-left
+  @apply flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-left
          transition-all duration-150 cursor-pointer;
 }
 .viewer-item:hover:not(:disabled) {
@@ -1084,7 +1096,7 @@ export default {
   @apply border-indigo-500 bg-indigo-50;
 }
 .viewer-icon {
-  @apply inline-flex items-center justify-center w-7 h-7 rounded-md bg-white border border-slate-200
+  @apply inline-flex items-center justify-center w-6 h-6 rounded-md bg-white border border-slate-200
          text-xs font-semibold text-slate-700 flex-shrink-0 overflow-hidden;
 }
 .viewer-icon--system {
@@ -1094,10 +1106,10 @@ export default {
   @apply w-full h-full object-contain;
 }
 .viewer-item__name {
-  @apply text-sm text-slate-700 truncate;
+  @apply text-xs text-slate-700 truncate;
 }
 .viewer-item__tag {
-  @apply ml-auto text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500;
+  @apply ml-auto text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500;
 }
 .viewer-tip {
   @apply text-xs text-slate-400 m-0;
@@ -1141,18 +1153,19 @@ export default {
 .btn--outline:not(:disabled):hover { @apply bg-slate-50; }
 
 .setting-actions {
-  @apply flex items-center gap-2 flex-wrap justify-end;
-}
-
-.tag-import-group {
-  @apply flex items-center gap-2;
-}
-.tag-conflict-select {
-  @apply text-sm border border-slate-300 rounded px-2 py-1.5 bg-white text-slate-700 cursor-pointer;
+  @apply flex items-center gap-1.5 flex-wrap justify-end;
 }
 
 .thumb-size-group {
   @apply flex items-center gap-2;
+}
+
+.setting-select-wrap {
+  @apply flex items-center gap-2;
+}
+
+.setting-select {
+  @apply min-w-[8rem] text-sm border border-slate-300 rounded-lg px-3 py-2 bg-white text-slate-700;
 }
 
 .input-check-wrap {

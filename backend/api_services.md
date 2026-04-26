@@ -91,6 +91,8 @@
   - POST /api/system/cache-thumb-setting
   - GET /api/system/month-cover-setting
   - POST /api/system/month-cover-setting
+  - GET /api/system/page-config
+  - POST /api/system/page-config
   - GET /api/system/tag-match-setting
   - POST /api/system/tag-match-setting
   - GET /api/system/viewer-info
@@ -286,6 +288,16 @@
   - Body：`{ size_px: int }`
   - 用途：更新月份封面尺寸（影响 `temp/` 内月份封面与后续导入生成规则）
   - 说明：前端设置页保存后会调用 `DELETE /api/cache` 清空缓存，随后按新尺寸重建
+
+- GET /api/system/page-config
+  - 实现：app/api/routers/system.py
+  - 用途：读取页面浏览模式配置
+  - 返回：`{ browse_mode, default_browse_mode }`，当前支持 `scroll` 与 `paged`
+
+- POST /api/system/page-config
+  - 实现：app/api/routers/system.py
+  - Body：`{ browse_mode: "scroll" | "paged" }`
+  - 用途：保存页面浏览模式，供 BrowsePage 与 TrashPage 统一切换滚动浏览 / 分页浏览
 
 - GET /api/system/tag-match-setting
   - 实现：app/api/routers/system.py

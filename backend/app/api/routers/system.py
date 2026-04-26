@@ -5,6 +5,8 @@ from app.api.schemas import (
     CacheThumbSettingResponse,
     MonthCoverSettingRequest,
     MonthCoverSettingResponse,
+    PageConfigRequest,
+    PageConfigResponse,
     TagMatchSettingRequest,
     TagMatchSettingResponse,
     ViewerPreferenceRequest,
@@ -12,15 +14,18 @@ from app.api.schemas import (
 from app.services.app_settings_service import (
     DEFAULT_CACHE_SHORT_SIDE_PX,
     DEFAULT_MONTH_COVER_SIZE_PX,
+    DEFAULT_PAGE_BROWSE_MODE,
     MAX_CACHE_SHORT_SIDE_PX,
     MAX_MONTH_COVER_SIZE_PX,
     MIN_CACHE_SHORT_SIDE_PX,
     MIN_MONTH_COVER_SIZE_PX,
     get_cache_thumb_short_side_px,
     get_month_cover_size_px,
+    get_page_config,
     get_tag_match_setting,
     set_cache_thumb_short_side_px,
     set_month_cover_size_px,
+    set_page_config,
     set_tag_match_setting,
 )
 from app.services.viewer_service import (
@@ -94,6 +99,28 @@ def set_month_cover_setting(body: MonthCoverSettingRequest) -> MonthCoverSetting
         default_size_px=DEFAULT_MONTH_COVER_SIZE_PX,
         min_size_px=MIN_MONTH_COVER_SIZE_PX,
         max_size_px=MAX_MONTH_COVER_SIZE_PX,
+    )
+
+
+@router.get("/api/system/page-config", response_model=PageConfigResponse)
+def get_page_config_api() -> PageConfigResponse:
+    data = get_page_config()
+    return PageConfigResponse(
+        browse_mode=data.get("browse_mode", DEFAULT_PAGE_BROWSE_MODE),
+        default_browse_mode=DEFAULT_PAGE_BROWSE_MODE,
+    )
+
+
+@router.post("/api/system/page-config", response_model=PageConfigResponse)
+def set_page_config_api(body: PageConfigRequest) -> PageConfigResponse:
+    browse_mode = (body.browse_mode or DEFAULT_PAGE_BROWSE_MODE).strip()
+    if browse_mode not in {"scroll", "paged"}:
+        raise HTTPException(status_code=400, detail="browse_mode must be one of: scroll, paged")
+
+    next_setting = set_page_config(body.model_dump())
+    return PageConfigResponse(
+        browse_mode=next_setting.get("browse_mode", DEFAULT_PAGE_BROWSE_MODE),
+        default_browse_mode=DEFAULT_PAGE_BROWSE_MODE,
     )
 
 

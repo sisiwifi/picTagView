@@ -21,10 +21,13 @@
    - `assets/tag-chips.css`：Tag 圆角标签通用样式
   - `components/`：通用组件
     - `LoadingSpinner.vue`
+      - `PagePaginationBar.vue`
     - `Sidebar.vue`
     - `ThumbCard.vue`
       - `TagChipList.vue`（按 Tag 元数据显色）
          - `TagMenuDialog.vue`（可复用的 Tag 菜单弹层）
+   - `utils/`
+      - `pageConfig.js`（页面浏览模式缓存、拉取与广播）
   - `pages/`：路由页面
     - `HomePage.vue`
     - `GalleryPage.vue`
@@ -48,10 +51,16 @@
 ### 4.3 展示图库内容
 - `BrowsePage` 调用 `GET /api/dates/{date_group}/items` 或 `GET /api/albums/by-path/{album_path:path}`
 - 直图显示 `ThumbCard`，子目录显示相册封面并支持物理路径继续下钻
+- 同时消费 `GET /api/system/page-config` 的浏览方式设置；当模式为 `paged` 时，瀑布流、列表和选择网格都会按当前视口高度分页，列表页支持每页 `10 / 20 / 50 / 100`
 - 选择模式详情浮层中的 Tag 使用 `TagChipList` 渲染，显色来自后端返回的 Tag 元数据字段，统一为 HEX8：
    - `color`
    - `border_color`
    - `background_color`
+
+### 4.4 回收站浏览与页面配置
+- `TrashPage` 调用 `GET /api/trash/items`
+- 与 `BrowsePage` 共用 `PagePaginationBar` 和 `pageConfig.js`
+- 当设置页切到“分页浏览”时，回收站瀑布流与选择网格也会分页，并在窗口缩放后按当前首个可见项重新定位页码
 
 ### 4.5 文件名分析回写 Tag
 - 前端保留文件名分析回写能力，可调用 `POST /api/images/tags/filename-match`
@@ -72,7 +81,7 @@
    - 取消或右上角关闭：丢弃草稿，不改动任何图片标签
    - 确定：对所有变更图片调用 `POST /api/images/tags/apply`（`merge_mode=replace`）一次性提交
 
-### 4.4 管理与重建
+### 4.5 管理与重建
 - 交互按钮触发 `POST /api/admin/refresh`
 - 后端返回 `{pruned, repaired, errors}`
 
@@ -142,6 +151,7 @@ npm run lint
    - `/api/images/tags/filename-match` 用于文件名分析并回写图片标签
    - `/api/images/tags/apply` 用于标签菜单手动批量添加/移除标签
    - `/api/tags?sort_by=last_used_desc&limit=5` 用于输入为空时加载最近使用标签
+   - `/api/system/page-config` 用于读取/保存滚动浏览与分页浏览模式
    - `/api/system/tag-match-setting` 用于读取/保存文件名匹配过滤配置
 - `ThumbCard` 负责显示缩略图，统一尺寸对齐
 - `Sidebar` 负责导航历史分组与用户操作按钮

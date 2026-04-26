@@ -1,5 +1,5 @@
 <template>
-  <section class="page">
+  <section class="page" :class="{ 'page--paged': isPagedBrowseMode }">
     <TrashPageHeader
       :item-count="totalCount"
       :sort-by="sortBy"
@@ -42,74 +42,91 @@
       {{ messageText }}
     </p>
 
-    <LoadingSpinner v-if="loading" />
+    <div ref="pageMain" class="page-main">
+      <LoadingSpinner v-if="loading" />
 
-    <div v-else-if="!items.length" class="empty-hint">
-      <span class="empty-hint__icon">🗑</span>
-      <p>回收站为空。</p>
-    </div>
-
-    <div v-else-if="selectionMode" ref="itemGrid" class="selection-grid" :style="selectionGridVirtualStyle">
-      <div
-        v-for="entry in visibleSelectionEntries"
-        :key="itemKey(entry.item, entry.index)"
-        class="selection-wrap"
-        :class="{ 'is-selected': isItemSelected(entry.item, entry.index), 'is-disabled': isItemDisabled(entry.item) }"
-        :data-index="entry.index"
-        @pointerdown="onSelectionPointerDown($event, entry.item, entry.index)"
-      >
-        <MediaItemCard
-          :src="resolvedUrl(entry.item)"
-          :alt="entry.item.name || ''"
-          :info-text="entry.item.name || '未命名'"
-          info-title="回收站项目"
-          :item-type="entry.item.type"
-          :selected="isItemSelected(entry.item, entry.index)"
-          :disabled="isItemDisabled(entry.item)"
-          @toggle-select="onItemSelectionButtonClick(entry.item, entry.index)"
-          @toggle-info="noop"
-          @details="openDetailsForItem(entry.item, entry.index)"
-        />
+      <div v-else-if="!items.length" class="empty-hint">
+        <span class="empty-hint__icon">🗑</span>
+        <p>回收站为空。</p>
       </div>
-    </div>
 
-    <div v-else ref="itemGrid" class="photo-grid">
-      <div
-        v-for="(row, rowIndex) in justifiedRows"
-        :key="rowIndex"
-        class="jl-row"
-        :style="{ height: row.height + 'px' }"
-      >
+      <div v-else-if="selectionMode" ref="itemGrid" class="selection-grid" :style="selectionGridStyle">
         <div
-          v-for="item in row.items"
-          :key="item.entry_key || item.id || item._idx"
-          class="photo-wrap"
-          :data-index="item._idx"
-          :style="{ width: item.computedWidth + 'px' }"
+          v-for="entry in visibleSelectionEntries"
+          :key="itemKey(entry.item, entry.index)"
+          class="selection-wrap"
+          :class="{ 'is-selected': isItemSelected(entry.item, entry.index), 'is-disabled': isItemDisabled(entry.item) }"
+          :data-index="entry.index"
+          @pointerdown="onSelectionPointerDown($event, entry.item, entry.index)"
         >
-          <div v-if="!resolvedUrl(item)" class="photo-skeleton">
-            <span class="skeleton-label">...</span>
-          </div>
+          <MediaItemCard
+            :src="resolvedUrl(entry.item)"
+            :alt="entry.item.name || ''"
+            :info-text="entry.item.name || '未命名'"
+            info-title="回收站项目"
+            :item-type="entry.item.type"
+            :selected="isItemSelected(entry.item, entry.index)"
+            :disabled="isItemDisabled(entry.item)"
+            @toggle-select="onItemSelectionButtonClick(entry.item, entry.index)"
+            @toggle-info="noop"
+            @details="openDetailsForItem(entry.item, entry.index)"
+          />
+        </div>
+      </div>
 
-          <div v-else class="photo-card" @click="openDetailsForItem(item, item._idx)">
-            <img
-              :src="resolvedUrl(item)"
-              class="photo-img"
-              loading="lazy"
-              :alt="item.name || ''"
-              @load="onImgLoad(item, $event)"
-            />
-            <div v-if="item.type === 'album'" class="album-badge">
-              <span class="badge-icon">📁</span>
-              <span class="badge-name">{{ item.name }}</span>
-              <span class="badge-count">{{ item.photo_count || 0 }} 张</span>
+      <div v-else ref="itemGrid" class="photo-grid" :style="photoGridStyle">
+        <div
+          v-for="(row, rowIndex) in activePhotoRows"
+          :key="rowIndex"
+          class="jl-row"
+          :style="{ height: row.height + 'px' }"
+        >
+          <div
+            v-for="item in row.items"
+            :key="item.entry_key || item.id || item._idx"
+            class="photo-wrap"
+            :data-index="item._idx"
+            :style="{ width: item.computedWidth + 'px' }"
+          >
+            <div v-if="!resolvedUrl(item)" class="photo-skeleton">
+              <span class="skeleton-label">...</span>
+            </div>
+
+            <div v-else class="photo-card" @click="openDetailsForItem(item, item._idx)">
+              <img
+                :src="resolvedUrl(item)"
+                class="photo-img"
+                loading="lazy"
+                :alt="item.name || ''"
+                @load="onImgLoad(item, $event)"
+              />
+              <div v-if="item.type === 'album'" class="album-badge">
+                <span class="badge-icon">📁</span>
+                <span class="badge-name">{{ item.name }}</span>
+                <span class="badge-count">{{ item.photo_count || 0 }} 张</span>
+              </div>
             </div>
           </div>
         </div>
       </div>
+
+      <div
+        v-if="isPagedBrowseMode && items.length"
+        ref="paginationHost"
+        class="page-pagination-host"
+        :class="{ 'page-pagination-host--selection': selectionMode }"
+      >
+        <PagePaginationBar
+          :current-page="activePaginationConfig.currentPage"
+          :total-pages="activePaginationConfig.totalPages"
+          :page-size="activePaginationConfig.pageSize"
+          :page-size-options="activePaginationConfig.pageSizeOptions"
+          @update:page="onPaginationPageChange"
+        />
+      </div>
     </div>
 
-    <div v-if="selectionMode" class="selection-island">
+    <div v-if="selectionMode" ref="selectionIsland" class="selection-island" :style="selectionIslandStyle">
       <span class="selection-island__count">{{ selectionSummaryText }}</span>
       <button class="selection-island__btn" type="button" :disabled="!selectedCount || actionBusy" @click="openSelectionDetails">详情</button>
       <button class="selection-island__btn" type="button" :disabled="!selectedCount || actionBusy" @click="restoreSelection">还原</button>
@@ -184,9 +201,18 @@ import ConfirmationDialog from '../components/ConfirmationDialog.vue'
 import ActionProgressOverlay from '../components/ActionProgressOverlay.vue'
 import LoadingSpinner from '../components/LoadingSpinner.vue'
 import MediaItemCard from '../components/MediaItemCard.vue'
+import PagePaginationBar from '../components/PagePaginationBar.vue'
 import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
 import TrashPageHeader from '../components/TrashPageHeader.vue'
 import { normalizeTagColors } from '../utils/tagColors'
+import {
+  DEFAULT_PAGE_CONFIG,
+  PAGE_BROWSE_MODE_PAGED,
+  PAGE_BROWSE_MODE_SCROLL,
+  PAGE_CONFIG_UPDATED_EVENT,
+  fetchPageConfig,
+  getCachedPageConfig,
+} from '../utils/pageConfig'
 
 const API_BASE = 'http://127.0.0.1:8000'
 const FIRST_ROW_TOLERANCE_PX = 12
@@ -195,8 +221,19 @@ const DIMENSION_CORRECTION_BATCH_MS = 60
 const SELECTION_OVERSCAN_ROWS = 2
 const SELECTION_LANDSCAPE_COLS = 5
 const SELECTION_PORTRAIT_COLS = 3
+const LANDSCAPE_SELECTION_ROWS = 2
+const PORTRAIT_SELECTION_ROWS = 3
+const LANDSCAPE_PHOTO_ROWS = 2
+const PHOTO_GRID_MIN_TARGET_HEIGHT_PX = 140
+const PHOTO_GRID_MAX_TARGET_HEIGHT_PX = 640
 const SELECTION_LANDSCAPE_GAP = 16
 const SELECTION_PORTRAIT_GAP = 12
+const PHOTO_GRID_GAP_PX = 4
+const PHOTO_GRID_TARGET_HEIGHT_PX = 420
+const MIN_PAGED_PHOTO_ROWS = 2
+const MIN_PAGED_SELECTION_ROWS = 2
+const PAGED_GRID_BOTTOM_RESERVE_PX = 12
+const PAGE_SECTION_GAP_PX = 10
 const JUSTIFIED_LAYOUT_CACHE = new Map()
 const JUSTIFIED_LAYOUT_CACHE_LIMIT = 24
 
@@ -234,25 +271,36 @@ export default {
     ConfirmationDialog,
     LoadingSpinner,
     MediaItemCard,
+    PagePaginationBar,
     SelectionDetailOverlay,
     TrashPageHeader,
   },
 
   data() {
+    const cachedPageConfig = getCachedPageConfig()
     return {
       items: [],
       loading: true,
       sortBy: 'date',
       sortDir: 'desc',
       containerWidth: 0,
+      itemGridViewportTop: 0,
+      paginationHostHeight: 0,
+      selectionIslandHeight: 0,
       imgDimensions: {},
       layoutFingerprint: '',
       pendingViewAnchor: null,
       pendingDimensionCorrections: {},
       dimensionFlushTimer: null,
+      resizeObserver: null,
+      pageBrowseMode: cachedPageConfig.browseMode || DEFAULT_PAGE_CONFIG.browseMode,
+      photoPageIndex: 0,
+      selectionGridPageIndex: 0,
       selectionMode: false,
       scrollTop: typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0,
       viewportHeight: typeof window !== 'undefined' ? window.innerHeight : 0,
+      viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 0,
+      pageMainHeight: 0,
       virtualStartIndex: 0,
       virtualEndIndex: 0,
       virtualAnchorIndex: 0,
@@ -289,15 +337,53 @@ export default {
       return this.items.length
     },
 
+    isPagedBrowseMode() {
+      return this.pageBrowseMode === PAGE_BROWSE_MODE_PAGED
+    },
+
+    isPhotoGridMode() {
+      return !this.selectionMode
+    },
+
+    isSelectionGridMode() {
+      return this.selectionMode
+    },
+
     cacheSortSignature() {
       return `${this.sortBy}:${this.sortDir}:${this.items.length}`
     },
 
+    isPortrait() {
+      const width = this.viewportWidth || (typeof window !== 'undefined' ? window.innerWidth : 0)
+      const height = this.viewportHeight || (typeof window !== 'undefined' ? window.innerHeight : 0)
+      if (!width || !height) return false
+      return height > width
+    },
     selectionColumnCount() {
-      if (typeof window === 'undefined') return SELECTION_PORTRAIT_COLS
-      return window.matchMedia('(orientation: landscape)').matches
-        ? SELECTION_LANDSCAPE_COLS
-        : SELECTION_PORTRAIT_COLS
+      return this.isPortrait ? SELECTION_PORTRAIT_COLS : SELECTION_LANDSCAPE_COLS
+    },
+    selectionRowsPerPageTarget() {
+      return this.isPortrait ? PORTRAIT_SELECTION_ROWS : LANDSCAPE_SELECTION_ROWS
+    },
+    pagedSelectionCardHeight() {
+      const rows = this.selectionRowsPerPageTarget
+      const gap = this.selectionGridGapPx
+      const budget = this.pagedGridHeightBudget
+      const totalGap = gap * Math.max(0, rows - 1)
+      const height = (budget - totalGap) / rows
+      return Math.max(180, Math.floor(height))
+    },
+    photoGridTargetHeight() {
+      if (!this.isPagedBrowseMode) return PHOTO_GRID_TARGET_HEIGHT_PX
+      const rows = this.isPortrait ? PORTRAIT_SELECTION_ROWS : LANDSCAPE_PHOTO_ROWS
+      const budget = this.pagedGridHeightBudget
+      const totalGap = PHOTO_GRID_GAP_PX * Math.max(0, rows - 1)
+      const candidate = (budget - totalGap) / rows
+      if (!Number.isFinite(candidate) || candidate <= 0) return PHOTO_GRID_TARGET_HEIGHT_PX
+      return Math.min(
+        PHOTO_GRID_MAX_TARGET_HEIGHT_PX,
+        Math.max(PHOTO_GRID_MIN_TARGET_HEIGHT_PX, Math.floor(candidate)),
+      )
     },
 
     selectionGridGapPx() {
@@ -307,6 +393,9 @@ export default {
     },
 
     effectiveSelectionRowHeight() {
+      if (this.isPagedBrowseMode && this.selectionMode) {
+        return this.pagedSelectionCardHeight
+      }
       if (this.selectionRowHeight > 0) return this.selectionRowHeight
 
       const width = this.containerWidth || (typeof window !== 'undefined' ? window.innerWidth - 48 : 800)
@@ -316,13 +405,43 @@ export default {
     },
 
     visibleSelectionEntries() {
-      const start = this.selectionMode ? this.virtualStartIndex : 0
-      const end = this.selectionMode ? this.virtualEndIndex : this.items.length
+      const start = this.selectionMode
+        ? (this.isPagedBrowseMode ? this.selectionGridPageStartIndex : this.virtualStartIndex)
+        : 0
+      const end = this.selectionMode
+        ? (this.isPagedBrowseMode ? this.selectionGridPageEndIndex : this.virtualEndIndex)
+        : this.items.length
       return this.items.slice(start, end).map((item, offset) => ({ item, index: start + offset }))
     },
 
-    selectionGridVirtualStyle() {
+    isPaginationBarVisible() {
+      if (!this.isPagedBrowseMode || !this.items.length || !this.activePaginationConfig) return false
+      return Number(this.activePaginationConfig.totalPages || 0) > 1
+    },
+
+    selectionIslandStyle() {
+      if (!this.selectionMode || !this.isPagedBrowseMode || !this.isPaginationBarVisible) return null
+      const hostHeight = this.paginationHostHeight > 0 ? this.paginationHostHeight : 52
+      return {
+        bottom: `${hostHeight + 10}px`,
+      }
+    },
+
+    selectionGridStyle() {
       if (!this.selectionMode) return null
+
+      if (this.isPagedBrowseMode) {
+        const rows = this.selectionRowsPerPageTarget
+        const cardHeight = this.pagedSelectionCardHeight
+        return {
+          minHeight: `${this.pagedGridHeightBudget}px`,
+          height: `${this.pagedGridHeightBudget}px`,
+          overflow: 'hidden',
+          alignContent: 'start',
+          gridAutoRows: `${cardHeight}px`,
+          gridTemplateRows: `repeat(${rows}, ${cardHeight}px)`,
+        }
+      }
 
       const totalRows = Math.ceil(this.items.length / this.selectionColumnCount)
       const startRow = Math.floor(this.virtualStartIndex / this.selectionColumnCount)
@@ -344,10 +463,27 @@ export default {
       }
     },
 
+    photoGridStyle() {
+      if (!this.isPhotoGridMode || !this.isPagedBrowseMode) return null
+      return {
+        minHeight: `${this.pagedGridHeightBudget}px`,
+        height: `${this.pagedGridHeightBudget}px`,
+        overflow: 'hidden',
+      }
+    },
+
+    pagedGridHeightBudget() {
+      const hostHeight = this.pageMainHeight > 0 ? this.pageMainHeight : this.viewportHeight
+      return Math.max(
+        220,
+        hostHeight - this.pagedPaginationHostReservePx - PAGED_GRID_BOTTOM_RESERVE_PX,
+      )
+    },
+
     justifiedRows() {
       const width = this.containerWidth || (typeof window !== 'undefined' ? window.innerWidth - 48 : 800)
-      const gap = 4
-      const targetHeight = 420
+      const gap = PHOTO_GRID_GAP_PX
+      const targetHeight = this.photoGridTargetHeight
       const items = this.items
       if (!items.length) return []
 
@@ -390,6 +526,138 @@ export default {
       }
 
       return rememberJustifiedLayout(cacheKey, rows)
+    },
+
+    photoGridPages() {
+      if (!this.isPagedBrowseMode || !this.justifiedRows.length) return []
+
+      const pages = []
+      const budget = this.pagedGridHeightBudget
+      const estimatedRows = Math.max(
+        1,
+        Math.floor((budget + PHOTO_GRID_GAP_PX) / (PHOTO_GRID_TARGET_HEIGHT_PX + PHOTO_GRID_GAP_PX)),
+      )
+      const minRowsPerPage = this.justifiedRows.length > 1 && estimatedRows > 1 ? MIN_PAGED_PHOTO_ROWS : 1
+      const buildPage = (pageRows) => {
+        const firstIndex = pageRows[0]?.items?.[0]?._idx ?? 0
+        const lastRow = pageRows[pageRows.length - 1]
+        const lastIndex = lastRow?.items?.[lastRow.items.length - 1]?._idx ?? firstIndex
+        return { rows: pageRows, startIndex: firstIndex, endIndex: lastIndex }
+      }
+
+      let pageRows = []
+      let pageHeight = 0
+
+      for (let rowIndex = 0; rowIndex < this.justifiedRows.length; rowIndex += 1) {
+        const row = this.justifiedRows[rowIndex]
+        const nextRowHeight = row.height + (pageRows.length ? PHOTO_GRID_GAP_PX : 0)
+        const remainingRows = this.justifiedRows.length - rowIndex
+        const canSplit = pageRows.length >= minRowsPerPage
+        const canLeaveFollowingPage = remainingRows > Math.max(0, minRowsPerPage - 1)
+
+        if (pageRows.length && pageHeight + nextRowHeight > budget && canSplit && canLeaveFollowingPage) {
+          pages.push(buildPage(pageRows))
+          pageRows = []
+          pageHeight = 0
+        }
+
+        pageRows.push(row)
+        pageHeight += row.height + (pageRows.length > 1 ? PHOTO_GRID_GAP_PX : 0)
+      }
+
+      if (pageRows.length) {
+        pages.push(buildPage(pageRows))
+      }
+
+      if (minRowsPerPage > 1 && pages.length > 1) {
+        const lastPage = pages[pages.length - 1]
+        const previousPage = pages[pages.length - 2]
+        if (lastPage.rows.length < minRowsPerPage && previousPage.rows.length > minRowsPerPage) {
+          while (lastPage.rows.length < minRowsPerPage && previousPage.rows.length > minRowsPerPage) {
+            lastPage.rows.unshift(previousPage.rows.pop())
+          }
+          pages.splice(pages.length - 2, 2, buildPage(previousPage.rows), buildPage(lastPage.rows))
+        }
+      }
+
+      return pages
+    },
+
+    photoGridTotalPages() {
+      if (!this.isPagedBrowseMode) return 1
+      return Math.max(1, this.photoGridPages.length)
+    },
+
+    normalizedPhotoPageIndex() {
+      return Math.min(Math.max(0, this.photoPageIndex), Math.max(0, this.photoGridTotalPages - 1))
+    },
+
+    activePhotoRows() {
+      if (!this.isPagedBrowseMode) return this.justifiedRows
+      return this.photoGridPages[this.normalizedPhotoPageIndex]?.rows || []
+    },
+
+    selectionGridRowsPerPage() {
+      if (!this.isPagedBrowseMode || !this.isSelectionGridMode) return 0
+
+      const totalRows = Math.ceil(this.items.length / this.selectionColumnCount)
+      if (!totalRows) return 0
+
+      const rowSpan = this.effectiveSelectionRowHeight + this.selectionGridGapPx
+      const estimatedRows = Math.max(1, Math.floor((this.pagedGridHeightBudget + this.selectionGridGapPx) / rowSpan))
+      const minRows = totalRows > 1 && estimatedRows > 1 ? MIN_PAGED_SELECTION_ROWS : 1
+      return Math.min(totalRows, Math.max(minRows, estimatedRows))
+    },
+
+    selectionGridPageSize() {
+      if (!this.isPagedBrowseMode || !this.isSelectionGridMode) return this.items.length || 1
+      return Math.max(1, this.selectionGridRowsPerPage * this.selectionColumnCount)
+    },
+
+    selectionGridTotalPages() {
+      if (!this.isPagedBrowseMode || !this.isSelectionGridMode) return 1
+      return Math.max(1, Math.ceil(this.items.length / this.selectionGridPageSize))
+    },
+
+    normalizedSelectionGridPageIndex() {
+      return Math.min(Math.max(0, this.selectionGridPageIndex), Math.max(0, this.selectionGridTotalPages - 1))
+    },
+
+    selectionGridPageStartIndex() {
+      if (!this.isPagedBrowseMode || !this.isSelectionGridMode) return 0
+      return this.normalizedSelectionGridPageIndex * this.selectionGridPageSize
+    },
+
+    selectionGridPageEndIndex() {
+      if (!this.isPagedBrowseMode || !this.isSelectionGridMode) return this.items.length
+      return Math.min(this.items.length, this.selectionGridPageStartIndex + this.selectionGridPageSize)
+    },
+
+    activePaginationConfig() {
+      if (!this.isPagedBrowseMode || !this.items.length) return null
+
+      if (this.isSelectionGridMode) {
+        return {
+          kind: 'selection-grid',
+          currentPage: this.normalizedSelectionGridPageIndex + 1,
+          totalPages: this.selectionGridTotalPages,
+          pageSize: null,
+          pageSizeOptions: [],
+        }
+      }
+
+      return {
+        kind: 'photo-grid',
+        currentPage: this.normalizedPhotoPageIndex + 1,
+        totalPages: this.photoGridTotalPages,
+        pageSize: null,
+        pageSizeOptions: [],
+      }
+    },
+
+    pagedPaginationHostReservePx() {
+      if (this.paginationHostHeight <= 0) return 0
+      return this.paginationHostHeight + PAGE_SECTION_GAP_PX
     },
 
     selectedCount() {
@@ -568,18 +836,22 @@ export default {
 
   created() {
     this.loadData()
+    this.fetchPageConfigSetting()
     window.addEventListener('resize', this.onResize)
     window.addEventListener('scroll', this.onWindowScroll, { passive: true })
     window.addEventListener('keydown', this.onWindowKeydown)
     window.addEventListener('pointerdown', this.onWindowPointerDown)
+    window.addEventListener(PAGE_CONFIG_UPDATED_EVENT, this.onPageConfigUpdated)
   },
 
   beforeUnmount() {
     this.unlockPageScroll()
+    this.teardownResizeObserver()
     window.removeEventListener('resize', this.onResize)
     window.removeEventListener('scroll', this.onWindowScroll)
     window.removeEventListener('keydown', this.onWindowKeydown)
     window.removeEventListener('pointerdown', this.onWindowPointerDown)
+    window.removeEventListener(PAGE_CONFIG_UPDATED_EVENT, this.onPageConfigUpdated)
     if (this.dimensionFlushTimer) {
       clearTimeout(this.dimensionFlushTimer)
       this.dimensionFlushTimer = null
@@ -595,8 +867,108 @@ export default {
       console.debug('[TrashPage]', { event, ...payload })
     },
 
+    async fetchPageConfigSetting() {
+      try {
+        const config = await fetchPageConfig()
+        this.applyPageBrowseMode(config.browseMode, false)
+      } catch {
+        // keep cached or default page config when settings fetch fails
+      }
+    },
+
+    onPageConfigUpdated(event) {
+      this.applyPageBrowseMode(event?.detail?.browseMode, true)
+    },
+
+    applyPageBrowseMode(nextMode, captureAnchor = true) {
+      const normalizedMode = nextMode === PAGE_BROWSE_MODE_PAGED
+        ? PAGE_BROWSE_MODE_PAGED
+        : PAGE_BROWSE_MODE_SCROLL
+      if (normalizedMode === this.pageBrowseMode) return
+
+      const anchor = captureAnchor ? this.captureViewportAnchor() : null
+      this.pageBrowseMode = normalizedMode
+      this.closeSelectAllMenu()
+      this.normalizePaginationState()
+
+      if (anchor) {
+        this.pendingViewAnchor = anchor
+      }
+
+      this.$nextTick(() => {
+        this.refreshObservedGrid()
+      })
+    },
+
     itemLayoutKey(item, index = null) {
       return item?.entry_key || item?.id || item?._idx || index || 0
+    },
+
+    measureItemGridMetrics() {
+      const pageMainRect = this.$refs.pageMain?.getBoundingClientRect?.()
+      this.pageMainHeight = pageMainRect ? Math.round(pageMainRect.height) : 0
+      if (!this.$refs.itemGrid) return
+
+      const rect = this.$refs.itemGrid.getBoundingClientRect()
+      this.containerWidth = this.$refs.itemGrid.offsetWidth || this.containerWidth
+      this.itemGridViewportTop = Math.max(0, Math.round(rect.top))
+      this.virtualContainerTop = rect.top + (window.scrollY || window.pageYOffset || 0)
+
+      const paginationHostRect = this.$refs.paginationHost?.getBoundingClientRect?.()
+      this.paginationHostHeight = paginationHostRect ? Math.round(paginationHostRect.height) : 0
+
+      const selectionIslandRect = this.$refs.selectionIsland?.getBoundingClientRect?.()
+      this.selectionIslandHeight = selectionIslandRect ? Math.round(selectionIslandRect.height) : 0
+    },
+
+    normalizePaginationState() {
+      this.photoPageIndex = Math.min(Math.max(0, this.photoPageIndex), Math.max(0, this.photoGridTotalPages - 1))
+      this.selectionGridPageIndex = Math.min(Math.max(0, this.selectionGridPageIndex), Math.max(0, this.selectionGridTotalPages - 1))
+    },
+
+    findPhotoPageIndexForItem(targetIndex) {
+      for (let pageIndex = 0; pageIndex < this.photoGridPages.length; pageIndex += 1) {
+        const page = this.photoGridPages[pageIndex]
+        if (!page) continue
+        if (targetIndex >= page.startIndex && targetIndex <= page.endIndex) {
+          return pageIndex
+        }
+      }
+      return 0
+    },
+
+    restorePagedPageByIndex(targetIndex) {
+      if (this.isSelectionGridMode) {
+        const pageSize = Math.max(1, this.selectionGridPageSize)
+        this.selectionGridPageIndex = Math.floor(targetIndex / pageSize)
+      } else {
+        this.photoPageIndex = this.findPhotoPageIndexForItem(targetIndex)
+      }
+
+      this.normalizePaginationState()
+    },
+
+    scrollItemGridIntoView() {
+      if (!this.$refs.itemGrid || typeof window === 'undefined') return
+      const rect = this.$refs.itemGrid.getBoundingClientRect()
+      const desiredTop = (window.scrollY || window.pageYOffset || 0) + rect.top - RESTORE_ANCHOR_PADDING_PX
+      window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
+    },
+
+    onPaginationPageChange(nextPage) {
+      if (!this.isPagedBrowseMode) return
+
+      const targetPageIndex = Math.max(0, Number(nextPage || 1) - 1)
+      if (this.isSelectionGridMode) {
+        this.selectionGridPageIndex = targetPageIndex
+      } else {
+        this.photoPageIndex = targetPageIndex
+      }
+
+      this.normalizePaginationState()
+      this.$nextTick(() => {
+        this.scrollItemGridIntoView()
+      })
     },
 
     computeLayoutFingerprint(items, dimensions) {
@@ -640,6 +1012,8 @@ export default {
       this.virtualEndIndex = 0
       this.virtualAnchorIndex = 0
       this.virtualContainerTop = 0
+      this.photoPageIndex = 0
+      this.selectionGridPageIndex = 0
       if (this.dimensionFlushTimer) {
         clearTimeout(this.dimensionFlushTimer)
         this.dimensionFlushTimer = null
@@ -697,12 +1071,25 @@ export default {
     },
 
     onResize() {
-      this.refreshContainerWidth()
+      this.viewportHeight = typeof window !== 'undefined' ? window.innerHeight : this.viewportHeight
+      this.viewportWidth = typeof window !== 'undefined' ? window.innerWidth : this.viewportWidth
+      if (this.$refs.itemGrid) {
+        if (this.isPagedBrowseMode) {
+          const anchor = this.captureViewportAnchor()
+          if (anchor) {
+            this.pendingViewAnchor = anchor
+          }
+          this.refreshObservedGrid()
+        } else {
+          this.measureItemGridMetrics()
+          if (this.selectionMode) {
+            this.syncSelectionWindow(true)
+            this.measureSelectionRowHeight()
+          }
+        }
+      }
       if (this.selectionDetailsOpen) {
         this.updateSelectionDetailsBounds()
-      }
-      if (this.selectionMode || this.pendingViewAnchor) {
-        this.refreshObservedGrid()
       }
     },
 
@@ -727,18 +1114,30 @@ export default {
 
     refreshObservedGrid() {
       this.$nextTick(() => {
-        this.refreshContainerWidth()
+        this.measureItemGridMetrics()
+        this.normalizePaginationState()
         if (this.selectionMode) {
-          this.syncSelectionWindow(true)
+          if (this.isPagedBrowseMode) {
+            this.virtualStartIndex = 0
+            this.virtualEndIndex = this.items.length
+            this.virtualAnchorIndex = this.items.length ? 0 : -1
+          } else {
+            this.syncSelectionWindow(true)
+          }
           this.$nextTick(() => {
             this.measureSelectionRowHeight()
             if (this.pendingViewAnchor) {
               this.restorePendingViewAnchor()
             }
           })
+          this.setupResizeObserver()
           return
         }
 
+        this.virtualStartIndex = 0
+        this.virtualEndIndex = this.items.length
+        this.virtualAnchorIndex = this.items.length ? 0 : -1
+        this.setupResizeObserver()
         if (this.pendingViewAnchor) {
           this.restorePendingViewAnchor()
         }
@@ -803,7 +1202,11 @@ export default {
       const nextHeight = Math.round(sample.getBoundingClientRect().height)
       if (nextHeight > 0 && Math.abs(nextHeight - this.selectionRowHeight) > 1) {
         this.selectionRowHeight = nextHeight
-        this.syncSelectionWindow(true)
+        if (this.isPagedBrowseMode) {
+          this.normalizePaginationState()
+        } else {
+          this.syncSelectionWindow(true)
+        }
       }
     },
 
@@ -876,6 +1279,11 @@ export default {
 
       const targetIndex = this.resolveRestoreAnchorIndex(anchor)
       if (!Number.isInteger(targetIndex) || targetIndex < 0) return
+
+      if (this.isPagedBrowseMode) {
+        this.restorePagedPageByIndex(targetIndex)
+        return
+      }
 
       if (this.selectionMode) {
         const rowIndex = Math.floor(targetIndex / this.selectionColumnCount)
@@ -1016,6 +1424,7 @@ export default {
       } else {
         this.clearSelection()
       }
+      this.normalizePaginationState()
       if (anchor) {
         this.pendingViewAnchor = anchor
       }
@@ -1606,6 +2015,43 @@ export default {
       }
       this.closeSelectAllMenu()
     },
+
+    setupResizeObserver() {
+      if (!this.$refs.itemGrid) return
+      if (this.resizeObserver) {
+        this.resizeObserver.disconnect()
+        this.resizeObserver = null
+      }
+
+      this.resizeObserver = new ResizeObserver(() => {
+        requestAnimationFrame(() => {
+          if (!this.$refs.itemGrid) return
+
+          if (this.isPagedBrowseMode) {
+            const anchor = this.captureViewportAnchor()
+            if (anchor) {
+              this.pendingViewAnchor = anchor
+            }
+            this.refreshObservedGrid()
+            return
+          }
+
+          this.measureItemGridMetrics()
+          if (this.selectionMode) {
+            this.syncSelectionWindow(true)
+            this.measureSelectionRowHeight()
+          }
+        })
+      })
+      this.resizeObserver.observe(this.$refs.itemGrid)
+    },
+
+    teardownResizeObserver() {
+      if (this.resizeObserver) {
+        this.resizeObserver.disconnect()
+        this.resizeObserver = null
+      }
+    },
   },
 }
 </script>
@@ -1615,6 +2061,57 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+.page-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.page--paged {
+  height: calc(100dvh - 5rem);
+  min-height: calc(100vh - 5rem);
+  overflow: hidden;
+}
+
+.page--paged .empty-hint,
+.page--paged .selection-grid,
+.page--paged .photo-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.page--paged .selection-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.page--paged .selection-wrap :deep(.media-card) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.page--paged .selection-wrap :deep(.media-card__visual) {
+  flex: 1 1 0;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+
+.page--paged .selection-island {
+  position: absolute;
+  right: 1.5rem;
+  bottom: 4.25rem;
+}
+
+.page--paged .empty-hint {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .page-note {
@@ -1700,6 +2197,14 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.page-pagination-host {
+  padding-bottom: 0.12rem;
+}
+
+.page-pagination-host--selection {
+  padding-bottom: 0.08rem;
 }
 
 .jl-row {

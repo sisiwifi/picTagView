@@ -223,6 +223,9 @@
   - 提供月份封面尺寸配置：
     - `get_month_cover_size_px()`（默认 400）
     - `set_month_cover_size_px(value)`（限制范围 100~2000）
+  - 提供页面浏览模式配置：
+    - `get_page_config()`（默认 `scroll`）
+    - `set_page_config(setting)`（当前支持 `scroll` / `paged`）
   - 该配置被 `cache_thumb_service` 在生成 `data/cache/*.webp` 时使用
   - `parallel_processor` 会使用月份封面尺寸配置生成 `temp/*.webp`
 
@@ -452,6 +455,7 @@
 补充：
 - 设置页可通过 `GET/POST /api/system/cache-thumb-setting` 管理缓存缩略图短边尺寸。
 - 设置页可通过 `GET/POST /api/system/month-cover-setting` 管理月份封面尺寸。
+- 设置页可通过 `GET/POST /api/system/page-config` 管理 BrowsePage 与 TrashPage 的“滚动浏览 / 分页浏览”模式；分页时每页内容由前端按当前视口高度切分，后端仅负责持久化模式本身。
 - 当尺寸保存成功后，前端会调用 `DELETE /api/cache` 清空 `data/cache/` 与 `temp/`，后续缓存缩略图按新尺寸重新生成。
 
 ## 5. 配置与外部依赖

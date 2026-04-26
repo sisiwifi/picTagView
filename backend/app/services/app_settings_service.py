@@ -19,6 +19,9 @@ MIN_TAG_MATCH_MIN_TOKEN_LENGTH = 1
 MAX_TAG_MATCH_MIN_TOKEN_LENGTH = 32
 DEFAULT_TAG_MATCH_DROP_NUMERIC_ONLY = True
 
+DEFAULT_PAGE_BROWSE_MODE = "scroll"
+PAGE_BROWSE_MODE_OPTIONS = {"scroll", "paged"}
+
 
 def load_app_settings() -> dict:
     if not APP_SETTINGS_FILE.exists():
@@ -152,6 +155,41 @@ def set_tag_match_setting(setting: dict) -> dict:
         "min_token_length": current["min_token_length"],
         "drop_numeric_only": current["drop_numeric_only"],
         "sort_mode": "name_asc",
+    }
+    save_app_settings(data)
+    return current
+
+
+def get_page_config() -> dict:
+    data = load_app_settings()
+    raw = data.get("page_config")
+    if not isinstance(raw, dict):
+        raw = {}
+
+    browse_mode = str(raw.get("browse_mode", DEFAULT_PAGE_BROWSE_MODE) or DEFAULT_PAGE_BROWSE_MODE).strip()
+    if browse_mode not in PAGE_BROWSE_MODE_OPTIONS:
+        browse_mode = DEFAULT_PAGE_BROWSE_MODE
+
+    return {
+        "browse_mode": browse_mode,
+    }
+
+
+def set_page_config(setting: dict) -> dict:
+    if not isinstance(setting, dict):
+        setting = {}
+
+    current = get_page_config()
+
+    if "browse_mode" in setting:
+        browse_mode = str(setting.get("browse_mode") or DEFAULT_PAGE_BROWSE_MODE).strip()
+        if browse_mode not in PAGE_BROWSE_MODE_OPTIONS:
+            browse_mode = DEFAULT_PAGE_BROWSE_MODE
+        current["browse_mode"] = browse_mode
+
+    data = load_app_settings()
+    data["page_config"] = {
+        "browse_mode": current["browse_mode"],
     }
     save_app_settings(data)
     return current

@@ -132,6 +132,15 @@ class MonthCoverSettingResponse(BaseModel):
     max_size_px: int
 
 
+class PageConfigRequest(BaseModel):
+    browse_mode: str = "scroll"
+
+
+class PageConfigResponse(BaseModel):
+    browse_mode: str
+    default_browse_mode: str = "scroll"
+
+
 class TagMatchSettingRequest(BaseModel):
     enabled: bool = True
     noise_tokens: List[str] = Field(default_factory=list)

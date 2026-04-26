@@ -31,12 +31,26 @@
     <div class="media-card__info">
       <button
         class="media-card__info-toggle"
+        :class="{ 'media-card__info-toggle--tags': hasInfoTags }"
         type="button"
         :title="infoTitle"
         @pointerdown.stop
         @click.stop="$emit('toggle-info')"
       >
-        <span class="media-card__info-text">{{ infoText }}</span>
+        <div v-if="hasInfoTags" class="media-card__info-chip-viewport">
+          <div class="media-card__info-chip-row">
+            <span
+              v-for="tag in infoTags"
+              :key="tag.id || tag.name"
+              class="tag-chip tag-chip--card"
+              :style="chipStyle(tag)"
+              :title="tag.name || ''"
+            >
+              {{ tag.display_name || tag.name || '' }}
+            </span>
+          </div>
+        </div>
+        <span v-else class="media-card__info-text">{{ infoText }}</span>
       </button>
 
       <button
@@ -52,12 +66,15 @@
 </template>
 
 <script>
+import { normalizeTagColors } from '../utils/tagColors'
+
 export default {
   name: 'MediaItemCard',
   props: {
     src: { type: String, default: '' },
     alt: { type: String, default: '' },
     infoText: { type: String, default: '' },
+    infoTags: { type: Array, default: () => [] },
     infoTitle: { type: String, default: '' },
     itemType: { type: String, default: 'image' },
     selected: { type: Boolean, default: false },
@@ -70,6 +87,19 @@ export default {
         'is-selected': this.selected,
         'is-disabled': this.disabled,
         'is-album': this.itemType === 'album',
+      }
+    },
+    hasInfoTags() {
+      return Array.isArray(this.infoTags) && this.infoTags.length > 0
+    },
+  },
+  methods: {
+    chipStyle(tag) {
+      const { color, borderColor, backgroundColor } = normalizeTagColors(tag)
+      return {
+        '--tag-chip-color': color,
+        '--tag-chip-border-color': borderColor,
+        '--tag-chip-bg': backgroundColor,
       }
     },
   },
@@ -220,8 +250,37 @@ export default {
   transition: color 140ms ease;
 }
 
+.media-card__info-toggle--tags {
+  overflow: hidden;
+}
+
 .media-card__info-toggle:hover {
   color: #0f172a;
+}
+
+.media-card__info-chip-viewport {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.media-card__info-chip-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+.media-card__info-chip-row {
+  display: inline-flex;
+  min-width: max-content;
+  align-items: center;
+  gap: 0.38rem;
+  padding: 0.08rem 0;
+}
+
+.tag-chip--card {
+  font-size: 0.7rem;
 }
 
 .media-card__info-text {
