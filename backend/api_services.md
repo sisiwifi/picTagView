@@ -11,7 +11,7 @@
 ### 1.1 主要服务
 
 - app/services/import_service.py
-  - import_files(files, last_modified_times, created_times)
+  - import_files(files, last_modified_times, created_times, category_id=None)
   - refresh_library()
   - rebuild_hash_index()
   - recalculate_album_counts()
@@ -52,7 +52,9 @@
   - load_app_settings()/save_app_settings()
   - get_cache_thumb_short_side_px()/set_cache_thumb_short_side_px()
   - get_month_cover_size_px()/set_month_cover_size_px()
-  - 说明：统一持久化 app_settings.json（包含看图器偏好与缓存缩略图短边设置）
+  - get_page_config()/set_page_config()
+  - get_tag_match_setting()/set_tag_match_setting()
+  - 说明：统一持久化 app_settings.json（包含缓存缩略图短边、月份封面尺寸、文件名匹配配置与页面浏览模式）
 - app/services/viewer_service.py
   - collect_image_viewers(extensions)
   - get_preferred_viewer_id() / set_preferred_viewer_id()
@@ -112,6 +114,7 @@
 - app/api/routers/tags.py
   - GET /api/tags
   - GET /api/tags/{tag_id}
+  - POST /api/tags/draft
   - POST /api/tags
   - PATCH /api/tags/{tag_id}
   - DELETE /api/tags/{tag_id}
@@ -129,7 +132,7 @@
 
 - POST /api/import
   - 实现：app/api/routers/basic.py，调用 app/services/import_service.py
-  - 参数：files, last_modified_json, created_time_json
+  - 参数：files, last_modified_json, created_time_json, category_id
   - 返回：{"imported": [...], "skipped": [...]}
 
 - GET /api/images/count
@@ -359,6 +362,11 @@
   - 实现：app/api/routers/tags.py
   - 用途：获取单个 Tag 完整详情
 
+- POST /api/tags/draft
+  - 实现：app/api/routers/tags.py
+  - Body：`{ type?, metadata? }`
+  - 用途：预占真实 `id/public_id` 并创建隐藏草稿 Tag；草稿不会出现在 `/api/tags` 列表、导出、最近使用与图片打标相关接口中
+
 - POST /api/tags
   - 实现：app/api/routers/tags.py
   - Body：`{ name, display_name, type, description, created_by, metadata }`
@@ -366,8 +374,8 @@
 
 - PATCH /api/tags/{tag_id}
   - 实现：app/api/routers/tags.py
-  - Body：`{ display_name?, type?, description?, metadata? }`
-  - 用途：更新 Tag 属性（name 不可修改）
+  - Body：`{ name?, display_name?, type?, description?, created_by?, metadata? }`
+  - 用途：更新 Tag 属性；若目标是隐藏草稿 Tag，则同一接口也承担“转正”流程
 
 - DELETE /api/tags/{tag_id}
   - 实现：app/api/routers/tags.py
@@ -391,7 +399,7 @@
 
 ## 4. 业务数据库汇总
 
-本项目所有持久化数据存储在同一 SQLite 文件（路径由 `app/core/config.py` 的 `DB_PATH` 配置，默认 `backend/db.sqlite`）。
+本项目所有持久化数据存储在同一 SQLite 文件（路径由 `app/core/config.py` 的 `DB_PATH` 配置，默认 `backend/data/app.db`）。
 
 | 表名 | 对应模型 | 主要作用 |
 |---|---|---|

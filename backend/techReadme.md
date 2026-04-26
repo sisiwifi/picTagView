@@ -31,6 +31,7 @@
   - `app/api/routers/dates.py`：`GET /api/dates`、`GET /api/dates/{date_group}/items`
   - `app/api/routers/albums.py`：`GET /api/albums/by-path/{album_path:path}`、`GET /api/albums/open-by-path/{album_path:path}`、`GET /api/albums/{album_id}`
   - `app/api/routers/images.py`：`GET /api/images/meta`、`GET /api/images/{image_id}/open`、`POST /api/images/tags/filename-match`、`POST /api/images/tags/apply`
+  - `app/api/routers/tags.py`：`GET /api/tags`、`GET /api/tags/{tag_id}`、`POST /api/tags/draft`、`POST /api/tags`、`PATCH /api/tags/{tag_id}`、`DELETE /api/tags/{tag_id}`、`GET /api/tags/export/json`、`POST /api/tags/import/json`
   - `app/api/routers/trash.py`：`GET /api/trash/items`、`POST /api/trash/move`、`POST /api/trash/restore`、`POST /api/trash/hard-delete`、`DELETE /api/trash`
   - `app/api/routers/system.py`：`/api/system/*` 相关接口
   - `app/api/routers/cache.py`：`DELETE /api/cache`、`/api/thumbnails/cache*`
@@ -86,7 +87,9 @@
 - Tag 请求策略补充：前端仅在信息区切换到 Tag 模式时，才会从当前页面条目中去重收集 `tags` ID，并分批调用 `GET /api/tags?ids=...` 批量换取 `display_name/name`；普通浏览与默认文件名模式不触发该请求，以减少 DB 压力与事务占用。
 - 返回与面包屑导航行为：
   - 前端路由已重构为层级结构（2026-04）：
-    - 一级页面（并列）：主页 `/`、标签总览 `/tags`、图库管理 `/gallery`、日期视图 `/calendar`、设置 `/settings`
+    - 一级页面（并列）：主页 `/`、标签总览 `/tags`、图库管理 `/gallery`、日期视图 `/calendar`、系统设置 `/settings`、回收站 `/trash`
+    - 二级页面（设置域）：
+      - `/settings/categories` — 主分类配置页
     - 二级页面（日期域浏览）：
       - `/calendar/:group` — 月份图片列表（BrowsePage）
       - `/calendar/:group/:albumPath+` — 相册浏览，支持任意层级嵌套（BrowsePage）

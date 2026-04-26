@@ -1893,8 +1893,8 @@ export default {
       })
     },
 
-    isCacheableImage(item) {
-      return item?.type === 'image' && Number.isInteger(item?.id)
+    isCacheablePreviewItem(item) {
+      return Number.isInteger(item?.id) && (item?.type === 'image' || item?.type === 'album')
     },
 
     hasCachedThumb(item) {
@@ -2025,15 +2025,15 @@ export default {
       for (const index of preferredIndices) {
         if (!Number.isInteger(index)) continue
         const item = this.items[index]
-        if (this.isCacheableImage(item)) return index
+        if (this.isCacheablePreviewItem(item)) return index
       }
 
       if (!Number.isInteger(anchorIndex) || anchorIndex < 0) return -1
       for (let offset = 0; offset <= RADIUS; offset++) {
         const forwardIndex = anchorIndex + offset
-        if (this.isCacheableImage(this.items[forwardIndex])) return forwardIndex
+        if (this.isCacheablePreviewItem(this.items[forwardIndex])) return forwardIndex
         const backwardIndex = anchorIndex - offset
-        if (offset && this.isCacheableImage(this.items[backwardIndex])) return backwardIndex
+        if (offset && this.isCacheablePreviewItem(this.items[backwardIndex])) return backwardIndex
       }
       return -1
     },
@@ -2098,7 +2098,7 @@ export default {
       const pushIndex = (index) => {
         if (!Number.isInteger(index) || index < 0 || index >= this.items.length) return
         const item = this.items[index]
-        if (!this.isCacheableImage(item) || this.hasCachedThumb(item)) return
+        if (!this.isCacheablePreviewItem(item) || this.hasCachedThumb(item)) return
         if (seenIds.has(item.id)) return
         seenIds.add(item.id)
         orderedIds.push(item.id)
