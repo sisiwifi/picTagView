@@ -192,7 +192,13 @@
       </div>
     </div>
 
-    <div v-if="selectionMode" ref="selectionIsland" class="selection-island" :style="selectionIslandStyle">
+    <SelectionIsland
+      v-if="selectionMode"
+      :floating-style="selectionIslandStyle"
+      collapse-label="收起选择操作"
+      expand-label="展开选择操作"
+      @collapsed-change="onSelectionIslandCollapsedChange"
+    >
       <span class="selection-island__count">{{ selectionSummaryText }}</span>
       <button
         class="selection-island__btn"
@@ -218,7 +224,7 @@
         </div>
       </div>
       <button class="selection-island__btn" type="button" :disabled="actionBusy" @click="clearSelection">取消选择</button>
-    </div>
+    </SelectionIsland>
 
     <SelectionDetailOverlay
       :visible="selectionDetailsOpen"
@@ -305,6 +311,7 @@ import MediaItemCard from '../components/MediaItemCard.vue'
 import ConfirmationDialog from '../components/ConfirmationDialog.vue'
 import ActionProgressOverlay from '../components/ActionProgressOverlay.vue'
 import PagePaginationBar from '../components/PagePaginationBar.vue'
+import SelectionIsland from '../components/SelectionIsland.vue'
 import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
 import TagMenuDialog from '../components/TagMenuDialog.vue'
 import TagFormDialog from '../components/TagFormDialog.vue'
@@ -383,7 +390,7 @@ function createDialogState() {
 
 export default {
   name: 'BrowsePage',
-  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, ConfirmationDialog, ActionProgressOverlay, PagePaginationBar, SelectionDetailOverlay, TagMenuDialog, TagFormDialog },
+  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, ConfirmationDialog, ActionProgressOverlay, PagePaginationBar, SelectionIsland, SelectionDetailOverlay, TagMenuDialog, TagFormDialog },
 
   data() {
     const cachedPageConfig = getCachedPageConfig()
@@ -410,7 +417,6 @@ export default {
       containerWidth: 0,
       itemGridViewportTop: 0,
       paginationHostHeight: 0,
-      selectionIslandHeight: 0,
       viewMode: 'grid',
       pageBrowseMode: cachedPageConfig.browseMode || DEFAULT_PAGE_CONFIG.browseMode,
       sortBy: 'alpha',
@@ -1205,9 +1211,6 @@ export default {
 
       const paginationHostRect = this.$refs.paginationHost?.getBoundingClientRect?.()
       this.paginationHostHeight = paginationHostRect ? Math.round(paginationHostRect.height) : 0
-
-      const selectionIslandRect = this.$refs.selectionIsland?.getBoundingClientRect?.()
-      this.selectionIslandHeight = selectionIslandRect ? Math.round(selectionIslandRect.height) : 0
     },
 
     normalizePaginationState() {
@@ -2542,6 +2545,11 @@ export default {
 
     closeSelectAllMenu() {
       this.selectAllMenuOpen = false
+    },
+
+    onSelectionIslandCollapsedChange(collapsed) {
+      if (!collapsed) return
+      this.closeSelectAllMenu()
     },
 
     onWindowPointerDown(event) {
@@ -4064,103 +4072,6 @@ export default {
   padding-bottom: 0.08rem;
 }
 
-.selection-island {
-  position: fixed;
-  right: 1.5rem;
-  bottom: 1.5rem;
-  z-index: 50;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.65rem 0.75rem;
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.14);
-  backdrop-filter: blur(14px);
-}
-
-.selection-island__count {
-  color: #0f172a;
-  font-size: 0.82rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.selection-island__menu-wrap {
-  position: relative;
-  display: inline-flex;
-}
-
-.selection-island__submenu {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 0.55rem);
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  padding: 0.42rem;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 18px 34px rgba(15, 23, 42, 0.12);
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(8px);
-  transition: opacity 140ms ease, transform 140ms ease;
-}
-
-.selection-island__menu-wrap.is-open .selection-island__submenu {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-}
-
-.selection-island__submenu-btn {
-  border: 0;
-  border-radius: 10px;
-  padding: 0.48rem 0.72rem;
-  background: transparent;
-  color: #334155;
-  font-size: 0.76rem;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 140ms ease, color 140ms ease;
-}
-
-.selection-island__submenu-btn:hover {
-  background: #e2e8f0;
-  color: #0f172a;
-}
-
-.selection-island__btn {
-  border: 0;
-  border-radius: 12px;
-  padding: 0.45rem 0.75rem;
-  background: transparent;
-  color: #334155;
-  font-size: 0.78rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 140ms ease, color 140ms ease;
-}
-
-.selection-island__btn:hover {
-  background: #e2e8f0;
-  color: #0f172a;
-}
-
-.selection-island__btn:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
-}
-
-.selection-island__btn:disabled:hover {
-  background: transparent;
-  color: #334155;
-}
-
 @media (orientation: landscape) {
   .selection-grid {
     grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -4174,32 +4085,9 @@ export default {
   }
 }
 
-/* In paged mode pin the selection island just above the pagination bar so it
-   never overlaps the page-number controls. */
 .page--paged .selection-island {
   position: absolute;
   right: 1.5rem;
   bottom: 4.25rem;
-}
-
-@media (max-width: 640px) {
-  .selection-island {
-    right: 0.9rem;
-    left: 0.9rem;
-    bottom: 0.9rem;
-    justify-content: space-between;
-    flex-wrap: wrap;
-  }
-
-  .selection-island__menu-wrap {
-    display: flex;
-    flex: 1 1 100%;
-  }
-
-  .selection-island__submenu {
-    left: 0;
-    right: 0;
-  }
-
 }
 </style>

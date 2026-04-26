@@ -114,13 +114,17 @@
       </section>
     </div>
 
-    <div v-if="manageMode" class="selection-island">
+    <SelectionIsland
+      v-if="manageMode"
+      collapse-label="收起管理操作"
+      expand-label="展开管理操作"
+    >
       <span class="selection-island__count">已选 {{ selectedIds.length }} 个主分类</span>
       <button class="selection-island__btn" type="button" :disabled="!canActivateSelected || bulkActionBusy" @click="batchSetSelectedCategories(true)">打开</button>
       <button class="selection-island__btn" type="button" :disabled="!canDeactivateSelected || bulkActionBusy" @click="batchSetSelectedCategories(false)">关闭</button>
       <button class="selection-island__btn" type="button" :disabled="!editableCategories.length || bulkActionBusy" @click="selectAllCategories">全选</button>
       <button class="selection-island__btn" type="button" :disabled="!selectedIds.length || bulkActionBusy" @click="clearSelection">取消选择</button>
-    </div>
+    </SelectionIsland>
 
     <CategoryFormDialog
       :visible="formDialog.visible"
@@ -151,6 +155,7 @@ import BreadcrumbHeader from '../components/BreadcrumbHeader.vue'
 import CategoryFormDialog from '../components/CategoryFormDialog.vue'
 import ConfirmationDialog from '../components/ConfirmationDialog.vue'
 import LoadingSpinner from '../components/LoadingSpinner.vue'
+import SelectionIsland from '../components/SelectionIsland.vue'
 
 const API_BASE = 'http://127.0.0.1:8000'
 const DEFAULT_CATEGORY_ID = 1
@@ -194,6 +199,7 @@ export default {
     CategoryFormDialog,
     ConfirmationDialog,
     LoadingSpinner,
+    SelectionIsland,
   },
   data() {
     return {
@@ -888,48 +894,6 @@ export default {
   pointer-events: none;
 }
 
-.selection-island {
-  position: fixed;
-  right: 1.5rem;
-  bottom: 1.5rem;
-  z-index: 50;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.7rem 0.8rem;
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.84);
-  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.14);
-  backdrop-filter: blur(14px);
-}
-
-.selection-island__count {
-  color: #0f172a;
-  font-size: 0.82rem;
-  font-weight: 700;
-}
-
-.selection-island__btn {
-  border: 0;
-  border-radius: 12px;
-  padding: 0.45rem 0.75rem;
-  background: transparent;
-  color: #334155;
-  font-size: 0.78rem;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.selection-island__btn:hover {
-  background: #e2e8f0;
-}
-
-.selection-island__btn:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
-}
-
 @media (max-width: 720px) {
   .category-page {
     height: auto;
@@ -940,18 +904,6 @@ export default {
   .category-page__scroller {
     overflow: visible;
     padding-bottom: 6rem;
-  }
-
-  .selection-island {
-    left: 1rem;
-    right: 1rem;
-    bottom: 1rem;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .selection-island__count {
-    grid-column: 1 / -1;
   }
 
   .header-actions {
