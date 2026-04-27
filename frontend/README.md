@@ -69,6 +69,7 @@ frontend/
 - `BrowsePage` 调用 `GET /api/dates/{date_group}/items` 或 `GET /api/albums/by-path/{album_path:path}`
 - 直图显示 `ThumbCard`，子目录显示相册封面并支持物理路径继续下钻
 - 同时消费 `GET /api/system/page-config` 的浏览方式设置；当模式为 `paged` 时，瀑布流、列表和选择网格都会按当前视口高度分页，列表页支持每页 `10 / 20 / 50 / 100`
+- 瀑布流会随页面方向自动切换：横屏继续使用等高 justified flow，竖屏切换为 2 列等宽 masonry；分页模式也沿用同一套方向规则
 - 浏览缓存缩略图通过 `POST /api/thumbnails/cache` 与 `GET /api/thumbnails/cache/status/{task_id}` 渐进生成和轮询
 - 选择模式详情浮层中的 Tag 使用 `TagChipList` 渲染，显色来自后端返回的 Tag 元数据字段，统一为 HEX8：
    - `color`
@@ -79,6 +80,7 @@ frontend/
 - `TrashPage` 调用 `GET /api/trash/items`
 - 与 `BrowsePage` 共用 `PagePaginationBar` 和 `pageConfig.js`
 - 当设置页切到“分页浏览”时，回收站瀑布流与选择网格也会分页，并在窗口缩放后按当前首个可见项重新定位页码
+- 回收站照片墙同样按页面方向切换布局：横屏使用等高 justified flow，竖屏使用 2 列等宽 masonry；页面不会插入额外空占位元素
 
 ### 4.5 文件名分析回写 Tag
 - 前端保留文件名分析回写能力，可调用 `POST /api/images/tags/filename-match`
@@ -147,6 +149,7 @@ npm run lint
 ## 7. 关键配置
 - 当前页面组件与 `src/utils/pageConfig.js` 直接把 `API_BASE` 写为 `http://127.0.0.1:8000`
 - `vue.config.js` 当前仅开启 `transpileDependencies`，未配置 `devServer.proxy`
+- 前端当前是直连后端，不依赖本地代理；如果后端端口变化，需要同步更新 `API_BASE`
 - `tailwind.config.js`：Tailwind 主题/路径
 
 ## 8. 常见问题与排查

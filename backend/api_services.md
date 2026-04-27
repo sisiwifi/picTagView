@@ -88,19 +88,7 @@
   - POST /api/trash/restore
   - POST /api/trash/hard-delete
   - DELETE /api/trash
-- app/api/routers/system.py
-  - GET /api/system/cache-thumb-setting
-  - POST /api/system/cache-thumb-setting
-  - GET /api/system/month-cover-setting
-  - POST /api/system/month-cover-setting
-  - GET /api/system/page-config
-  - POST /api/system/page-config
-  - GET /api/system/tag-match-setting
-  - POST /api/system/tag-match-setting
-  - GET /api/system/viewer-info
-  - GET /api/system/image-viewers
-  - GET /api/system/viewer-preference
-  - POST /api/system/viewer-preference
+- app/api/routers/system.py：`GET /api/system/cache-thumb-setting`、`POST /api/system/cache-thumb-setting`、`GET /api/system/month-cover-setting`、`POST /api/system/month-cover-setting`、`GET /api/system/page-config`、`POST /api/system/page-config`、`GET /api/system/tag-match-setting`、`POST /api/system/tag-match-setting`、`GET /api/system/viewer-info`、`GET /api/system/image-viewers`、`GET /api/system/viewer-preference`、`POST /api/system/viewer-preference`
 - app/api/routers/cache.py
   - DELETE /api/cache
   - POST /api/thumbnails/cache
@@ -301,6 +289,7 @@
   - 实现：app/api/routers/system.py
   - Body：`{ browse_mode: "scroll" | "paged" }`
   - 用途：保存页面浏览模式，供 BrowsePage 与 TrashPage 统一切换滚动浏览 / 分页浏览
+  - 说明：前端仍会根据页面方向切换瀑布流样式；该接口只持久化滚动 / 分页模式本身，不保存横竖屏布局偏好。
 
 - GET /api/system/tag-match-setting
   - 实现：app/api/routers/system.py
@@ -423,6 +412,7 @@
 - TrashPage 与 BrowsePage 保持一致的视觉锚点策略：瀑布流和选择态切换时，优先恢复当前首屏条目到第一排附近，而不是简单回到顶部。
 - TrashPage 的瀑布流布局也采用精确宽度 key 的内存缓存；若回收站条目缺失 `width/height`，才在图片加载后批量回填尺寸，避免每张图触发一次全量重排。
 - BrowsePage 的普通模式与选择模式都应优先显示 cache/temp 缩略图；若缓存尚未生成，则显示骨架占位并沿用 `/api/thumbnails/cache` 的异步生成链路，而不是把原图当作常态展示源。
+- BrowsePage 与 TrashPage 的照片墙会随页面方向自动切换：横屏保持等高 justified flow，竖屏切换为等宽 masonry；分页模式允许单页只出现少量图片，只要行数、列数与锚点恢复稳定即可。
 - `/api/dates/*` 与 `/api/albums/*` 的图片条目现在还会返回 `file_size`、`imported_at`、`file_created_at`，供选择模式详情浮层直接展示，不需要额外请求单图详情接口。
 - `/api/dates/*` 与 `/api/albums/*` 的图片条目现在还会返回 `media_index` 与 `media_rel_path`；前端调用 `/api/images/{image_id}/open` 时应优先传入 `path=media_rel_path`，而不是默认取 `media_path[0]`。
 - `/api/dates/*` 与 `/api/albums/*` 的相册条目现在还会返回 `photo_count` 与 `created_at`，供相册选择详情浮层显示“图片数量”和相册创建时间。

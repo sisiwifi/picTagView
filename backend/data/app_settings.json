@@ -3,6 +3,6 @@
   "cache_thumb_short_side_px": 600,
   "month_cover_size_px": 400,
   "page_config": {
-    "browse_mode": "paged"
+    "browse_mode": "scroll"
   }
 }

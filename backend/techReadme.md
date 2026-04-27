@@ -6,7 +6,7 @@
 ## 2. 后端架构概览
 - 框架：FastAPI
 - ORM：SQLModel（基于 SQLAlchemy）
-- 数据库：SQLite（文件路径由 `app/core/config.py` 配置）
+- 数据库：SQLite（默认文件为 `backend/data/app.db`，路径由 `app/core/config.py` 配置）
 - 静态文件：FastAPI `StaticFiles` 挂载 `TEMP_DIR`、`CACHE_DIR`、`MEDIA_DIR`、`TRASH_DIR` 与 `VIEWER_ICON_DIR`，分别用于月份封面缩略图、缓存缩略图、原图、回收站预览回退与看图程序图标访问
 - 并行：`concurrent.futures` 的 `ProcessPoolExecutor` + `ThreadPoolExecutor`，用于哈希与缩略图生成
 
@@ -24,20 +24,70 @@
   - 注册路由 `app.include_router(api_router)`
 
 ### 3.2 `app/api/routes.py` + `app/api/routers/*`
-- 路由聚合入口：`app/api/routes.py` 只负责 `include_router`。
-- 业务按职责拆分到子路由模块：
-  - `app/api/routers/basic.py`：`GET /`、`POST /api/import`、`GET /api/images/count`、`POST /api/admin/refresh`
-  - `app/api/routers/categories.py`：`GET /api/categories`、`POST /api/categories`、`PATCH /api/categories/{category_id}`、`DELETE /api/categories/{category_id}`、`POST /api/categories/bulk`
-  - `app/api/routers/dates.py`：`GET /api/dates`、`GET /api/dates/{date_group}/items`
-  - `app/api/routers/albums.py`：`GET /api/albums/by-path/{album_path:path}`、`GET /api/albums/open-by-path/{album_path:path}`、`GET /api/albums/{album_id}`
-  - `app/api/routers/images.py`：`GET /api/images/meta`、`GET /api/images/{image_id}/open`、`POST /api/images/tags/filename-match`、`POST /api/images/tags/apply`
-  - `app/api/routers/tags.py`：`GET /api/tags`、`GET /api/tags/{tag_id}`、`POST /api/tags/draft`、`POST /api/tags`、`PATCH /api/tags/{tag_id}`、`DELETE /api/tags/{tag_id}`、`GET /api/tags/export/json`、`POST /api/tags/import/json`
-  - `app/api/routers/trash.py`：`GET /api/trash/items`、`POST /api/trash/move`、`POST /api/trash/restore`、`POST /api/trash/hard-delete`、`DELETE /api/trash`
-  - `app/api/routers/system.py`：`/api/system/*` 相关接口
-  - `app/api/routers/cache.py`：`DELETE /api/cache`、`/api/thumbnails/cache*`
-    - `POST /api/thumbnails/cache` 已改为 generation 感知的共享缓存队列入口；`GET /api/thumbnails/cache/status/{task_id}` 支持 `cursor` 增量轮询
-  - 共享查询与路径工具在 `app/api/common.py`：缩略图 URL 解析、存储路径解析、`media_path` 实例选择与路径谓词匹配。
-    - 2026-04 补充：`app/api/common.py` 新增请求级预览可用性索引与 `AssetPreviewResolver`。`GET /api/dates*` / `GET /api/albums*` 会在单次请求内各扫描一次 `backend/temp/` 与 `backend/data/cache/`，后续只用内存集合判断缩略图是否存在，避免列表装配阶段按条目重复 `exists()`。
+  - 路由聚合入口
+    - `app/api/routes.py`
+      - 只负责 `include_router`
+  - 按职责拆分的子路由模块
+    - `app/api/routers/basic.py`
+      - `GET /`
+      - `POST /api/import`
+      - `GET /api/images/count`
+      - `POST /api/admin/refresh`
+    - `app/api/routers/categories.py`
+      - `GET /api/categories`
+      - `POST /api/categories`
+      - `PATCH /api/categories/{category_id}`
+      - `DELETE /api/categories/{category_id}`
+      - `POST /api/categories/bulk`
+    - `app/api/routers/dates.py`
+      - `GET /api/dates`
+      - `GET /api/dates/{date_group}/items`
+    - `app/api/routers/albums.py`
+      - `GET /api/albums/by-path/{album_path:path}`
+      - `GET /api/albums/open-by-path/{album_path:path}`
+      - `GET /api/albums/{album_id}`
+    - `app/api/routers/images.py`
+      - `GET /api/images/meta`
+      - `GET /api/images/{image_id}/open`
+      - `POST /api/images/tags/filename-match`
+      - `POST /api/images/tags/apply`
+    - `app/api/routers/tags.py`
+      - `GET /api/tags`
+      - `GET /api/tags/{tag_id}`
+      - `POST /api/tags/draft`
+      - `POST /api/tags`
+      - `PATCH /api/tags/{tag_id}`
+      - `DELETE /api/tags/{tag_id}`
+      - `GET /api/tags/export/json`
+      - `POST /api/tags/import/json`
+    - `app/api/routers/trash.py`
+      - `GET /api/trash/items`
+      - `POST /api/trash/move`
+      - `POST /api/trash/restore`
+      - `POST /api/trash/hard-delete`
+      - `DELETE /api/trash`
+    - `app/api/routers/system.py`
+      - `GET /api/system/cache-thumb-setting`
+      - `POST /api/system/cache-thumb-setting`
+      - `GET /api/system/month-cover-setting`
+      - `POST /api/system/month-cover-setting`
+      - `GET /api/system/page-config`
+      - `POST /api/system/page-config`
+      - `GET /api/system/tag-match-setting`
+      - `POST /api/system/tag-match-setting`
+      - `GET /api/system/viewer-info`
+      - `GET /api/system/image-viewers`
+      - `GET /api/system/viewer-preference`
+      - `POST /api/system/viewer-preference`
+    - `app/api/routers/cache.py`
+      - `DELETE /api/cache`
+      - `POST /api/thumbnails/cache`
+      - `GET /api/thumbnails/cache/status/{task_id}`
+      - 其中 `POST /api/thumbnails/cache` 已改为 generation 感知的共享缓存队列入口；`GET /api/thumbnails/cache/status/{task_id}` 支持 `cursor` 增量轮询
+  - 共享查询与路径工具
+    - `app/api/common.py`
+      - 缩略图 URL 解析、存储路径解析、`media_path` 实例选择与路径谓词匹配
+      - 2026-04 补充：`app/api/common.py` 新增请求级预览可用性索引与 `AssetPreviewResolver`。`GET /api/dates*` / `GET /api/albums*` 会在单次请求内各扫描一次 `backend/temp/` 与 `backend/data/cache/`，后续只用内存集合判断缩略图是否存在，避免列表装配阶段按条目重复 `exists()`
 
 补充（2026-04）：
 - `GET /api/dates/{date_group}/items` 与 `GET /api/albums/{album_id}` 的条目模型新增 `sort_ts`（Unix 秒级时间戳，可为空）。

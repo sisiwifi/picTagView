@@ -74,7 +74,12 @@
         </div>
       </div>
 
-      <div v-else ref="itemGrid" class="photo-grid" :style="photoGridStyle">
+      <div
+        v-else-if="!isPortraitMasonryMode"
+        ref="itemGrid"
+        class="photo-grid"
+        :style="photoGridStyle"
+      >
         <div
           v-for="(row, rowIndex) in activePhotoRows"
           :key="rowIndex"
@@ -105,6 +110,58 @@
                 <span class="badge-name">{{ item.name }}</span>
                 <span class="badge-count">{{ item.photo_count || 0 }} 张</span>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-else-if="isPortraitMasonryMode && !masonrySkeletonReady"
+        ref="itemGrid"
+        class="photo-grid photo-grid--masonry-skeleton"
+      >
+        <div class="masonry-skeleton-col">
+          <div v-for="h in [120, 180, 100, 200]" :key="h" class="photo-skeleton masonry-skeleton-item" :style="{ height: h + 'px' }" />
+        </div>
+        <div class="masonry-skeleton-col">
+          <div v-for="h in [160, 100, 220, 140]" :key="h" class="photo-skeleton masonry-skeleton-item" :style="{ height: h + 'px' }" />
+        </div>
+      </div>
+
+      <div
+        v-else
+        ref="itemGrid"
+        class="photo-grid photo-grid--masonry"
+        :style="masonryGridStyle"
+      >
+        <div
+          v-for="item in activeMasonryPlacements"
+          :key="item.entry_key || item.id || item._idx"
+          class="photo-wrap photo-wrap--masonry"
+          :data-index="item._idx"
+          :style="{
+            left: item.col * (masonryColWidth + 6) + 'px',
+            top: item.top + 'px',
+            width: item.computedWidth + 'px',
+            height: item.computedHeight + 'px',
+          }"
+          @click="openDetailsForItem(item, item._idx)"
+        >
+          <div v-if="!resolvedUrl(item)" class="photo-skeleton">
+            <span class="skeleton-label">...</span>
+          </div>
+          <div v-else class="photo-card">
+            <img
+              :src="resolvedUrl(item)"
+              class="photo-img"
+              loading="lazy"
+              :alt="item.name || ''"
+              @load="onImgLoad(item, $event)"
+            />
+            <div v-if="item.type === 'album'" class="album-badge">
+              <span class="badge-icon">📁</span>
+              <span class="badge-name">{{ item.name }}</span>
+              <span class="badge-count">{{ item.photo_count || 0 }} 张</span>
             </div>
           </div>
         </div>
@@ -231,6 +288,9 @@ const SELECTION_PORTRAIT_COLS = 3
 const LANDSCAPE_SELECTION_ROWS = 2
 const PORTRAIT_SELECTION_ROWS = 3
 const LANDSCAPE_PHOTO_ROWS = 2
+const PORTRAIT_MASONRY_COLS = 2
+const PORTRAIT_MASONRY_GAP_PX = 6
+const MASONRY_SKELETON_MIN_LOADED = 1
 const PHOTO_GRID_MIN_TARGET_HEIGHT_PX = 140
 const PHOTO_GRID_MAX_TARGET_HEIGHT_PX = 640
 const SELECTION_LANDSCAPE_GAP = 16
@@ -366,6 +426,104 @@ export default {
       if (!width || !height) return false
       return height > width
     },
+    isPortraitMasonryMode() {
+      return this.isPhotoGridMode && this.isPortrait
+    },
+    masonryColWidth() {
+      const gap = PORTRAIT_MASONRY_GAP_PX
+      const width = this.containerWidth || (typeof window !== 'undefined' ? window.innerWidth : 800)
+      return Math.max(60, Math.floor((width - gap * (PORTRAIT_MASONRY_COLS - 1)) / PORTRAIT_MASONRY_COLS))
+    },
+    masonrySkeletonReady() {
+      if (!this.isPortraitMasonryMode) return true
+      return Object.keys(this.imgDimensions).length >= MASONRY_SKELETON_MIN_LOADED
+    },
+    masonryLayout() {
+      if (!this.isPortraitMasonryMode || !this.items.length) {
+        return { placements: [], totalHeight: 0 }
+      }
+      const colWidth = this.masonryColWidth
+      const gap = PORTRAIT_MASONRY_GAP_PX
+      const items = this.items
+      const cacheKey = `masonry|trash|${this.cacheSortSignature}|${colWidth}|${this.layoutFingerprint}`
+      if (JUSTIFIED_LAYOUT_CACHE.has(cacheKey)) {
+        return JUSTIFIED_LAYOUT_CACHE.get(cacheKey)
+      }
+      const colHeights = Array(PORTRAIT_MASONRY_COLS).fill(0)
+      const placements = items.map((item, idx) => {
+        const dims = this.dimensionsForItem(item)
+        const itemHeight = Math.max(40, Math.round(colWidth * dims.h / dims.w))
+        let col = 0
+        let minH = colHeights[0]
+        for (let c = 1; c < PORTRAIT_MASONRY_COLS; c++) {
+          if (colHeights[c] < minH) { minH = colHeights[c]; col = c }
+        }
+        const top = colHeights[col]
+        colHeights[col] += itemHeight + gap
+        return { ...item, _idx: idx, col, top, computedWidth: colWidth, computedHeight: itemHeight }
+      })
+      const totalHeight = Math.max(0, Math.max(...colHeights) - gap)
+      const result = { placements, totalHeight }
+      return rememberJustifiedLayout(cacheKey, result)
+    },
+    masonryPages() {
+      if (!this.isPagedBrowseMode || !this.isPortraitMasonryMode || !this.items.length) return []
+      const budget = this.pagedGridHeightBudget
+      const colWidth = this.masonryColWidth
+      const gap = PORTRAIT_MASONRY_GAP_PX
+      const items = this.items
+      const pages = []
+      let pageStartIdx = 0
+      while (pageStartIdx < items.length) {
+        const colHeights = Array(PORTRAIT_MASONRY_COLS).fill(0)
+        const pagePlacements = []
+        let i = pageStartIdx
+        while (i < items.length) {
+          const item = items[i]
+          const dims = this.dimensionsForItem(item)
+          const itemHeight = Math.max(40, Math.round(colWidth * dims.h / dims.w))
+          let col = 0
+          let minH = colHeights[0]
+          for (let c = 1; c < PORTRAIT_MASONRY_COLS; c++) {
+            if (colHeights[c] < minH) { minH = colHeights[c]; col = c }
+          }
+          const prospectiveFill = colHeights[col] + itemHeight
+          if (pagePlacements.length > 0 && prospectiveFill > budget) break
+          const top = colHeights[col]
+          colHeights[col] += itemHeight + gap
+          pagePlacements.push({ ...item, _idx: i, col, top, computedWidth: colWidth, computedHeight: itemHeight })
+          i++
+        }
+        const totalHeight = Math.max(0, Math.max(...colHeights) - gap)
+        pages.push({
+          placements: pagePlacements,
+          totalHeight,
+          startIndex: pagePlacements[0]?._idx ?? pageStartIdx,
+          endIndex: pagePlacements[pagePlacements.length - 1]?._idx ?? pageStartIdx,
+        })
+        pageStartIdx = i
+      }
+      return pages
+    },
+    activeMasonryPlacements() {
+      if (!this.isPortraitMasonryMode) return []
+      if (!this.isPagedBrowseMode) return this.masonryLayout.placements
+      return this.masonryPages[this.normalizedPhotoPageIndex]?.placements || []
+    },
+    activeMasonryTotalHeight() {
+      if (!this.isPortraitMasonryMode) return 0
+      if (!this.isPagedBrowseMode) return this.masonryLayout.totalHeight
+      return this.masonryPages[this.normalizedPhotoPageIndex]?.totalHeight || 0
+    },
+    masonryGridStyle() {
+      if (!this.isPortraitMasonryMode) return null
+      const height = this.isPagedBrowseMode ? this.pagedGridHeightBudget : this.activeMasonryTotalHeight
+      return {
+        position: 'relative',
+        height: `${Math.max(100, height)}px`,
+        overflow: this.isPagedBrowseMode ? 'hidden' : 'visible',
+      }
+    },
     selectionColumnCount() {
       return this.isPortrait ? SELECTION_PORTRAIT_COLS : SELECTION_LANDSCAPE_COLS
     },
@@ -471,7 +629,7 @@ export default {
     },
 
     photoGridStyle() {
-      if (!this.isPhotoGridMode || !this.isPagedBrowseMode) return null
+      if (!this.isPhotoGridMode || !this.isPagedBrowseMode || this.isPortraitMasonryMode) return null
       return {
         minHeight: `${this.pagedGridHeightBudget}px`,
         height: `${this.pagedGridHeightBudget}px`,
@@ -592,6 +750,7 @@ export default {
 
     photoGridTotalPages() {
       if (!this.isPagedBrowseMode) return 1
+      if (this.isPortraitMasonryMode) return Math.max(1, this.masonryPages.length)
       return Math.max(1, this.photoGridPages.length)
     },
 
@@ -600,6 +759,7 @@ export default {
     },
 
     activePhotoRows() {
+      if (this.isPortraitMasonryMode) return []
       if (!this.isPagedBrowseMode) return this.justifiedRows
       return this.photoGridPages[this.normalizedPhotoPageIndex]?.rows || []
     },
@@ -931,8 +1091,9 @@ export default {
     },
 
     findPhotoPageIndexForItem(targetIndex) {
-      for (let pageIndex = 0; pageIndex < this.photoGridPages.length; pageIndex += 1) {
-        const page = this.photoGridPages[pageIndex]
+      const pages = this.isPortraitMasonryMode ? this.masonryPages : this.photoGridPages
+      for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+        const page = pages[pageIndex]
         if (!page) continue
         if (targetIndex >= page.startIndex && targetIndex <= page.endIndex) {
           return pageIndex
@@ -1075,13 +1236,13 @@ export default {
     },
 
     onResize() {
+      const anchorBeforeReflow = this.$refs.itemGrid ? this.captureViewportAnchor() : null
       this.viewportHeight = typeof window !== 'undefined' ? window.innerHeight : this.viewportHeight
       this.viewportWidth = typeof window !== 'undefined' ? window.innerWidth : this.viewportWidth
       if (this.$refs.itemGrid) {
         if (this.isPagedBrowseMode) {
-          const anchor = this.captureViewportAnchor()
-          if (anchor) {
-            this.pendingViewAnchor = anchor
+          if (anchorBeforeReflow) {
+            this.pendingViewAnchor = anchorBeforeReflow
           }
           this.refreshObservedGrid()
         } else {
@@ -1301,6 +1462,16 @@ export default {
       }
 
       this.$nextTick(() => {
+        // masonry 滚动模式锚点恢复：按 placement.top 直接定位
+        if (this.isPortraitMasonryMode) {
+          const placement = this.masonryLayout.placements.find(p => p._idx === targetIndex)
+          if (placement) {
+            const desiredTop = this.virtualContainerTop + placement.top - RESTORE_ANCHOR_PADDING_PX
+            window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
+            this.logTrashDebug('anchor-restore', { mode: 'masonry', targetIndex, top: placement.top })
+            return
+          }
+        }
         const target = this.$refs.itemGrid?.querySelector?.(`[data-index="${targetIndex}"]`)
         if (!target) return
         const rect = target.getBoundingClientRect()
@@ -2227,6 +2398,39 @@ export default {
   overflow: hidden;
   flex-shrink: 0;
   height: 100%;
+}
+
+.photo-grid--masonry {
+  width: 100%;
+}
+
+.photo-wrap--masonry {
+  position: absolute;
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.photo-wrap--masonry .photo-card {
+  border-radius: 10px;
+}
+
+.photo-grid--masonry-skeleton {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.masonry-skeleton-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.masonry-skeleton-item {
+  border-radius: 10px;
+  width: 100%;
+  flex-shrink: 0;
 }
 
 .photo-skeleton {
