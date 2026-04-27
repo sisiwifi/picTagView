@@ -13,15 +13,27 @@
       <div class="vm-btns" role="group" aria-label="视图模式">
         <button
           class="vm-btn"
-          :class="{ active: !selectionMode }"
+          :class="{ active: viewMode === 'grid' && !selectionMode }"
           title="瀑布流"
-          @click="toggleSelectionMode(false)"
+          @click="switchViewMode('grid')"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor"/>
             <rect x="8" y="1" width="5" height="5" rx="1" fill="currentColor"/>
             <rect x="1" y="8" width="5" height="5" rx="1" fill="currentColor"/>
             <rect x="8" y="8" width="5" height="5" rx="1" fill="currentColor"/>
+          </svg>
+        </button>
+        <button
+          class="vm-btn"
+          :class="{ active: viewMode === 'list' && !selectionMode }"
+          title="列表显示"
+          @click="switchViewMode('list')"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1" y="2" width="12" height="2" rx="1" fill="currentColor"/>
+            <rect x="1" y="6" width="12" height="2" rx="1" fill="currentColor"/>
+            <rect x="1" y="10" width="12" height="2" rx="1" fill="currentColor"/>
           </svg>
         </button>
         <button
@@ -71,6 +83,52 @@
             @toggle-info="noop"
             @details="openDetailsForItem(entry.item, entry.index)"
           />
+        </div>
+      </div>
+
+      <div v-else-if="viewMode === 'list'" ref="itemGrid" class="list-view" :style="listViewStyle">
+        <div
+          v-for="entry in visibleListEntries"
+          :key="entry.item.entry_key || entry.item.id || entry.index"
+          class="list-row"
+          :class="{
+            'list-row--selecting': selectionMode,
+            'is-selected': isItemSelected(entry.item, entry.index),
+            'is-disabled': isItemDisabled(entry.item),
+          }"
+          :data-index="entry.index"
+          :data-select-index="entry.index"
+          @pointerdown="onListPointerDown($event, entry.item, entry.index)"
+          @click="onListRowClick($event, entry.item, entry.index)"
+        >
+          <button
+            v-if="selectionMode"
+            class="list-pick"
+            type="button"
+            :disabled="isItemDisabled(entry.item)"
+            :aria-pressed="isItemSelected(entry.item, entry.index) ? 'true' : 'false'"
+            :aria-label="isItemSelected(entry.item, entry.index) ? '取消选择' : '选择项目'"
+            @pointerdown.stop
+            @click.stop="onItemSelectionButtonClick(entry.item, entry.index)"
+          >
+            <span v-if="isItemSelected(entry.item, entry.index)" class="list-pick__mark">✓</span>
+          </button>
+          <div class="list-thumb-wrap">
+            <div v-if="!resolvedUrl(entry.item)" class="list-thumb-skeleton" />
+            <img
+              v-else
+              :src="resolvedUrl(entry.item)"
+              class="list-thumb-img"
+              :alt="entry.item.name || ''"
+              @load="onImgLoad(entry.item, $event)"
+            />
+          </div>
+          <div class="list-main">
+            <div class="list-title-row">
+              <span v-if="entry.item.type === 'album'" class="list-type-pill">ALB</span>
+              <span class="list-name">{{ entry.item.name || '未命名' }}</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -179,6 +237,7 @@
           :page-size="activePaginationConfig.pageSize"
           :page-size-options="activePaginationConfig.pageSizeOptions"
           @update:page="onPaginationPageChange"
+          @update:pageSize="onPaginationPageSizeChange"
         />
       </div>
     </div>
@@ -300,7 +359,13 @@ const PHOTO_GRID_TARGET_HEIGHT_PX = 420
 const MIN_PAGED_PHOTO_ROWS = 2
 const MIN_PAGED_SELECTION_ROWS = 2
 const PAGED_GRID_BOTTOM_RESERVE_PX = 12
+const PAGED_LIST_BOTTOM_RESERVE_PX = 12
 const PAGE_SECTION_GAP_PX = 10
+const LONG_PRESS_MS = 220
+const LIST_ROW_HEIGHT = 62
+const LIST_OVERSCAN_ROWS = 12
+const DEFAULT_LIST_PAGE_SIZE = 20
+const LIST_PAGE_SIZE_OPTIONS = Object.freeze([10, 20, 50, 100])
 const JUSTIFIED_LAYOUT_CACHE = new Map()
 const JUSTIFIED_LAYOUT_CACHE_LIMIT = 24
 
@@ -351,6 +416,13 @@ export default {
       loading: true,
       sortBy: 'date',
       sortDir: 'desc',
+      viewMode: 'grid',
+      viewModeBeforeSelection: 'grid',
+      listPageIndex: 0,
+      listPageSize: DEFAULT_LIST_PAGE_SIZE,
+      suppressNextListClick: false,
+      pointerSelection: null,
+      longPressTimer: null,
       containerWidth: 0,
       itemGridViewportTop: 0,
       paginationHostHeight: 0,
@@ -409,11 +481,15 @@ export default {
     },
 
     isPhotoGridMode() {
-      return !this.selectionMode
+      return this.viewMode === 'grid' && !this.selectionMode
     },
 
     isSelectionGridMode() {
       return this.selectionMode
+    },
+
+    isVirtualizedMode() {
+      return !this.isPagedBrowseMode && (this.isSelectionGridMode || this.viewMode === 'list')
     },
 
     cacheSortSignature() {
@@ -628,6 +704,39 @@ export default {
       }
     },
 
+    visibleListEntries() {
+      const start = this.viewMode === 'list'
+        ? (this.isPagedBrowseMode ? this.listPageStartIndex : this.virtualStartIndex)
+        : 0
+      const end = this.viewMode === 'list'
+        ? (this.isPagedBrowseMode ? this.listPageEndIndex : this.virtualEndIndex)
+        : this.items.length
+      return this.items.slice(start, end).map((item, offset) => ({ item, index: start + offset }))
+    },
+
+    listViewStyle() {
+      if (this.viewMode !== 'list') return null
+      if (this.isPagedBrowseMode) {
+        return {
+          minHeight: `${this.pagedListHeightBudget}px`,
+          height: `${this.pagedListHeightBudget}px`,
+          overflow: 'hidden',
+        }
+      }
+      return {
+        paddingTop: `${this.virtualStartIndex * LIST_ROW_HEIGHT}px`,
+        paddingBottom: `${Math.max(0, (this.items.length - this.virtualEndIndex) * LIST_ROW_HEIGHT)}px`,
+      }
+    },
+
+    pagedListHeightBudget() {
+      const hostHeight = this.pageMainHeight > 0 ? this.pageMainHeight : this.viewportHeight
+      return Math.max(
+        180,
+        hostHeight - this.pagedPaginationHostReservePx - PAGED_LIST_BOTTOM_RESERVE_PX,
+      )
+    },
+
     photoGridStyle() {
       if (!this.isPhotoGridMode || !this.isPagedBrowseMode || this.isPortraitMasonryMode) return null
       return {
@@ -800,8 +909,34 @@ export default {
       return Math.min(this.items.length, this.selectionGridPageStartIndex + this.selectionGridPageSize)
     },
 
+    listTotalPages() {
+      if (!this.isPagedBrowseMode || this.viewMode !== 'list') return 1
+      return Math.max(1, Math.ceil(this.items.length / this.listPageSize))
+    },
+    normalizedListPageIndex() {
+      return Math.min(Math.max(0, this.listPageIndex), Math.max(0, this.listTotalPages - 1))
+    },
+    listPageStartIndex() {
+      if (!this.isPagedBrowseMode || this.viewMode !== 'list') return 0
+      return this.normalizedListPageIndex * this.listPageSize
+    },
+    listPageEndIndex() {
+      if (!this.isPagedBrowseMode || this.viewMode !== 'list') return this.items.length
+      return Math.min(this.items.length, this.listPageStartIndex + this.listPageSize)
+    },
+
     activePaginationConfig() {
       if (!this.isPagedBrowseMode || !this.items.length) return null
+
+      if (this.viewMode === 'list') {
+        return {
+          kind: 'list',
+          currentPage: this.normalizedListPageIndex + 1,
+          totalPages: this.listTotalPages,
+          pageSize: this.listPageSize,
+          pageSizeOptions: LIST_PAGE_SIZE_OPTIONS,
+        }
+      }
 
       if (this.isSelectionGridMode) {
         return {
@@ -1014,6 +1149,7 @@ export default {
   beforeUnmount() {
     this.unlockPageScroll()
     this.teardownResizeObserver()
+    this.clearPointerGesture()
     window.removeEventListener('resize', this.onResize)
     window.removeEventListener('scroll', this.onWindowScroll)
     window.removeEventListener('keydown', this.onWindowKeydown)
@@ -1088,6 +1224,7 @@ export default {
     normalizePaginationState() {
       this.photoPageIndex = Math.min(Math.max(0, this.photoPageIndex), Math.max(0, this.photoGridTotalPages - 1))
       this.selectionGridPageIndex = Math.min(Math.max(0, this.selectionGridPageIndex), Math.max(0, this.selectionGridTotalPages - 1))
+      this.listPageIndex = Math.min(Math.max(0, this.listPageIndex), Math.max(0, this.listTotalPages - 1))
     },
 
     findPhotoPageIndexForItem(targetIndex) {
@@ -1124,7 +1261,9 @@ export default {
       if (!this.isPagedBrowseMode) return
 
       const targetPageIndex = Math.max(0, Number(nextPage || 1) - 1)
-      if (this.isSelectionGridMode) {
+      if (this.viewMode === 'list') {
+        this.listPageIndex = targetPageIndex
+      } else if (this.isSelectionGridMode) {
         this.selectionGridPageIndex = targetPageIndex
       } else {
         this.photoPageIndex = targetPageIndex
@@ -1134,6 +1273,21 @@ export default {
       this.$nextTick(() => {
         this.scrollItemGridIntoView()
       })
+    },
+
+    onPaginationPageSizeChange(nextPageSize) {
+      if (this.viewMode !== 'list' || !this.isPagedBrowseMode) return
+      const normalizedPageSize = LIST_PAGE_SIZE_OPTIONS.includes(nextPageSize)
+        ? nextPageSize
+        : DEFAULT_LIST_PAGE_SIZE
+      if (normalizedPageSize === this.listPageSize) return
+      const anchor = this.captureViewportAnchor()
+      this.listPageSize = normalizedPageSize
+      this.normalizePaginationState()
+      if (anchor) {
+        this.pendingViewAnchor = anchor
+      }
+      this.refreshObservedGrid()
     },
 
     computeLayoutFingerprint(items, dimensions) {
@@ -1247,9 +1401,13 @@ export default {
           this.refreshObservedGrid()
         } else {
           this.measureItemGridMetrics()
-          if (this.selectionMode) {
-            this.syncSelectionWindow(true)
-            this.measureSelectionRowHeight()
+          if (this.isVirtualizedMode) {
+            if (this.viewMode === 'list') {
+              this.syncListWindow(true)
+            } else {
+              this.syncSelectionWindow(true)
+              this.measureSelectionRowHeight()
+            }
           }
         }
       }
@@ -1259,11 +1417,15 @@ export default {
     },
 
     onWindowScroll() {
-      if (!this.selectionMode) return
+      if (!this.isVirtualizedMode) return
       if (this.scrollFrameId) return
       this.scrollFrameId = window.requestAnimationFrame(() => {
         this.scrollFrameId = null
-        this.syncSelectionWindow()
+        if (this.viewMode === 'list') {
+          this.syncListWindow()
+        } else {
+          this.syncSelectionWindow()
+        }
       })
     },
 
@@ -1281,6 +1443,22 @@ export default {
       this.$nextTick(() => {
         this.measureItemGridMetrics()
         this.normalizePaginationState()
+
+        if (this.viewMode === 'list') {
+          if (this.isPagedBrowseMode) {
+            this.virtualStartIndex = 0
+            this.virtualEndIndex = this.items.length
+            this.virtualAnchorIndex = this.items.length ? 0 : -1
+          } else {
+            this.syncListWindow(true)
+          }
+          this.setupResizeObserver()
+          if (this.pendingViewAnchor) {
+            this.restorePendingViewAnchor()
+          }
+          return
+        }
+
         if (this.selectionMode) {
           if (this.isPagedBrowseMode) {
             this.virtualStartIndex = 0
@@ -1307,6 +1485,46 @@ export default {
           this.restorePendingViewAnchor()
         }
       })
+    },
+
+    syncListWindow(force = false) {
+      if (this.viewMode !== 'list' || !this.$refs.itemGrid) {
+        this.virtualStartIndex = 0
+        this.virtualEndIndex = this.items.length
+        this.virtualAnchorIndex = this.items.length ? 0 : -1
+        return
+      }
+
+      this.scrollTop = window.scrollY || window.pageYOffset || 0
+      this.viewportHeight = window.innerHeight || this.viewportHeight
+      this.containerWidth = this.$refs.itemGrid.offsetWidth || this.containerWidth
+      const rect = this.$refs.itemGrid.getBoundingClientRect()
+      this.virtualContainerTop = rect.top + this.scrollTop
+
+      const viewportTop = Math.max(0, this.scrollTop - this.virtualContainerTop)
+      const viewportBottom = viewportTop + this.viewportHeight
+      const firstVisibleIndex = Math.min(
+        Math.max(0, this.items.length - 1),
+        Math.max(0, Math.floor(viewportTop / LIST_ROW_HEIGHT)),
+      )
+      const anchorIndex = this.items.length ? firstVisibleIndex : -1
+      const startIndex = Math.max(0, firstVisibleIndex - LIST_OVERSCAN_ROWS)
+      const endIndex = Math.min(
+        this.items.length,
+        Math.ceil(viewportBottom / LIST_ROW_HEIGHT) + LIST_OVERSCAN_ROWS,
+      )
+
+      const rangeChanged =
+        force
+        || startIndex !== this.virtualStartIndex
+        || endIndex !== this.virtualEndIndex
+        || anchorIndex !== this.virtualAnchorIndex
+
+      if (!rangeChanged) return
+
+      this.virtualStartIndex = startIndex
+      this.virtualEndIndex = endIndex
+      this.virtualAnchorIndex = anchorIndex
     },
 
     syncSelectionWindow(force = false) {
@@ -1450,6 +1668,14 @@ export default {
         return
       }
 
+      if (this.viewMode === 'list') {
+        const desiredTop = this.virtualContainerTop + (targetIndex * LIST_ROW_HEIGHT) - RESTORE_ANCHOR_PADDING_PX
+        window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
+        this.logTrashDebug('anchor-restore', { mode: 'list', targetIndex })
+        window.requestAnimationFrame(() => { this.syncListWindow(true) })
+        return
+      }
+
       if (this.selectionMode) {
         const rowIndex = Math.floor(targetIndex / this.selectionColumnCount)
         const desiredTop = this.virtualContainerTop + (rowIndex * (this.effectiveSelectionRowHeight + this.selectionGridGapPx)) - RESTORE_ANCHOR_PADDING_PX
@@ -1555,7 +1781,12 @@ export default {
           const nc = na.localeCompare(nb, undefined, { sensitivity: 'base', numeric: true })
           if (nc !== 0) return nc * dir
         }
-        return this.itemAlphaKey(a).localeCompare(this.itemAlphaKey(b), undefined, { sensitivity: 'base', numeric: true }) * dir
+        const ta = this.itemDateTs(a)
+        const tb = this.itemDateTs(b)
+        if (ta !== tb) return (ta - tb) * dir
+        const na = this.itemAlphaKey(a)
+        const nb = this.itemAlphaKey(b)
+        return na.localeCompare(nb, undefined, { sensitivity: 'base', numeric: true }) * dir
       }
       const albums = arr.filter(it => it?.type === 'album').sort(compare)
       const images = arr.filter(it => it?.type !== 'album').sort(compare)
@@ -1590,14 +1821,16 @@ export default {
       const nextValue = typeof forceValue === 'boolean' ? forceValue : !this.selectionMode
       if (nextValue === this.selectionMode) return
       const anchor = this.captureViewportAnchor()
-      this.selectionMode = nextValue
       this.closeSelectAllMenu()
       if (nextValue) {
-        this.virtualStartIndex = 0
-        this.virtualEndIndex = Math.min(this.items.length, this.selectionColumnCount * 12)
-        this.virtualAnchorIndex = 0
+        this.viewModeBeforeSelection = this.viewMode
+        this.selectionMode = true
       } else {
+        this.selectionMode = false
+        this.viewMode = this.viewModeBeforeSelection || 'grid'
         this.clearSelection()
+        this.clearPointerGesture()
+        this.suppressNextListClick = false
       }
       this.normalizePaginationState()
       if (anchor) {
@@ -1955,14 +2188,13 @@ export default {
 
     formatDateTime(value) {
       if (!value) return ''
-      const date = new Date(value)
+      const date = value instanceof Date ? value : new Date(value)
       if (Number.isNaN(date.getTime())) return ''
-      const y = date.getFullYear()
-      const m = String(date.getMonth() + 1).padStart(2, '0')
-      const d = String(date.getDate()).padStart(2, '0')
-      const hh = String(date.getHours()).padStart(2, '0')
-      const mm = String(date.getMinutes()).padStart(2, '0')
-      return `${y}-${m}-${d} ${hh}:${mm}`
+      const pad = segment => String(segment).padStart(2, '0')
+      return [
+        `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+        `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
+      ].join(' ')
     },
 
     async ensureTagLabelsLoaded() {
@@ -2009,6 +2241,150 @@ export default {
     },
 
     noop() {},
+
+    switchViewMode(mode) {
+      if (!['grid', 'list'].includes(mode)) return
+      const modeChanged = this.viewMode !== mode
+      const wasSelecting = this.selectionMode
+      const anchor = (modeChanged || wasSelecting) ? this.captureViewportAnchor() : null
+      this.closeSelectAllMenu()
+      this.viewMode = mode
+      if (wasSelecting) {
+        this.selectionMode = false
+        this.clearSelection()
+        this.clearPointerGesture()
+        this.suppressNextListClick = false
+      }
+      if (anchor) {
+        this.pendingViewAnchor = anchor
+      }
+      if (wasSelecting || !modeChanged) {
+        this.refreshObservedGrid()
+      }
+    },
+
+    enterListSelectionMode() {
+      this.viewModeBeforeSelection = 'list'
+      this.selectionMode = true
+      this.viewMode = 'list'
+    },
+
+    onListPointerDown(event, item, index) {
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      if (this.selectionMode) {
+        this.onSelectionPointerDown(event, item, index)
+        return
+      }
+      if (event.shiftKey || event.ctrlKey || event.metaKey) {
+        event.preventDefault()
+        this.enterListSelectionMode()
+        this.suppressNextListClick = true
+        if (event.shiftKey) {
+          this.applyRangeSelection(index, event.ctrlKey || event.metaKey)
+        } else {
+          this.toggleIndexSelection(index)
+        }
+        return
+      }
+      this.clearPointerGesture()
+      this.pointerSelection = {
+        pointerId: event.pointerId,
+        startIndex: index,
+        type: item.type,
+        sweeping: false,
+        action: null,
+        visitedKeys: {},
+        origin: 'list-browse',
+      }
+      this.longPressTimer = window.setTimeout(() => {
+        this.activateListLongPressSelection(index)
+      }, LONG_PRESS_MS)
+      window.addEventListener('pointermove', this.onGlobalPointerMove)
+      window.addEventListener('pointerup', this.onGlobalPointerUp)
+      window.addEventListener('pointercancel', this.onGlobalPointerCancel)
+    },
+
+    activateListLongPressSelection(index) {
+      const session = this.pointerSelection
+      const item = this.items[index]
+      if (!session || !item || session.sweeping) return
+      this.enterListSelectionMode()
+      this.suppressNextListClick = true
+      this.selectOnlyIndex(index)
+      session.origin = 'list-selection'
+      session.sweeping = true
+      session.action = 'add'
+      session.type = item.type
+      session.visitedKeys = {}
+      this.applySweepToIndex(index)
+    },
+
+    onListRowClick(_event, item, index) {
+      if (this.suppressNextListClick) {
+        this.suppressNextListClick = false
+        return
+      }
+      if (this.selectionMode) return
+      this.openDetailsForItem(item, index)
+    },
+
+    applySweepToIndex(index) {
+      const session = this.pointerSelection
+      const item = this.items[index]
+      if (!session || !session.sweeping || !item) return
+      if (item.type !== session.type) return
+      if (this.selectionTypeLock && this.selectionTypeLock !== item.type) return
+      const key = this.itemKey(item, index)
+      if (session.visitedKeys[key]) return
+      session.visitedKeys[key] = true
+      if (session.action === 'remove') {
+        this.removeIndexFromSelection(index)
+      } else {
+        this.addIndexToSelection(index)
+      }
+    },
+
+    onGlobalPointerMove(event) {
+      const session = this.pointerSelection
+      if (!session || event.pointerId !== session.pointerId || !session.sweeping) return
+      const target = document.elementFromPoint(event.clientX, event.clientY)
+      const wrap = target && target.closest('[data-select-index]')
+      if (!wrap) return
+      const index = Number(wrap.getAttribute('data-select-index'))
+      if (Number.isInteger(index)) {
+        this.applySweepToIndex(index)
+      }
+    },
+
+    onGlobalPointerUp(event) {
+      const session = this.pointerSelection
+      if (!session || event.pointerId !== session.pointerId) return
+      const startIndex = session.startIndex
+      const sweeping = session.sweeping
+      const origin = session.origin
+      this.clearPointerGesture()
+      if (origin === 'list-browse' && !this.selectionMode) return
+      if (!sweeping) {
+        this.selectOnlyIndex(startIndex)
+      }
+    },
+
+    onGlobalPointerCancel(event) {
+      const session = this.pointerSelection
+      if (!session || event.pointerId !== session.pointerId) return
+      this.clearPointerGesture()
+    },
+
+    clearPointerGesture() {
+      if (this.longPressTimer) {
+        clearTimeout(this.longPressTimer)
+        this.longPressTimer = null
+      }
+      window.removeEventListener('pointermove', this.onGlobalPointerMove)
+      window.removeEventListener('pointerup', this.onGlobalPointerUp)
+      window.removeEventListener('pointercancel', this.onGlobalPointerCancel)
+      this.pointerSelection = null
+    },
 
     openConfirmDialog(options = {}) {
       this.confirmDialog = {
@@ -2217,9 +2593,13 @@ export default {
           }
 
           this.measureItemGridMetrics()
-          if (this.selectionMode) {
-            this.syncSelectionWindow(true)
-            this.measureSelectionRowHeight()
+          if (this.isVirtualizedMode) {
+            if (this.viewMode === 'list') {
+              this.syncListWindow(true)
+            } else {
+              this.syncSelectionWindow(true)
+              this.measureSelectionRowHeight()
+            }
           }
         })
       })
@@ -2509,5 +2889,138 @@ export default {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 12px;
   }
+}
+
+.list-view {
+  display: flex;
+  flex-direction: column;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
+}
+
+.list-row:hover { background: #f1f5f9; }
+
+.list-row.is-selected {
+  background: #e8eef8;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.list-row.is-disabled {
+  opacity: 0.45;
+}
+
+.list-pick {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid rgba(15, 23, 42, 0.85);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+  padding: 0;
+  cursor: pointer;
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.list-pick:hover:not(:disabled) {
+  transform: scale(1.04);
+}
+
+.list-pick:disabled {
+  cursor: not-allowed;
+}
+
+.list-row.is-selected .list-pick {
+  border-color: #0f172a;
+  background: #0f172a;
+}
+
+.list-pick__mark {
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.list-thumb-wrap {
+  width: 50px;
+  height: 50px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #e2e8f0;
+}
+
+.list-thumb-skeleton {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-wave 1.4s ease-in-out infinite;
+}
+
+.list-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.list-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.list-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.list-type-pill {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.4rem;
+  height: 1.55rem;
+  padding: 0 0.55rem;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #334155;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.list-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.875rem;
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.page--paged .list-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 </style>
