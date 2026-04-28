@@ -13,7 +13,7 @@
       <div class="vm-btns" role="group" aria-label="视图模式">
         <button
           class="vm-btn"
-          :class="{ active: viewMode === 'grid' && !selectionMode }"
+          :class="{ active: viewMode === 'grid' }"
           title="瀑布流"
           @click="switchViewMode('grid')"
         >
@@ -26,7 +26,7 @@
         </button>
         <button
           class="vm-btn"
-          :class="{ active: viewMode === 'list' && !selectionMode }"
+          :class="{ active: viewMode === 'list' }"
           title="列表显示"
           @click="switchViewMode('list')"
         >
@@ -62,13 +62,14 @@
         <p>回收站为空。</p>
       </div>
 
-      <div v-else-if="selectionMode" ref="itemGrid" class="selection-grid" :style="selectionGridStyle">
+      <div v-else-if="selectionMode && viewMode === 'grid'" ref="itemGrid" class="selection-grid" :style="selectionGridStyle">
         <div
           v-for="entry in visibleSelectionEntries"
           :key="itemKey(entry.item, entry.index)"
           class="selection-wrap"
           :class="{ 'is-selected': isItemSelected(entry.item, entry.index), 'is-disabled': isItemDisabled(entry.item) }"
           :data-index="entry.index"
+          :data-select-index="entry.index"
           @pointerdown="onSelectionPointerDown($event, entry.item, entry.index)"
         >
           <MediaItemCard
@@ -133,7 +134,7 @@
       </div>
 
       <div
-        v-else-if="!isPortraitMasonryMode"
+        v-else-if="viewMode === 'grid' && !isPortraitMasonryMode"
         ref="itemGrid"
         class="photo-grid"
         :style="photoGridStyle"
@@ -174,7 +175,7 @@
       </div>
 
       <div
-        v-else-if="isPortraitMasonryMode && !masonrySkeletonReady"
+        v-else-if="viewMode === 'grid' && isPortraitMasonryMode && !masonrySkeletonReady"
         ref="itemGrid"
         class="photo-grid photo-grid--masonry-skeleton"
       >
@@ -341,6 +342,7 @@ const API_BASE = 'http://127.0.0.1:8000'
 const FIRST_ROW_TOLERANCE_PX = 12
 const RESTORE_ANCHOR_PADDING_PX = 12
 const DIMENSION_CORRECTION_BATCH_MS = 60
+const SELECTION_INFO_HEIGHT = 56
 const SELECTION_OVERSCAN_ROWS = 2
 const SELECTION_LANDSCAPE_COLS = 5
 const SELECTION_PORTRAIT_COLS = 3
@@ -355,7 +357,7 @@ const PHOTO_GRID_MAX_TARGET_HEIGHT_PX = 640
 const SELECTION_LANDSCAPE_GAP = 16
 const SELECTION_PORTRAIT_GAP = 12
 const PHOTO_GRID_GAP_PX = 4
-const PHOTO_GRID_TARGET_HEIGHT_PX = 420
+const PHOTO_GRID_TARGET_HEIGHT_PX = 440
 const MIN_PAGED_PHOTO_ROWS = 2
 const MIN_PAGED_SELECTION_ROWS = 2
 const PAGED_GRID_BOTTOM_RESERVE_PX = 12
@@ -367,7 +369,7 @@ const LIST_OVERSCAN_ROWS = 12
 const DEFAULT_LIST_PAGE_SIZE = 20
 const LIST_PAGE_SIZE_OPTIONS = Object.freeze([10, 20, 50, 100])
 const JUSTIFIED_LAYOUT_CACHE = new Map()
-const JUSTIFIED_LAYOUT_CACHE_LIMIT = 24
+const JUSTIFIED_LAYOUT_CACHE_LIMIT = 36
 
 function rememberJustifiedLayout(cacheKey, rows) {
   if (JUSTIFIED_LAYOUT_CACHE.has(cacheKey)) {
@@ -423,6 +425,8 @@ export default {
       suppressNextListClick: false,
       pointerSelection: null,
       longPressTimer: null,
+      lastScrollDirection: 'none',
+      lastObservedScrollTop: typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0,
       containerWidth: 0,
       itemGridViewportTop: 0,
       paginationHostHeight: 0,
@@ -485,7 +489,7 @@ export default {
     },
 
     isSelectionGridMode() {
-      return this.selectionMode
+      return this.selectionMode && this.viewMode === 'grid'
     },
 
     isVirtualizedMode() {
@@ -600,6 +604,9 @@ export default {
         overflow: this.isPagedBrowseMode ? 'hidden' : 'visible',
       }
     },
+    photoGridRowCount() {
+      return this.isPhotoGridMode && !this.isPortraitMasonryMode ? this.justifiedRows.length : 0
+    },
     selectionColumnCount() {
       return this.isPortrait ? SELECTION_PORTRAIT_COLS : SELECTION_LANDSCAPE_COLS
     },
@@ -612,7 +619,7 @@ export default {
       const budget = this.pagedGridHeightBudget
       const totalGap = gap * Math.max(0, rows - 1)
       const height = (budget - totalGap) / rows
-      return Math.max(180, Math.floor(height))
+      return Math.max(SELECTION_INFO_HEIGHT + 60, Math.floor(height))
     },
     photoGridTargetHeight() {
       if (!this.isPagedBrowseMode) return PHOTO_GRID_TARGET_HEIGHT_PX
@@ -634,7 +641,7 @@ export default {
     },
 
     effectiveSelectionRowHeight() {
-      if (this.isPagedBrowseMode && this.selectionMode) {
+      if (this.isPagedBrowseMode && this.isSelectionGridMode) {
         return this.pagedSelectionCardHeight
       }
       if (this.selectionRowHeight > 0) return this.selectionRowHeight
@@ -642,14 +649,14 @@ export default {
       const width = this.containerWidth || (typeof window !== 'undefined' ? window.innerWidth - 48 : 800)
       const totalGap = this.selectionGridGapPx * Math.max(0, this.selectionColumnCount - 1)
       const cardWidth = Math.max(0, (width - totalGap) / this.selectionColumnCount)
-      return Math.max(220, Math.round(cardWidth + 56))
+      return Math.max(SELECTION_INFO_HEIGHT + 80, Math.round(cardWidth + SELECTION_INFO_HEIGHT + 2))
     },
 
     visibleSelectionEntries() {
-      const start = this.selectionMode
+      const start = this.isSelectionGridMode
         ? (this.isPagedBrowseMode ? this.selectionGridPageStartIndex : this.virtualStartIndex)
         : 0
-      const end = this.selectionMode
+      const end = this.isSelectionGridMode
         ? (this.isPagedBrowseMode ? this.selectionGridPageEndIndex : this.virtualEndIndex)
         : this.items.length
       return this.items.slice(start, end).map((item, offset) => ({ item, index: start + offset }))
@@ -657,6 +664,7 @@ export default {
 
     isPaginationBarVisible() {
       if (!this.isPagedBrowseMode || !this.items.length || !this.activePaginationConfig) return false
+      if (this.activePaginationConfig.pageSize !== null) return true
       return Number(this.activePaginationConfig.totalPages || 0) > 1
     },
 
@@ -669,7 +677,7 @@ export default {
     },
 
     selectionGridStyle() {
-      if (!this.selectionMode) return null
+      if (!this.isSelectionGridMode) return null
 
       if (this.isPagedBrowseMode) {
         const rows = this.selectionRowsPerPageTarget
@@ -1128,6 +1136,21 @@ export default {
   },
 
   watch: {
+    photoGridRowCount(newVal, oldVal) {
+      if (newVal !== oldVal) {
+        this.refreshObservedGrid()
+      }
+    },
+    viewMode() {
+      if (this.selectionMode) return
+      this.refreshObservedGrid()
+    },
+    selectionMode(nextValue) {
+      if (!nextValue) {
+        this.closeSelectionDetails()
+        this.closeSelectAllMenu()
+      }
+    },
     selectedCount(nextValue) {
       if (!nextValue) {
         this.closeSelectionDetails()
@@ -1191,6 +1214,7 @@ export default {
 
       const anchor = captureAnchor ? this.captureViewportAnchor() : null
       this.pageBrowseMode = normalizedMode
+      this.clearPointerGesture()
       this.closeSelectAllMenu()
       this.normalizePaginationState()
 
@@ -1240,7 +1264,9 @@ export default {
     },
 
     restorePagedPageByIndex(targetIndex) {
-      if (this.isSelectionGridMode) {
+      if (this.viewMode === 'list') {
+        this.listPageIndex = Math.floor(targetIndex / this.listPageSize)
+      } else if (this.isSelectionGridMode) {
         const pageSize = Math.max(1, this.selectionGridPageSize)
         this.selectionGridPageIndex = Math.floor(targetIndex / pageSize)
       } else {
@@ -1288,6 +1314,9 @@ export default {
         this.pendingViewAnchor = anchor
       }
       this.refreshObservedGrid()
+      window.requestAnimationFrame(() => {
+        this.scrollItemGridIntoView()
+      })
     },
 
     computeLayoutFingerprint(items, dimensions) {
@@ -1322,27 +1351,38 @@ export default {
       this.messageText = ''
       this.imgDimensions = {}
       this.layoutFingerprint = ''
+      this.lastScrollDirection = 'none'
+      this.lastObservedScrollTop = typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0
       this.pendingViewAnchor = null
       this.pendingDimensionCorrections = {}
       this.selectionRowHeight = 0
+      this.closeSelectionDetails()
+      this.closeSelectAllMenu()
+      this.clearSelection()
+      this.clearPointerGesture()
       this.scrollTop = typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0
       this.viewportHeight = typeof window !== 'undefined' ? window.innerHeight : this.viewportHeight
+      this.viewportWidth = typeof window !== 'undefined' ? window.innerWidth : this.viewportWidth
       this.virtualStartIndex = 0
       this.virtualEndIndex = 0
       this.virtualAnchorIndex = 0
       this.virtualContainerTop = 0
       this.photoPageIndex = 0
       this.selectionGridPageIndex = 0
+      this.listPageIndex = 0
       if (this.dimensionFlushTimer) {
         clearTimeout(this.dimensionFlushTimer)
         this.dimensionFlushTimer = null
+      }
+      this.teardownResizeObserver()
+      if (!this.selectionMode) {
+        this.viewMode = 'grid'
       }
       try {
         const res = await fetch(`${API_BASE}/api/trash/items`)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
         this.applyFetchedItems(data.items || [])
-        this.clearSelection()
         this.$nextTick(() => this.refreshObservedGrid())
         this.ensureCategoryLabelsLoaded()
         this.ensureTagLabelsLoaded()
@@ -1401,13 +1441,11 @@ export default {
           this.refreshObservedGrid()
         } else {
           this.measureItemGridMetrics()
-          if (this.isVirtualizedMode) {
-            if (this.viewMode === 'list') {
-              this.syncListWindow(true)
-            } else {
-              this.syncSelectionWindow(true)
-              this.measureSelectionRowHeight()
-            }
+        }
+        if (this.isVirtualizedMode) {
+          this.syncVirtualWindow(true)
+          if (this.isSelectionGridMode) {
+            this.measureSelectionRowHeight()
           }
         }
       }
@@ -1417,14 +1455,24 @@ export default {
     },
 
     onWindowScroll() {
-      if (!this.isVirtualizedMode) return
+      const nextScrollTop = window.scrollY || window.pageYOffset || 0
+      if (nextScrollTop > this.lastObservedScrollTop) {
+        this.lastScrollDirection = 'forward'
+      } else if (nextScrollTop < this.lastObservedScrollTop) {
+        this.lastScrollDirection = 'backward'
+      }
+      this.lastObservedScrollTop = nextScrollTop
+
+      if (!this.isVirtualizedMode && !this.selectionDetailsOpen) return
       if (this.scrollFrameId) return
       this.scrollFrameId = window.requestAnimationFrame(() => {
         this.scrollFrameId = null
-        if (this.viewMode === 'list') {
-          this.syncListWindow()
-        } else {
-          this.syncSelectionWindow()
+        if (this.isVirtualizedMode) {
+          this.scrollTop = window.scrollY || window.pageYOffset || 0
+          this.syncVirtualWindow()
+        }
+        if (this.selectionDetailsOpen) {
+          this.updateSelectionDetailsBounds()
         }
       })
     },
@@ -1444,56 +1492,25 @@ export default {
         this.measureItemGridMetrics()
         this.normalizePaginationState()
 
-        if (this.viewMode === 'list') {
-          if (this.isPagedBrowseMode) {
-            this.virtualStartIndex = 0
-            this.virtualEndIndex = this.items.length
-            this.virtualAnchorIndex = this.items.length ? 0 : -1
-          } else {
-            this.syncListWindow(true)
-          }
-          this.setupResizeObserver()
-          if (this.pendingViewAnchor) {
-            this.restorePendingViewAnchor()
-          }
-          return
+        if (this.isVirtualizedMode) {
+          this.syncVirtualWindow(true)
+        } else {
+          this.virtualStartIndex = 0
+          this.virtualEndIndex = this.items.length
+          this.virtualAnchorIndex = this.items.length ? 0 : -1
         }
-
-        if (this.selectionMode) {
-          if (this.isPagedBrowseMode) {
-            this.virtualStartIndex = 0
-            this.virtualEndIndex = this.items.length
-            this.virtualAnchorIndex = this.items.length ? 0 : -1
-          } else {
-            this.syncSelectionWindow(true)
-          }
-          this.$nextTick(() => {
-            this.measureSelectionRowHeight()
-            if (this.pendingViewAnchor) {
-              this.restorePendingViewAnchor()
-            }
-          })
-          this.setupResizeObserver()
-          return
-        }
-
-        this.virtualStartIndex = 0
-        this.virtualEndIndex = this.items.length
-        this.virtualAnchorIndex = this.items.length ? 0 : -1
         this.setupResizeObserver()
+        if (this.isSelectionGridMode) {
+          this.measureSelectionRowHeight()
+        }
         if (this.pendingViewAnchor) {
           this.restorePendingViewAnchor()
         }
       })
     },
 
-    syncListWindow(force = false) {
-      if (this.viewMode !== 'list' || !this.$refs.itemGrid) {
-        this.virtualStartIndex = 0
-        this.virtualEndIndex = this.items.length
-        this.virtualAnchorIndex = this.items.length ? 0 : -1
-        return
-      }
+    syncVirtualWindow(force = false) {
+      if (!this.$refs.itemGrid) return
 
       this.scrollTop = window.scrollY || window.pageYOffset || 0
       this.viewportHeight = window.innerHeight || this.viewportHeight
@@ -1501,64 +1518,45 @@ export default {
       const rect = this.$refs.itemGrid.getBoundingClientRect()
       this.virtualContainerTop = rect.top + this.scrollTop
 
-      const viewportTop = Math.max(0, this.scrollTop - this.virtualContainerTop)
-      const viewportBottom = viewportTop + this.viewportHeight
-      const firstVisibleIndex = Math.min(
-        Math.max(0, this.items.length - 1),
-        Math.max(0, Math.floor(viewportTop / LIST_ROW_HEIGHT)),
-      )
-      const anchorIndex = this.items.length ? firstVisibleIndex : -1
-      const startIndex = Math.max(0, firstVisibleIndex - LIST_OVERSCAN_ROWS)
-      const endIndex = Math.min(
-        this.items.length,
-        Math.ceil(viewportBottom / LIST_ROW_HEIGHT) + LIST_OVERSCAN_ROWS,
-      )
-
-      const rangeChanged =
-        force
-        || startIndex !== this.virtualStartIndex
-        || endIndex !== this.virtualEndIndex
-        || anchorIndex !== this.virtualAnchorIndex
-
-      if (!rangeChanged) return
-
-      this.virtualStartIndex = startIndex
-      this.virtualEndIndex = endIndex
-      this.virtualAnchorIndex = anchorIndex
-    },
-
-    syncSelectionWindow(force = false) {
-      if (!this.selectionMode || !this.$refs.itemGrid) {
+      if (!this.isVirtualizedMode) {
         this.virtualStartIndex = 0
         this.virtualEndIndex = this.items.length
         this.virtualAnchorIndex = this.items.length ? 0 : -1
         return
       }
 
-      this.scrollTop = window.scrollY || window.pageYOffset || 0
-      this.viewportHeight = window.innerHeight || this.viewportHeight
-      this.containerWidth = this.$refs.itemGrid.offsetWidth || this.containerWidth
-      const rect = this.$refs.itemGrid.getBoundingClientRect()
-      this.virtualContainerTop = rect.top + this.scrollTop
-
-      const rowSpan = this.effectiveSelectionRowHeight + this.selectionGridGapPx
-      const totalRows = Math.ceil(this.items.length / this.selectionColumnCount)
       const viewportTop = Math.max(0, this.scrollTop - this.virtualContainerTop)
       const viewportBottom = viewportTop + this.viewportHeight
-      const firstVisibleRow = Math.min(
-        Math.max(0, Math.floor(viewportTop / rowSpan)),
-        Math.max(0, totalRows - 1),
-      )
-      const endVisibleRow = Math.min(
-        totalRows,
-        Math.ceil(viewportBottom / rowSpan) + SELECTION_OVERSCAN_ROWS,
-      )
+      let startIndex = 0
+      let endIndex = this.items.length
+      let anchorIndex = this.items.length ? 0 : -1
 
-      const startIndex = Math.max(0, (firstVisibleRow - SELECTION_OVERSCAN_ROWS) * this.selectionColumnCount)
-      const endIndex = Math.min(this.items.length, endVisibleRow * this.selectionColumnCount)
-      const anchorIndex = this.items.length
-        ? Math.min(this.items.length - 1, firstVisibleRow * this.selectionColumnCount)
-        : -1
+      if (this.viewMode === 'list') {
+        const firstVisibleIndex = Math.min(
+          this.items.length - 1,
+          Math.max(0, Math.floor(viewportTop / LIST_ROW_HEIGHT)),
+        )
+        anchorIndex = firstVisibleIndex
+        startIndex = Math.max(0, firstVisibleIndex - LIST_OVERSCAN_ROWS)
+        endIndex = Math.min(
+          this.items.length,
+          Math.ceil(viewportBottom / LIST_ROW_HEIGHT) + LIST_OVERSCAN_ROWS,
+        )
+      } else if (this.isSelectionGridMode) {
+        const rowSpan = this.effectiveSelectionRowHeight + this.selectionGridGapPx
+        const totalRows = Math.ceil(this.items.length / this.selectionColumnCount)
+        const firstVisibleRow = Math.min(
+          Math.max(0, Math.floor(viewportTop / rowSpan)),
+          Math.max(0, totalRows - 1),
+        )
+        const endVisibleRow = Math.min(
+          totalRows,
+          Math.ceil(viewportBottom / rowSpan) + SELECTION_OVERSCAN_ROWS,
+        )
+        anchorIndex = Math.min(this.items.length - 1, firstVisibleRow * this.selectionColumnCount)
+        startIndex = Math.max(0, (firstVisibleRow - SELECTION_OVERSCAN_ROWS) * this.selectionColumnCount)
+        endIndex = Math.min(this.items.length, endVisibleRow * this.selectionColumnCount)
+      }
 
       const rangeChanged =
         force
@@ -1572,13 +1570,15 @@ export default {
       this.virtualEndIndex = endIndex
       this.virtualAnchorIndex = anchorIndex
 
-      this.$nextTick(() => {
-        this.measureSelectionRowHeight()
-      })
+      if (this.isSelectionGridMode) {
+        this.$nextTick(() => {
+          this.measureSelectionRowHeight()
+        })
+      }
     },
 
     measureSelectionRowHeight() {
-      if (!this.selectionMode || !this.$refs.itemGrid) return
+      if (!this.isSelectionGridMode || !this.$refs.itemGrid) return
       const sample = this.$refs.itemGrid.querySelector('.selection-wrap')
       if (!sample) return
 
@@ -1588,7 +1588,7 @@ export default {
         if (this.isPagedBrowseMode) {
           this.normalizePaginationState()
         } else {
-          this.syncSelectionWindow(true)
+          this.syncVirtualWindow(true)
         }
       }
     },
@@ -1672,17 +1672,19 @@ export default {
         const desiredTop = this.virtualContainerTop + (targetIndex * LIST_ROW_HEIGHT) - RESTORE_ANCHOR_PADDING_PX
         window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
         this.logTrashDebug('anchor-restore', { mode: 'list', targetIndex })
-        window.requestAnimationFrame(() => { this.syncListWindow(true) })
+        window.requestAnimationFrame(() => {
+          this.syncVirtualWindow(true)
+        })
         return
       }
 
-      if (this.selectionMode) {
+      if (this.isSelectionGridMode) {
         const rowIndex = Math.floor(targetIndex / this.selectionColumnCount)
         const desiredTop = this.virtualContainerTop + (rowIndex * (this.effectiveSelectionRowHeight + this.selectionGridGapPx)) - RESTORE_ANCHOR_PADDING_PX
         window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
         this.logTrashDebug('anchor-restore', { mode: 'selection-grid', targetIndex, rowIndex })
         window.requestAnimationFrame(() => {
-          this.syncSelectionWindow(true)
+          this.syncVirtualWindow(true)
         })
         return
       }
@@ -1825,6 +1827,7 @@ export default {
       if (nextValue) {
         this.viewModeBeforeSelection = this.viewMode
         this.selectionMode = true
+        this.viewMode = 'grid'
       } else {
         this.selectionMode = false
         this.viewMode = this.viewModeBeforeSelection || 'grid'
@@ -1968,24 +1971,56 @@ export default {
       if (!this.selectionMode) return
       if (event.pointerType === 'mouse' && event.button !== 0) return
       if (this.isItemDisabled(item)) return
+
       event.preventDefault()
+
       if (event.shiftKey) {
         this.applyRangeSelection(index, event.ctrlKey || event.metaKey)
         return
       }
+
       if (event.ctrlKey || event.metaKey) {
         this.toggleIndexSelection(index)
         return
       }
-      this.selectOnlyIndex(index)
+
+      this.clearPointerGesture()
+      this.pointerSelection = {
+        pointerId: event.pointerId,
+        startIndex: index,
+        type: item.type,
+        sweeping: false,
+        action: null,
+        visitedKeys: {},
+      }
+
+      this.longPressTimer = window.setTimeout(() => {
+        this.beginSweepSelection(index)
+      }, LONG_PRESS_MS)
+
+      window.addEventListener('pointermove', this.onGlobalPointerMove)
+      window.addEventListener('pointerup', this.onGlobalPointerUp)
+      window.addEventListener('pointercancel', this.onGlobalPointerCancel)
     },
 
     onItemSelectionButtonClick(item, index) {
       if (!item || this.isItemDisabled(item)) return
+      if (this.isItemSelected(item, index)) {
+        this.removeIndexFromSelection(index)
+        return
+      }
+
       if (!this.selectionMode) {
+        this.viewModeBeforeSelection = this.viewMode
         this.selectionMode = true
       }
-      this.toggleIndexSelection(index)
+
+      if (!this.selectedCount) {
+        this.selectOnlyIndex(index)
+        return
+      }
+
+      this.addIndexToSelection(index, true)
     },
 
     openDetailsForItem(item, index) {
@@ -2328,6 +2363,17 @@ export default {
       this.openDetailsForItem(item, index)
     },
 
+    beginSweepSelection(startIndex) {
+      const session = this.pointerSelection
+      const item = this.items[startIndex]
+      if (!session || session.sweeping || !item || this.isItemDisabled(item)) return
+
+      session.sweeping = true
+      session.action = this.isItemSelected(item, startIndex) ? 'remove' : 'add'
+      session.type = item.type
+      this.applySweepToIndex(startIndex)
+    },
+
     applySweepToIndex(index) {
       const session = this.pointerSelection
       const item = this.items[index]
@@ -2594,10 +2640,8 @@ export default {
 
           this.measureItemGridMetrics()
           if (this.isVirtualizedMode) {
-            if (this.viewMode === 'list') {
-              this.syncListWindow(true)
-            } else {
-              this.syncSelectionWindow(true)
+            this.syncVirtualWindow(true)
+            if (this.isSelectionGridMode) {
               this.measureSelectionRowHeight()
             }
           }
@@ -2638,9 +2682,14 @@ export default {
 
 .page--paged .empty-hint,
 .page--paged .selection-grid,
-.page--paged .photo-grid {
+.page--paged .photo-grid,
+.page--paged .list-view {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.page--paged .list-view {
+  overflow-y: auto !important;
 }
 
 .page--paged .selection-wrap {
@@ -2760,7 +2809,7 @@ export default {
 }
 
 .page-pagination-host {
-  padding-bottom: 0.12rem;
+  padding-top: 0.12rem;
 }
 
 .page-pagination-host--selection {
@@ -3021,6 +3070,5 @@ export default {
 .page--paged .list-view {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: hidden;
 }
 </style>
