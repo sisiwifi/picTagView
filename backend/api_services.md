@@ -79,6 +79,7 @@
   - GET /api/albums/{album_id}
 - app/api/routers/images.py
   - GET /api/images/meta
+  - PATCH /api/images/metadata
   - GET /api/images/{image_id}/open
   - POST /api/images/tags/filename-match
   - POST /api/images/tags/apply
@@ -175,6 +176,16 @@
   - 参数：`ids=1,2,3`（逗号分隔图片 ID）
   - 用途：批量回填图片元数据、缩略图地址、`media_paths` 与 `category_id`
   - 说明：主要供详情浮层或旧列表数据补齐字段；`media_paths` 也为更精细的文件实例操作提供兜底信息
+
+- PATCH /api/images/metadata
+  - 实现：app/api/routers/images.py
+  - 用途：从详情浮层批量修改图片元数据，支持单图改名、批量改主分类、批量改创建时间
+  - Body：`{ items: [{ image_id, media_rel_path }...], name?, category_id?, file_created_at? }`
+  - 说明：
+    - `name` 仅支持单选图片；后端会执行物理重命名，并保持原扩展名不变
+    - `category_id` 会批量回写到全部已选图片
+    - `file_created_at` 会同步修改数据库时间和文件系统时间；当目标年月与当前目录不一致时，会把文件物理移动到 `media/YYYY-MM/...` 对应目录
+    - 路径变更后会重建 `ImageAsset.media_path`、`album` 链，并重算 `album_image` / 相册计数，保证日期页与相册页一致
 
 - GET /api/images/{image_id}/open
   - 实现：app/api/routers/images.py，调用 app/services/viewer_service.py

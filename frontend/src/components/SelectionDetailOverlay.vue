@@ -79,18 +79,74 @@
           <p v-if="isMulti" class="detail-panel__summary">已选择 {{ previewItems.length }} 项</p>
 
           <div class="detail-field">
-            <span class="detail-field__label">名称</span>
+            <div class="detail-field__head">
+              <span class="detail-field__label">名称</span>
+              <button
+                v-if="showCategoryField"
+                class="detail-field__edit"
+                type="button"
+                :disabled="!canEditName || editBusy"
+                @click="startNameEdit"
+              >编辑</button>
+            </div>
             <div class="detail-field__value">
-              <em v-if="nameField.isVarious" class="detail-field__various">various</em>
-              <span v-else class="detail-field__text">{{ nameField.text || '—' }}</span>
+              <div v-if="editingField === 'name'" class="detail-inline-editor">
+                <input
+                  v-model.trim="nameDraft"
+                  class="detail-inline-editor__input"
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  :disabled="editBusy"
+                  @keydown.enter.prevent="submitNameEdit"
+                  @keydown.esc.prevent="cancelNameEdit"
+                >
+                <div class="detail-inline-editor__actions">
+                  <button class="detail-inline-editor__btn" type="button" :disabled="editBusy" @click="cancelNameEdit">取消</button>
+                  <button
+                    class="detail-inline-editor__btn detail-inline-editor__btn--primary"
+                    type="button"
+                    :disabled="editBusy || !String(nameDraft || '').trim()"
+                    @click="submitNameEdit"
+                  >{{ editBusy ? '保存中…' : '保存' }}</button>
+                </div>
+              </div>
+              <template v-else>
+                <em v-if="nameField.isVarious" class="detail-field__various">various</em>
+                <span v-else class="detail-field__text">{{ nameField.text || '—' }}</span>
+              </template>
             </div>
           </div>
 
           <div v-if="showCategoryField" class="detail-field">
-            <span class="detail-field__label">主分类</span>
+            <div class="detail-field__head">
+              <span class="detail-field__label">主分类</span>
+              <button
+                class="detail-field__edit"
+                type="button"
+                :disabled="!canEditCategory || editBusy"
+                @click="startCategoryEdit"
+              >编辑</button>
+            </div>
             <div class="detail-field__value">
-              <em v-if="categoryField.isVarious" class="detail-field__various">various</em>
-              <span v-else class="detail-field__text">{{ categoryField.text || '—' }}</span>
+              <div v-if="editingField === 'category'" class="detail-inline-editor">
+                <select v-model="categoryDraft" class="detail-inline-editor__input detail-inline-editor__select" :disabled="editBusy">
+                  <option v-for="option in categoryOptions" :key="option.value" :value="String(option.value)">{{ option.label }}</option>
+                </select>
+                <div class="detail-inline-editor__actions">
+                  <button class="detail-inline-editor__btn" type="button" :disabled="editBusy" @click="cancelCategoryEdit">取消</button>
+                  <button
+                    class="detail-inline-editor__btn detail-inline-editor__btn--primary"
+                    type="button"
+                    :disabled="editBusy || !categoryDraft"
+                    @click="submitCategoryEdit"
+                  >{{ editBusy ? '保存中…' : '保存' }}</button>
+                </div>
+              </div>
+              <template v-else>
+                <em v-if="categoryField.isVarious" class="detail-field__various">various</em>
+                <span v-else class="detail-field__text">{{ categoryField.text || '—' }}</span>
+              </template>
             </div>
           </div>
 
@@ -134,7 +190,16 @@
           </div>
 
           <div class="detail-field">
-            <span class="detail-field__label">创建时间</span>
+            <div class="detail-field__head">
+              <span class="detail-field__label">创建时间</span>
+              <button
+                v-if="showCategoryField"
+                class="detail-field__edit"
+                type="button"
+                :disabled="!canEditCreatedAt || editBusy"
+                @click="openCreatedEdit"
+              >编辑</button>
+            </div>
             <div class="detail-field__value">
               <em v-if="createdField.isVarious" class="detail-field__various">various</em>
               <span v-else class="detail-field__text">{{ createdField.text || '—' }}</span>
@@ -163,10 +228,65 @@
       </div>
     </section>
   </div>
+
+  <Teleport to="body">
+    <Transition name="detail-subdialog-fade">
+      <div v-if="visible && createdDialogVisible" class="detail-subdialog" @click.self="closeCreatedEdit">
+        <section class="detail-subdialog__panel" role="dialog" aria-modal="true" aria-label="编辑创建时间">
+          <header class="detail-subdialog__header">
+            <div>
+              <h3 class="detail-subdialog__title">修改创建时间</h3>
+              <p class="detail-subdialog__subtitle">
+                {{ isMulti ? `将应用到已选 ${previewItems.length} 张图片` : '修改后会同步回写文件系统创建时间。' }}
+              </p>
+            </div>
+            <button class="detail-subdialog__close" type="button" :disabled="editBusy" @click="closeCreatedEdit">关闭</button>
+          </header>
+
+          <div class="detail-subdialog__grid">
+            <label class="detail-subdialog__field">
+              <span class="detail-subdialog__label">日期</span>
+              <input v-model="createdDateDraft" class="detail-subdialog__input" type="date" :disabled="editBusy">
+            </label>
+            <label class="detail-subdialog__field">
+              <span class="detail-subdialog__label">时间</span>
+              <input v-model="createdTimeDraft" class="detail-subdialog__input" type="time" step="1" :disabled="editBusy">
+            </label>
+          </div>
+
+          <p class="detail-subdialog__hint">当前文件夹：{{ currentDateGroup || '未分组' }}</p>
+          <p v-if="createdMoveWarning" class="detail-subdialog__warning">{{ createdMoveWarning }}</p>
+
+          <footer class="detail-subdialog__actions">
+            <button class="detail-subdialog__btn detail-subdialog__btn--ghost" type="button" :disabled="editBusy" @click="closeCreatedEdit">取消</button>
+            <button
+              class="detail-subdialog__btn detail-subdialog__btn--primary"
+              type="button"
+              :disabled="editBusy || !createdDateDraft || !createdTimeDraft"
+              @click="submitCreatedEdit"
+            >{{ editBusy ? '保存中…' : createdConfirmLabel }}</button>
+          </footer>
+        </section>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script>
 import TagChipList from './TagChipList.vue'
+
+function padDatePart(value) {
+  return String(value).padStart(2, '0')
+}
+
+function splitDateTimeParts(rawValue) {
+  const parsed = rawValue ? new Date(rawValue) : new Date()
+  const safeDate = Number.isNaN(parsed.getTime()) ? new Date() : parsed
+  return {
+    date: `${safeDate.getFullYear()}-${padDatePart(safeDate.getMonth() + 1)}-${padDatePart(safeDate.getDate())}`,
+    time: `${padDatePart(safeDate.getHours())}:${padDatePart(safeDate.getMinutes())}:${padDatePart(safeDate.getSeconds())}`,
+  }
+}
 
 export default {
   name: 'SelectionDetailOverlay',
@@ -204,6 +324,12 @@ export default {
       type: Object,
       default: () => ({ text: '', isVarious: false, isEmpty: false }),
     },
+    rawName: { type: String, default: '' },
+    rawCategoryId: { type: Number, default: null },
+    rawCreatedAt: {
+      type: [String, Number, Date],
+      default: null,
+    },
     primaryActionLabel: { type: String, default: '查看原图' },
     canOpenPrimaryAction: { type: Boolean, default: false },
     primaryActionDisabled: { type: Boolean, default: false },
@@ -211,12 +337,34 @@ export default {
     dangerActionDisabled: { type: Boolean, default: false },
     canEditTags: { type: Boolean, default: false },
     tagMenuDisabled: { type: Boolean, default: false },
+    canEditName: { type: Boolean, default: false },
+    canEditCategory: { type: Boolean, default: false },
+    canEditCreatedAt: { type: Boolean, default: false },
+    editBusy: { type: Boolean, default: false },
+    currentDateGroup: { type: String, default: '' },
+    categoryOptions: { type: Array, default: () => [] },
   },
-  emits: ['close', 'delete', 'open-primary', 'open-tag-menu', 'preview-error'],
+  emits: [
+    'close',
+    'delete',
+    'open-primary',
+    'open-tag-menu',
+    'preview-error',
+    'submit-name-edit',
+    'submit-category-edit',
+    'submit-created-edit',
+  ],
   data() {
+    const createdParts = splitDateTimeParts(this.rawCreatedAt)
     return {
       asideScrolling: false,
       asideScrollTimer: null,
+      editingField: '',
+      nameDraft: this.rawName || '',
+      categoryDraft: this.rawCategoryId != null ? String(this.rawCategoryId) : '',
+      createdDialogVisible: false,
+      createdDateDraft: createdParts.date,
+      createdTimeDraft: createdParts.time,
     }
   },
   computed: {
@@ -226,11 +374,39 @@ export default {
     showCategoryField() {
       return this.previewItems.some(item => item?.type === 'image')
     },
+    createdTargetDateGroup() {
+      if (!this.createdDateDraft || this.createdDateDraft.length < 7) return ''
+      return this.createdDateDraft.slice(0, 7)
+    },
+    createdMoveWarning() {
+      if (!this.currentDateGroup || !this.createdTargetDateGroup) return ''
+      if (this.createdTargetDateGroup === this.currentDateGroup) return ''
+      return `文件将移动到 ${this.createdTargetDateGroup} 文件夹，并同步修改系统创建时间。`
+    },
+    createdConfirmLabel() {
+      return this.createdMoveWarning ? '确认并移动' : '确认修改'
+    },
   },
   watch: {
     visible(nextVisible) {
       if (!nextVisible) {
         this.clearAsideScrollState()
+        this.resetEditState()
+      }
+    },
+    rawName(nextValue) {
+      if (this.editingField !== 'name') {
+        this.nameDraft = nextValue || ''
+      }
+    },
+    rawCategoryId(nextValue) {
+      if (this.editingField !== 'category') {
+        this.categoryDraft = nextValue != null ? String(nextValue) : ''
+      }
+    },
+    rawCreatedAt() {
+      if (!this.createdDialogVisible) {
+        this.seedCreatedDrafts()
       }
     },
   },
@@ -238,6 +414,18 @@ export default {
     this.clearAsideScrollState()
   },
   methods: {
+    resetEditState() {
+      this.editingField = ''
+      this.createdDialogVisible = false
+      this.nameDraft = this.rawName || ''
+      this.categoryDraft = this.rawCategoryId != null ? String(this.rawCategoryId) : ''
+      this.seedCreatedDrafts()
+    },
+    seedCreatedDrafts() {
+      const parts = splitDateTimeParts(this.rawCreatedAt)
+      this.createdDateDraft = parts.date
+      this.createdTimeDraft = parts.time
+    },
     onAsideScroll() {
       this.asideScrolling = true
       if (this.asideScrollTimer) {
@@ -253,6 +441,60 @@ export default {
       if (!this.asideScrollTimer) return
       clearTimeout(this.asideScrollTimer)
       this.asideScrollTimer = null
+    },
+    startNameEdit() {
+      if (!this.canEditName || this.editBusy) return
+      this.editingField = 'name'
+      this.nameDraft = this.rawName || ''
+    },
+    cancelNameEdit() {
+      if (this.editBusy) return
+      this.editingField = ''
+      this.nameDraft = this.rawName || ''
+    },
+    submitNameEdit() {
+      if (!this.canEditName || this.editBusy) return
+      const nextName = String(this.nameDraft || '').trim()
+      if (!nextName) return
+      this.$emit('submit-name-edit', nextName)
+    },
+    startCategoryEdit() {
+      if (!this.canEditCategory || this.editBusy) return
+      this.editingField = 'category'
+      if (this.rawCategoryId != null) {
+        this.categoryDraft = String(this.rawCategoryId)
+        return
+      }
+      this.categoryDraft = this.categoryOptions[0] ? String(this.categoryOptions[0].value) : ''
+    },
+    cancelCategoryEdit() {
+      if (this.editBusy) return
+      this.editingField = ''
+      this.categoryDraft = this.rawCategoryId != null ? String(this.rawCategoryId) : ''
+    },
+    submitCategoryEdit() {
+      if (!this.canEditCategory || this.editBusy) return
+      const categoryId = Number(this.categoryDraft)
+      if (!Number.isInteger(categoryId) || categoryId <= 0) return
+      this.$emit('submit-category-edit', categoryId)
+    },
+    openCreatedEdit() {
+      if (!this.canEditCreatedAt || this.editBusy) return
+      this.seedCreatedDrafts()
+      this.createdDialogVisible = true
+    },
+    closeCreatedEdit() {
+      if (this.editBusy) return
+      this.createdDialogVisible = false
+      this.seedCreatedDrafts()
+    },
+    submitCreatedEdit() {
+      if (!this.canEditCreatedAt || this.editBusy) return
+      if (!this.createdDateDraft || !this.createdTimeDraft) return
+      const normalizedTime = this.createdTimeDraft.length === 5
+        ? `${this.createdTimeDraft}:00`
+        : this.createdTimeDraft
+      this.$emit('submit-created-edit', `${this.createdDateDraft}T${normalizedTime}`)
     },
   },
 }
@@ -485,11 +727,39 @@ export default {
   gap: 0.42rem;
 }
 
+.detail-field__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .detail-field__label {
   color: #64748b;
   font-size: 0.76rem;
   font-weight: 700;
   letter-spacing: 0.08em;
+}
+
+.detail-field__edit {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #2563eb;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color 140ms ease, opacity 140ms ease;
+}
+
+.detail-field__edit:hover:not(:disabled) {
+  color: #1d4ed8;
+}
+
+.detail-field__edit:disabled {
+  color: #94a3b8;
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .detail-field__value {
@@ -517,6 +787,70 @@ export default {
 .detail-field__text {
   display: block;
   width: 100%;
+}
+
+.detail-inline-editor {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.62rem;
+}
+
+.detail-inline-editor__input {
+  width: 100%;
+  min-height: 2.8rem;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 14px;
+  padding: 0.72rem 0.9rem;
+  background: rgba(248, 250, 252, 0.96);
+  color: #0f172a;
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
+.detail-inline-editor__input:focus {
+  outline: none;
+  border-color: rgba(37, 99, 235, 0.46);
+  box-shadow: 0 0 0 3px rgba(191, 219, 254, 0.7);
+}
+
+.detail-inline-editor__select {
+  appearance: none;
+}
+
+.detail-inline-editor__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
+.detail-inline-editor__btn {
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 12px;
+  padding: 0.48rem 0.88rem;
+  background: rgba(255, 255, 255, 0.96);
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+}
+
+.detail-inline-editor__btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+}
+
+.detail-inline-editor__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.detail-inline-editor__btn--primary {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: linear-gradient(135deg, #2563eb, #0f766e);
+  color: #fff;
 }
 
 .detail-field__placeholder {
@@ -590,6 +924,159 @@ export default {
   border-color: rgba(234, 88, 12, 0.3);
 }
 
+.detail-subdialog {
+  position: fixed;
+  inset: 0;
+  z-index: 82;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(6px);
+}
+
+.detail-subdialog__panel {
+  width: min(100%, 460px);
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-radius: 24px;
+  padding: 1.1rem 1.1rem 1rem;
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.98), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98));
+  box-shadow: 0 24px 72px rgba(15, 23, 42, 0.24);
+}
+
+.detail-subdialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.detail-subdialog__title {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.detail-subdialog__subtitle {
+  margin: 0.4rem 0 0;
+  color: #64748b;
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+.detail-subdialog__close {
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.detail-subdialog__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.detail-subdialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+}
+
+.detail-subdialog__label {
+  color: #475569;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.detail-subdialog__input {
+  width: 100%;
+  min-height: 2.9rem;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 14px;
+  padding: 0.72rem 0.86rem;
+  background: rgba(248, 250, 252, 0.96);
+  color: #0f172a;
+  font-size: 0.92rem;
+}
+
+.detail-subdialog__input:focus {
+  outline: none;
+  border-color: rgba(37, 99, 235, 0.46);
+  box-shadow: 0 0 0 3px rgba(191, 219, 254, 0.7);
+}
+
+.detail-subdialog__hint {
+  margin: 0.9rem 0 0;
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.detail-subdialog__warning {
+  margin: 0.75rem 0 0;
+  border-radius: 16px;
+  padding: 0.78rem 0.88rem;
+  background: rgba(255, 237, 213, 0.9);
+  color: #b45309;
+  font-size: 0.84rem;
+  line-height: 1.65;
+}
+
+.detail-subdialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.detail-subdialog__btn {
+  border: 0;
+  border-radius: 14px;
+  padding: 0.68rem 1rem;
+  font-size: 0.84rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 160ms ease, opacity 160ms ease;
+}
+
+.detail-subdialog__btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.detail-subdialog__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.detail-subdialog__btn--ghost {
+  background: rgba(226, 232, 240, 0.82);
+  color: #334155;
+}
+
+.detail-subdialog__btn--primary {
+  background: linear-gradient(135deg, #2563eb, #0f766e);
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.22);
+}
+
+.detail-subdialog-fade-enter-active,
+.detail-subdialog-fade-leave-active {
+  transition: opacity 180ms ease;
+}
+
+.detail-subdialog-fade-enter-from,
+.detail-subdialog-fade-leave-to {
+  opacity: 0;
+}
+
 @keyframes detail-wave {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
@@ -632,12 +1119,20 @@ export default {
     grid-template-columns: 92px minmax(0, 1fr);
   }
 
+  .detail-inline-editor__actions,
+  .detail-subdialog__actions,
   .detail-field__tag-row,
   .detail-panel__actions {
     grid-template-columns: 1fr;
     display: grid;
   }
 
+  .detail-subdialog__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-inline-editor__btn,
+  .detail-subdialog__btn,
   .detail-panel__action {
     width: 100%;
   }

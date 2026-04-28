@@ -106,6 +106,36 @@ class ImageMetaResponse(BaseModel):
     items: List[ImageMetaItem]
 
 
+class ImageMetadataUpdateTarget(BaseModel):
+    image_id: int
+    media_rel_path: Optional[str] = None
+
+
+class ImageMetadataUpdateRequest(BaseModel):
+    items: List[ImageMetadataUpdateTarget] = Field(default_factory=list)
+    name: Optional[str] = None
+    category_id: Optional[int] = None
+    file_created_at: Optional[datetime] = None
+
+
+class ImageMetadataUpdateItem(BaseModel):
+    image_id: int
+    source_media_rel_path: Optional[str] = None
+    media_rel_path: Optional[str] = None
+    name: str = ""
+    category_id: Optional[int] = None
+    file_created_at: Optional[datetime] = None
+    renamed: bool = False
+    moved: bool = False
+
+
+class ImageMetadataUpdateResponse(BaseModel):
+    items: List[ImageMetadataUpdateItem] = Field(default_factory=list)
+    updated_count: int = 0
+    renamed_count: int = 0
+    moved_count: int = 0
+
+
 class ViewerPreferenceRequest(BaseModel):
     viewer_id: Optional[str] = None
 

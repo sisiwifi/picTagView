@@ -300,16 +300,28 @@
       :size-label="selectionDetailSizeLabel"
       :imported-field="selectionDetailImportedField"
       :created-field="selectionDetailCreatedField"
+      :raw-name="selectionDetailRawName"
+      :raw-category-id="selectionDetailRawCategoryId"
+      :raw-created-at="selectionDetailRawCreatedAt"
       :primary-action-label="selectionDetailPrimaryActionLabel"
       :can-open-primary-action="canOpenPrimaryActionFromDetails && !actionBusy"
       :danger-action-disabled="actionBusy"
       :can-edit-tags="canOpenTagMenu"
       :tag-menu-disabled="tagMenuBusy || actionBusy"
+      :can-edit-name="canEditSelectionName"
+      :can-edit-category="canEditSelectionCategory"
+      :can-edit-created-at="canEditSelectionCreatedAt"
+      :edit-busy="metadataEditBusy"
+      :current-date-group="dateGroup"
+      :category-options="selectionDetailCategoryOptions"
       @close="closeSelectionDetails"
       @open-tag-menu="openTagMenu"
       @delete="onReservedDeleteClick"
       @open-primary="openPrimaryFromDetails"
       @preview-error="onSelectionDetailPreviewError"
+      @submit-name-edit="submitSelectionNameEdit"
+      @submit-category-edit="submitSelectionCategoryEdit"
+      @submit-created-edit="submitSelectionCreatedEdit"
     />
 
     <TagMenuDialog
@@ -547,6 +559,7 @@ export default {
       tagFormTag: null,
       tagFormExistingNames: [],
       selectAllMenuOpen: false,
+      metadataEditBusy: false,
       actionBusy: false,
       actionBusyText: '',
       confirmDialog: createDialogState(),
@@ -1173,8 +1186,28 @@ export default {
     selectionDetailNameField() {
       return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailNameText(item)))
     },
+    selectionDetailRawName() {
+      const item = this.selectedEntries[0]?.item
+      if (item?.type !== 'image') return ''
+      return this.detailNameText(item)
+    },
     selectionDetailCategoryField() {
       return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailCategoryText(item)))
+    },
+    selectionDetailRawCategoryId() {
+      const item = this.selectedEntries[0]?.item
+      const categoryId = Number(item?.category_id)
+      if (item?.type !== 'image' || !Number.isInteger(categoryId) || categoryId <= 0) return null
+      return categoryId
+    },
+    selectionDetailCategoryOptions() {
+      return Object.entries(this.categoryDisplayMap)
+        .map(([id, label]) => ({
+          value: Number(id),
+          label: label || `#${id}`,
+        }))
+        .filter(option => Number.isInteger(option.value) && option.value > 0)
+        .sort((left, right) => left.value - right.value)
     },
     selectionDetailTagsField() {
       const imageEntries = this.selectedEntries.filter(({ item }) => item?.type === 'image')
@@ -1237,6 +1270,11 @@ export default {
     selectionDetailCreatedField() {
       return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailCreatedText(item)))
     },
+    selectionDetailRawCreatedAt() {
+      const item = this.selectedEntries[0]?.item
+      if (item?.type !== 'image') return null
+      return item?.file_created_at || null
+    },
     selectionDetailType() {
       return this.selectedEntries[0]?.item?.type || null
     },
@@ -1256,6 +1294,19 @@ export default {
         .map(({ item }) => item)
         .filter(item => item?.type === 'image' && Number.isInteger(item?.id))
         .map(item => item.id)
+    },
+    canEditSelectionName() {
+      if (this.actionBusy || this.metadataEditBusy) return false
+      if (this.selectedEntries.length !== 1) return false
+      return this.selectedEntries[0]?.item?.type === 'image' && Number.isInteger(this.selectedEntries[0]?.item?.id)
+    },
+    canEditSelectionCategory() {
+      if (this.actionBusy || this.metadataEditBusy) return false
+      return this.selectedImageIds.length > 0 && this.selectionDetailCategoryOptions.length > 0
+    },
+    canEditSelectionCreatedAt() {
+      if (this.actionBusy || this.metadataEditBusy) return false
+      return this.selectedImageIds.length > 0
     },
     canOpenTagMenu() {
       return this.selectedImageIds.length > 0
@@ -2098,6 +2149,84 @@ export default {
       } catch {
         // ignore category label load failures in overlay
       }
+    },
+
+    selectedImageMetadataTargets() {
+      const seen = new Set()
+      return this.selectedEntries
+        .map(({ item }) => item)
+        .filter(item => item?.type === 'image' && Number.isInteger(item?.id))
+        .map(item => ({
+          image_id: item.id,
+          media_rel_path: item.media_rel_path || null,
+        }))
+        .filter((target) => {
+          const key = `${target.image_id}:${target.media_rel_path || ''}`
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+    },
+
+    openMetadataEditErrorDialog(message, title = '修改失败') {
+      this.openConfirmDialog({
+        title,
+        message: message || '修改失败，请稍后重试。',
+        confirmLabel: '知道了',
+        tone: 'danger',
+        showCancel: false,
+      })
+    },
+
+    async applySelectionImageMetadata(payload) {
+      if (this.metadataEditBusy) return
+
+      const targets = this.selectedImageMetadataTargets()
+      if (!targets.length) return
+
+      this.metadataEditBusy = true
+      try {
+        const res = await fetch(`${API_BASE}/api/images/metadata`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items: targets,
+            ...payload,
+          }),
+        })
+
+        const data = await res.json().catch(() => null)
+        if (!res.ok) {
+          this.openMetadataEditErrorDialog(
+            data?.detail || `请求未成功完成，服务器返回 HTTP ${res.status}。`
+          )
+          return
+        }
+
+        await this.loadData()
+      } catch (err) {
+        this.openMetadataEditErrorDialog(err?.message || '修改失败，请稍后重试。')
+      } finally {
+        this.metadataEditBusy = false
+      }
+    },
+
+    async submitSelectionNameEdit(name) {
+      const normalizedName = String(name || '').trim()
+      if (!normalizedName) return
+      await this.applySelectionImageMetadata({ name: normalizedName })
+    },
+
+    async submitSelectionCategoryEdit(categoryId) {
+      const normalizedCategoryId = Number(categoryId)
+      if (!Number.isInteger(normalizedCategoryId) || normalizedCategoryId <= 0) return
+      await this.applySelectionImageMetadata({ category_id: normalizedCategoryId })
+    },
+
+    async submitSelectionCreatedEdit(localDateTime) {
+      const normalizedValue = String(localDateTime || '').trim()
+      if (!normalizedValue) return
+      await this.applySelectionImageMetadata({ file_created_at: normalizedValue })
     },
 
     buildDetailField(values, options = {}) {
