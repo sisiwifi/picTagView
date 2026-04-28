@@ -1581,7 +1581,13 @@ export default {
       return (hash >>> 0).toString(36)
     },
 
-    async loadData() {
+    async loadData(options = {}) {
+      const preserveSelection = Boolean(options?.preserveSelection)
+      const preserveView = Object.prototype.hasOwnProperty.call(options || {}, 'preserveView')
+        ? Boolean(options.preserveView)
+        : preserveSelection
+      const selectionSnapshot = preserveSelection ? this.captureSelectionSnapshot() : null
+
       this.loading = true
       this.sortBy = this.isAlbumMode ? 'alpha' : 'date'
       this.sortDir = 'asc'
@@ -1610,9 +1616,13 @@ export default {
         clearTimeout(this.previewRepairTimer)
         this.previewRepairTimer = null
       }
-      this.closeSelectionDetails()
-      this.closeSelectAllMenu()
-      this.clearSelection()
+      if (preserveSelection) {
+        this.closeSelectAllMenu()
+      } else {
+        this.closeSelectionDetails()
+        this.closeSelectAllMenu()
+        this.clearSelection()
+      }
       this.clearPointerGesture()
       this.tagFetchSerial += 1
       this.tagsLoading = false
@@ -1620,9 +1630,11 @@ export default {
       this.virtualEndIndex = 0
       this.virtualAnchorIndex = 0
       this.virtualContainerTop = 0
-      this.photoPageIndex = 0
-      this.selectionGridPageIndex = 0
-      this.listPageIndex = 0
+      if (!preserveView) {
+        this.photoPageIndex = 0
+        this.selectionGridPageIndex = 0
+        this.listPageIndex = 0
+      }
       this.scrollTop = typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0
       this.viewportHeight = typeof window !== 'undefined' ? window.innerHeight : this.viewportHeight
       this.teardownObserver()
@@ -1646,7 +1658,12 @@ export default {
         this.loading = false
       }
 
-      window.scrollTo({ top: 0, behavior: 'instant' })
+      if (preserveSelection) {
+        this.restoreSelectionSnapshot(selectionSnapshot)
+      }
+      if (!preserveView) {
+        window.scrollTo({ top: 0, behavior: 'instant' })
+      }
       this.refreshObservedGrid()
       this.ensureCategoryLabelsLoaded()
       if (this.selectionInfoMode === 'tags') {
@@ -1730,6 +1747,114 @@ export default {
     originalPreviewPath(item) {
       if (!item || item.type !== 'image' || !item.media_rel_path) return ''
       return `/media/${String(item.media_rel_path).replace(/\\/g, '/')}`
+    },
+
+    selectionSnapshotToken(item) {
+      if (!item) return null
+
+      if (item.type === 'album') {
+        const key = item.public_id || item.album_path || item.id
+        if (!key) return null
+        return {
+          type: 'album',
+          key: String(key),
+        }
+      }
+
+      if (item.type === 'image') {
+        const imageId = Number(item?.id)
+        return {
+          type: 'image',
+          id: Number.isInteger(imageId) && imageId > 0 ? imageId : null,
+          mediaRelPath: item?.media_rel_path ? String(item.media_rel_path) : '',
+          name: item?.name ? String(item.name) : '',
+        }
+      }
+
+      return null
+    },
+
+    matchesSelectionSnapshotItem(item, target) {
+      if (!item || !target || item.type !== target.type) return false
+
+      if (target.type === 'album') {
+        const key = item.public_id || item.album_path || item.id
+        return Boolean(target.key) && String(key || '') === String(target.key)
+      }
+
+      const imageId = Number(item?.id)
+      if (Number.isInteger(target.id) && target.id > 0 && Number.isInteger(imageId) && imageId > 0) {
+        return imageId === target.id
+      }
+      if (target.mediaRelPath) {
+        return String(item?.media_rel_path || '') === target.mediaRelPath
+      }
+      if (target.name) {
+        return String(item?.name || '') === target.name
+      }
+      return false
+    },
+
+    findSelectionSnapshotIndex(target) {
+      if (!target) return -1
+      return this.items.findIndex(item => this.matchesSelectionSnapshotItem(item, target))
+    },
+
+    captureSelectionSnapshot() {
+      const selectedItems = this.selectedEntries
+        .map(({ item }) => this.selectionSnapshotToken(item))
+        .filter(Boolean)
+      const anchorItem = Number.isInteger(this.selectionAnchorIndex)
+        ? this.selectionSnapshotToken(this.items[this.selectionAnchorIndex])
+        : null
+
+      return {
+        selectedItems,
+        anchorItem,
+        selectionTypeLock: this.selectionTypeLock,
+        detailsOpen: this.selectionDetailsOpen,
+      }
+    },
+
+    restoreSelectionSnapshot(snapshot) {
+      if (!snapshot) return
+
+      const nextSelectedMap = {}
+      let firstMatchedIndex = null
+      for (const target of (snapshot.selectedItems || [])) {
+        const matchedIndex = this.findSelectionSnapshotIndex(target)
+        if (matchedIndex < 0) continue
+        nextSelectedMap[this.itemKey(this.items[matchedIndex], matchedIndex)] = true
+        if (firstMatchedIndex === null) {
+          firstMatchedIndex = matchedIndex
+        }
+      }
+
+      const matchedKeys = Object.keys(nextSelectedMap)
+      this.selectedMap = nextSelectedMap
+      if (!matchedKeys.length) {
+        this.selectionTypeLock = null
+        this.selectionAnchorIndex = null
+        this.closeSelectionDetails()
+        return
+      }
+
+      const anchorIndex = this.findSelectionSnapshotIndex(snapshot.anchorItem)
+      this.selectionTypeLock = snapshot.selectionTypeLock || this.items[firstMatchedIndex]?.type || null
+      this.selectionAnchorIndex = anchorIndex >= 0 ? anchorIndex : firstMatchedIndex
+
+      if (snapshot.detailsOpen) {
+        if (this.selectionDetailsOpen) {
+          this.$nextTick(() => {
+            this.updateSelectionDetailsBounds()
+          })
+          this.fetchSelectionDetailMetadata()
+        } else {
+          this.openSelectionDetails()
+        }
+      } else if (this.selectionDetailsOpen) {
+        this.closeSelectionDetails()
+      }
     },
 
     isPrimaryPreviewSuppressed(item) {
@@ -2178,6 +2303,125 @@ export default {
       })
     },
 
+    buildSortTimestamp(value) {
+      if (!value) return null
+      const parsed = value instanceof Date ? value : new Date(value)
+      if (Number.isNaN(parsed.getTime())) return null
+      return Math.floor(parsed.getTime() / 1000)
+    },
+
+    deriveImageSortTimestamp(item, nextFileCreatedAt = undefined) {
+      const createdCandidate = nextFileCreatedAt !== undefined ? nextFileCreatedAt : item?.file_created_at
+      return this.buildSortTimestamp(createdCandidate)
+        ?? this.buildSortTimestamp(item?.imported_at)
+        ?? this.buildSortTimestamp(item?.created_at)
+        ?? (Number.isFinite(Number(item?.sort_ts)) ? Number(item.sort_ts) : null)
+    },
+
+    matchesCurrentBrowseContextMediaPath(mediaRelPath) {
+      const normalizedPath = String(mediaRelPath || '').replace(/\\/g, '/')
+      if (!normalizedPath) return false
+
+      if (this.isAlbumMode) {
+        return normalizedPath.startsWith(`media/${this.fullAlbumPath}/`)
+      }
+
+      const prefix = `media/${this.dateGroup}/`
+      if (!normalizedPath.startsWith(prefix)) return false
+      const remaining = normalizedPath.slice(prefix.length)
+      return remaining.length > 0 && !remaining.includes('/')
+    },
+
+    applySelectionImageMetadataResponse(responseItems, payload = {}) {
+      const updates = Array.isArray(responseItems) ? responseItems : []
+      if (!updates.length) return
+
+      const selectionSnapshot = this.captureSelectionSnapshot()
+      const updatesBySourcePath = new Map()
+      const updatesByImageId = new Map()
+      let shouldRefreshCategoryLabels = false
+
+      for (const update of updates) {
+        const sourcePath = String(update?.source_media_rel_path || '').trim()
+        if (sourcePath) {
+          updatesBySourcePath.set(sourcePath, update)
+        }
+
+        const imageId = Number(update?.image_id)
+        if (Number.isInteger(imageId) && imageId > 0) {
+          updatesByImageId.set(imageId, update)
+        }
+
+        const categoryId = Number(update?.category_id)
+        if (
+          Number.isInteger(categoryId)
+          && categoryId > 0
+          && !Object.prototype.hasOwnProperty.call(this.categoryDisplayMap, categoryId)
+        ) {
+          shouldRefreshCategoryLabels = true
+        }
+      }
+
+      const shouldReorder = typeof payload?.name === 'string'
+        || Object.prototype.hasOwnProperty.call(payload, 'file_created_at')
+        || updates.some(update => Boolean(update?.moved))
+
+      let changed = false
+      let nextItems = []
+      for (const item of this.items) {
+        if (item?.type !== 'image' || !Number.isInteger(item?.id)) {
+          nextItems.push(item)
+          continue
+        }
+
+        const currentPath = String(item.media_rel_path || '').trim()
+        const update = (currentPath && updatesBySourcePath.get(currentPath)) || updatesByImageId.get(item.id)
+        if (!update) {
+          nextItems.push(item)
+          continue
+        }
+
+        changed = true
+        const hasCreatedAt = Object.prototype.hasOwnProperty.call(update, 'file_created_at')
+        const nextFileCreatedAt = hasCreatedAt ? (update.file_created_at || null) : item.file_created_at
+        const nextCategoryId = Number(update?.category_id)
+        const nextItem = {
+          ...item,
+          name: update?.name || item.name,
+          media_rel_path: update?.media_rel_path || item.media_rel_path,
+          category_id: Number.isInteger(nextCategoryId) && nextCategoryId > 0 ? nextCategoryId : item.category_id,
+          file_created_at: nextFileCreatedAt,
+        }
+
+        const nextSortTs = this.deriveImageSortTimestamp(nextItem, nextFileCreatedAt)
+        if (nextSortTs != null) {
+          nextItem.sort_ts = nextSortTs
+        }
+
+        if (!this.matchesCurrentBrowseContextMediaPath(nextItem.media_rel_path)) {
+          continue
+        }
+
+        nextItems.push(nextItem)
+      }
+
+      if (!changed) return
+
+      if (shouldReorder) {
+        nextItems = this.sortItems(nextItems)
+      }
+
+      this.items = nextItems
+      this.layoutFingerprint = this.computeLayoutFingerprint(nextItems, this.imgDimensions)
+      this.lastCacheRequestSignature = ''
+      this.restoreSelectionSnapshot(selectionSnapshot)
+      this.refreshObservedGrid()
+
+      if (shouldRefreshCategoryLabels) {
+        this.ensureCategoryLabelsLoaded(true)
+      }
+    },
+
     async applySelectionImageMetadata(payload) {
       if (this.metadataEditBusy) return
 
@@ -2203,7 +2447,7 @@ export default {
           return
         }
 
-        await this.loadData()
+        this.applySelectionImageMetadataResponse(data?.items, payload)
       } catch (err) {
         this.openMetadataEditErrorDialog(err?.message || '修改失败，请稍后重试。')
       } finally {

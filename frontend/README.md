@@ -75,6 +75,8 @@ frontend/
    - `color`
    - `border_color`
    - `background_color`
+- 选择模式详情浮层中的文件名 / 主分类编辑会直接把 `PATCH /api/images/metadata` 返回的增量结果回写到当前 `items`；不会因为这两类修改重新调用整页列表接口或清空缩略图。
+- 创建时间修改也不再触发整页重载：若图片仍属于当前 `date_group` 或当前相册路径，只做本地字段更新与重排；若已移出当前视图，则只从当前列表局部移除并刷新排布。
 
 ### 4.4 回收站浏览与页面配置
 - `TrashPage` 调用 `GET /api/trash/items`

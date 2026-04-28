@@ -81,39 +81,36 @@
           <div class="detail-field">
             <div class="detail-field__head">
               <span class="detail-field__label">名称</span>
-              <button
-                v-if="showCategoryField"
-                class="detail-field__edit"
-                type="button"
-                :disabled="!canEditName || editBusy"
-                @click="startNameEdit"
-              >编辑</button>
             </div>
             <div class="detail-field__value">
               <div v-if="editingField === 'name'" class="detail-inline-editor">
                 <input
-                  v-model.trim="nameDraft"
+                    ref="nameEditorInput"
+                    v-model="nameDraft"
                   class="detail-inline-editor__input"
                   type="text"
                   autocomplete="off"
                   spellcheck="false"
                   :disabled="editBusy"
-                  @keydown.enter.prevent="submitNameEdit"
+                    @blur="onNameEditBlur"
+                    @keydown.enter.prevent="handleNameEditCommitKey"
                   @keydown.esc.prevent="cancelNameEdit"
                 >
-                <div class="detail-inline-editor__actions">
-                  <button class="detail-inline-editor__btn" type="button" :disabled="editBusy" @click="cancelNameEdit">取消</button>
-                  <button
-                    class="detail-inline-editor__btn detail-inline-editor__btn--primary"
-                    type="button"
-                    :disabled="editBusy || !String(nameDraft || '').trim()"
-                    @click="submitNameEdit"
-                  >{{ editBusy ? '保存中…' : '保存' }}</button>
-                </div>
               </div>
               <template v-else>
-                <em v-if="nameField.isVarious" class="detail-field__various">various</em>
-                <span v-else class="detail-field__text">{{ nameField.text || '—' }}</span>
+                  <div class="detail-field__display detail-field__display--editable">
+                    <em v-if="nameField.isVarious" class="detail-field__various detail-field__various--inline">various</em>
+                    <span v-else class="detail-field__text detail-field__text--inline">{{ nameField.text || '—' }}</span>
+                    <button
+                      v-if="showCategoryField && canEditName"
+                      class="detail-field__icon-btn"
+                      type="button"
+                      title="编辑文件名"
+                      aria-label="编辑文件名"
+                      :disabled="editBusy"
+                      @click="startNameEdit"
+                    >✎</button>
+                  </div>
               </template>
             </div>
           </div>
@@ -121,31 +118,35 @@
           <div v-if="showCategoryField" class="detail-field">
             <div class="detail-field__head">
               <span class="detail-field__label">主分类</span>
-              <button
-                class="detail-field__edit"
-                type="button"
-                :disabled="!canEditCategory || editBusy"
-                @click="startCategoryEdit"
-              >编辑</button>
             </div>
             <div class="detail-field__value">
               <div v-if="editingField === 'category'" class="detail-inline-editor">
-                <select v-model="categoryDraft" class="detail-inline-editor__input detail-inline-editor__select" :disabled="editBusy">
+                <select
+                  ref="categoryEditorSelect"
+                  v-model="categoryDraft"
+                  class="detail-inline-editor__input detail-inline-editor__select"
+                  :disabled="editBusy"
+                  @blur="onCategoryEditBlur"
+                  @keydown.enter.prevent="handleCategoryEditCommitKey"
+                  @keydown.esc.prevent="cancelCategoryEdit"
+                >
                   <option v-for="option in categoryOptions" :key="option.value" :value="String(option.value)">{{ option.label }}</option>
                 </select>
-                <div class="detail-inline-editor__actions">
-                  <button class="detail-inline-editor__btn" type="button" :disabled="editBusy" @click="cancelCategoryEdit">取消</button>
-                  <button
-                    class="detail-inline-editor__btn detail-inline-editor__btn--primary"
-                    type="button"
-                    :disabled="editBusy || !categoryDraft"
-                    @click="submitCategoryEdit"
-                  >{{ editBusy ? '保存中…' : '保存' }}</button>
-                </div>
               </div>
               <template v-else>
-                <em v-if="categoryField.isVarious" class="detail-field__various">various</em>
-                <span v-else class="detail-field__text">{{ categoryField.text || '—' }}</span>
+                <div class="detail-field__display detail-field__display--editable">
+                  <em v-if="categoryField.isVarious" class="detail-field__various detail-field__various--inline">various</em>
+                  <span v-else class="detail-field__text detail-field__text--inline">{{ categoryField.text || '—' }}</span>
+                  <button
+                    v-if="canEditCategory"
+                    class="detail-field__icon-btn"
+                    type="button"
+                    title="编辑主分类"
+                    aria-label="编辑主分类"
+                    :disabled="editBusy"
+                    @click="startCategoryEdit"
+                  >✎</button>
+                </div>
               </template>
             </div>
           </div>
@@ -192,17 +193,21 @@
           <div class="detail-field">
             <div class="detail-field__head">
               <span class="detail-field__label">创建时间</span>
-              <button
-                v-if="showCategoryField"
-                class="detail-field__edit"
-                type="button"
-                :disabled="!canEditCreatedAt || editBusy"
-                @click="openCreatedEdit"
-              >编辑</button>
             </div>
             <div class="detail-field__value">
-              <em v-if="createdField.isVarious" class="detail-field__various">various</em>
-              <span v-else class="detail-field__text">{{ createdField.text || '—' }}</span>
+              <div class="detail-field__display detail-field__display--editable">
+                <em v-if="createdField.isVarious" class="detail-field__various detail-field__various--inline">various</em>
+                <span v-else class="detail-field__text detail-field__text--inline">{{ createdField.text || '—' }}</span>
+                <button
+                  v-if="showCategoryField && canEditCreatedAt"
+                  class="detail-field__icon-btn"
+                  type="button"
+                  title="编辑创建时间"
+                  aria-label="编辑创建时间"
+                  :disabled="editBusy"
+                  @click="openCreatedEdit"
+                >✎</button>
+              </div>
             </div>
           </div>
 
@@ -270,10 +275,24 @@
       </div>
     </Transition>
   </Teleport>
+
+  <ConfirmationDialog
+    :visible="inlineConfirm.visible"
+    title="确认更改"
+    :message="inlineConfirmMessage"
+    confirm-label="确认更改"
+    cancel-label="取消"
+    tone="accent"
+    :busy="editBusy"
+    busy-label="保存中…"
+    @cancel="handleInlineConfirmCancel"
+    @confirm="handleInlineConfirmSubmit"
+  />
 </template>
 
 <script>
 import TagChipList from './TagChipList.vue'
+import ConfirmationDialog from './ConfirmationDialog.vue'
 
 function padDatePart(value) {
   return String(value).padStart(2, '0')
@@ -288,10 +307,19 @@ function splitDateTimeParts(rawValue) {
   }
 }
 
+function createInlineConfirmState() {
+  return {
+    visible: false,
+    field: '',
+    nextValue: '',
+  }
+}
+
 export default {
   name: 'SelectionDetailOverlay',
   components: {
     TagChipList,
+    ConfirmationDialog,
   },
   props: {
     visible: { type: Boolean, default: false },
@@ -362,6 +390,7 @@ export default {
       editingField: '',
       nameDraft: this.rawName || '',
       categoryDraft: this.rawCategoryId != null ? String(this.rawCategoryId) : '',
+      inlineConfirm: createInlineConfirmState(),
       createdDialogVisible: false,
       createdDateDraft: createdParts.date,
       createdTimeDraft: createdParts.time,
@@ -385,6 +414,15 @@ export default {
     },
     createdConfirmLabel() {
       return this.createdMoveWarning ? '确认并移动' : '确认修改'
+    },
+    inlineConfirmMessage() {
+      if (this.inlineConfirm.field === 'name') {
+        return '文件名已改变，是否确认更改？'
+      }
+      if (this.inlineConfirm.field === 'category') {
+        return '主分类已改变，是否确认更改？'
+      }
+      return ''
     },
   },
   watch: {
@@ -416,10 +454,19 @@ export default {
   methods: {
     resetEditState() {
       this.editingField = ''
+      this.inlineConfirm = createInlineConfirmState()
       this.createdDialogVisible = false
       this.nameDraft = this.rawName || ''
       this.categoryDraft = this.rawCategoryId != null ? String(this.rawCategoryId) : ''
       this.seedCreatedDrafts()
+    },
+    focusEditor(refName, shouldSelect = false) {
+      const editor = this.$refs[refName]
+      if (!editor || typeof editor.focus !== 'function') return
+      editor.focus()
+      if (shouldSelect && typeof editor.select === 'function') {
+        editor.select()
+      }
     },
     seedCreatedDrafts() {
       const parts = splitDateTimeParts(this.rawCreatedAt)
@@ -443,43 +490,136 @@ export default {
       this.asideScrollTimer = null
     },
     startNameEdit() {
-      if (!this.canEditName || this.editBusy) return
+      if (!this.canEditName || this.editBusy || this.inlineConfirm.visible) return
+      if (this.editingField && this.editingField !== 'name') return
       this.editingField = 'name'
       this.nameDraft = this.rawName || ''
+      this.$nextTick(() => {
+        this.focusEditor('nameEditorInput', true)
+      })
     },
     cancelNameEdit() {
       if (this.editBusy) return
       this.editingField = ''
       this.nameDraft = this.rawName || ''
+      if (this.inlineConfirm.field === 'name') {
+        this.inlineConfirm = createInlineConfirmState()
+      }
     },
-    submitNameEdit() {
+    requestNameEditConfirmation() {
       if (!this.canEditName || this.editBusy) return
       const nextName = String(this.nameDraft || '').trim()
-      if (!nextName) return
-      this.$emit('submit-name-edit', nextName)
+      const currentName = String(this.rawName || '').trim()
+      if (!nextName || nextName === currentName) {
+        this.cancelNameEdit()
+        return
+      }
+      this.inlineConfirm = {
+        visible: true,
+        field: 'name',
+        nextValue: nextName,
+      }
+    },
+    onNameEditBlur() {
+      if (this.editingField !== 'name' || this.inlineConfirm.visible) return
+      this.requestNameEditConfirmation()
+    },
+    handleNameEditCommitKey() {
+      const input = this.$refs.nameEditorInput
+      if (input && typeof input.blur === 'function') {
+        input.blur()
+        return
+      }
+      this.requestNameEditConfirmation()
     },
     startCategoryEdit() {
-      if (!this.canEditCategory || this.editBusy) return
+      if (!this.canEditCategory || this.editBusy || this.inlineConfirm.visible) return
+      if (this.editingField && this.editingField !== 'category') return
       this.editingField = 'category'
       if (this.rawCategoryId != null) {
         this.categoryDraft = String(this.rawCategoryId)
-        return
+      } else {
+        this.categoryDraft = this.categoryOptions[0] ? String(this.categoryOptions[0].value) : ''
       }
-      this.categoryDraft = this.categoryOptions[0] ? String(this.categoryOptions[0].value) : ''
+      this.$nextTick(() => {
+        this.focusEditor('categoryEditorSelect')
+      })
     },
     cancelCategoryEdit() {
       if (this.editBusy) return
       this.editingField = ''
       this.categoryDraft = this.rawCategoryId != null ? String(this.rawCategoryId) : ''
+      if (this.inlineConfirm.field === 'category') {
+        this.inlineConfirm = createInlineConfirmState()
+      }
     },
-    submitCategoryEdit() {
+    requestCategoryEditConfirmation() {
       if (!this.canEditCategory || this.editBusy) return
-      const categoryId = Number(this.categoryDraft)
-      if (!Number.isInteger(categoryId) || categoryId <= 0) return
-      this.$emit('submit-category-edit', categoryId)
+      const nextCategoryId = String(this.categoryDraft || '')
+      const currentCategoryId = this.rawCategoryId != null ? String(this.rawCategoryId) : ''
+      if (!nextCategoryId || nextCategoryId === currentCategoryId) {
+        this.cancelCategoryEdit()
+        return
+      }
+      this.inlineConfirm = {
+        visible: true,
+        field: 'category',
+        nextValue: nextCategoryId,
+      }
+    },
+    onCategoryEditBlur() {
+      if (this.editingField !== 'category' || this.inlineConfirm.visible) return
+      this.requestCategoryEditConfirmation()
+    },
+    handleCategoryEditCommitKey() {
+      const select = this.$refs.categoryEditorSelect
+      if (select && typeof select.blur === 'function') {
+        select.blur()
+        return
+      }
+      this.requestCategoryEditConfirmation()
+    },
+    handleInlineConfirmCancel() {
+      if (this.editBusy) return
+      if (this.inlineConfirm.field === 'name') {
+        this.cancelNameEdit()
+        return
+      }
+      if (this.inlineConfirm.field === 'category') {
+        this.cancelCategoryEdit()
+        return
+      }
+      this.inlineConfirm = createInlineConfirmState()
+    },
+    handleInlineConfirmSubmit() {
+      if (this.editBusy || !this.inlineConfirm.visible) return
+      if (this.inlineConfirm.field === 'name') {
+        const nextName = String(this.inlineConfirm.nextValue || '').trim()
+        if (!nextName) {
+          this.cancelNameEdit()
+          return
+        }
+        this.editingField = ''
+        this.nameDraft = nextName
+        this.inlineConfirm = createInlineConfirmState()
+        this.$emit('submit-name-edit', nextName)
+        return
+      }
+
+      if (this.inlineConfirm.field === 'category') {
+        const categoryId = Number(this.inlineConfirm.nextValue)
+        if (!Number.isInteger(categoryId) || categoryId <= 0) {
+          this.cancelCategoryEdit()
+          return
+        }
+        this.editingField = ''
+        this.categoryDraft = String(categoryId)
+        this.inlineConfirm = createInlineConfirmState()
+        this.$emit('submit-category-edit', categoryId)
+      }
     },
     openCreatedEdit() {
-      if (!this.canEditCreatedAt || this.editBusy) return
+      if (!this.canEditCreatedAt || this.editBusy || this.inlineConfirm.visible || this.editingField) return
       this.seedCreatedDrafts()
       this.createdDialogVisible = true
     },
@@ -494,6 +634,7 @@ export default {
       const normalizedTime = this.createdTimeDraft.length === 5
         ? `${this.createdTimeDraft}:00`
         : this.createdTimeDraft
+      this.createdDialogVisible = false
       this.$emit('submit-created-edit', `${this.createdDateDraft}T${normalizedTime}`)
     },
   },
@@ -789,68 +930,79 @@ export default {
   width: 100%;
 }
 
+.detail-field__display {
+  width: 100%;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+}
+
+.detail-field__display--editable {
+  align-items: flex-start;
+}
+
+.detail-field__text--inline,
+.detail-field__various--inline {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+.detail-field__icon-btn {
+  width: 1.62rem;
+  height: 1.62rem;
+  flex: 0 0 auto;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 8px;
+  padding: 0;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+
+.detail-field__icon-btn:hover:not(:disabled) {
+  background: #e2e8f0;
+  border-color: rgba(100, 116, 139, 0.55);
+  color: #0f172a;
+}
+
+.detail-field__icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .detail-inline-editor {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 0.62rem;
+  gap: 0.28rem;
 }
 
 .detail-inline-editor__input {
   width: 100%;
-  min-height: 2.8rem;
+  min-height: 2.16rem;
   border: 1px solid rgba(148, 163, 184, 0.32);
-  border-radius: 14px;
-  padding: 0.72rem 0.9rem;
+  border-radius: 10px;
+  padding: 0.42rem 0.58rem;
   background: rgba(248, 250, 252, 0.96);
   color: #0f172a;
-  font-size: 0.92rem;
+  font-size: 0.84rem;
   line-height: 1.4;
 }
 
 .detail-inline-editor__input:focus {
   outline: none;
   border-color: rgba(37, 99, 235, 0.46);
-  box-shadow: 0 0 0 3px rgba(191, 219, 254, 0.7);
+  box-shadow: 0 0 0 2px rgba(191, 219, 254, 0.72);
 }
 
 .detail-inline-editor__select {
   appearance: none;
-}
-
-.detail-inline-editor__actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.55rem;
-}
-
-.detail-inline-editor__btn {
-  border: 1px solid rgba(148, 163, 184, 0.26);
-  border-radius: 12px;
-  padding: 0.48rem 0.88rem;
-  background: rgba(255, 255, 255, 0.96);
-  color: #334155;
-  font-size: 0.82rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
-}
-
-.detail-inline-editor__btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
-}
-
-.detail-inline-editor__btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.detail-inline-editor__btn--primary {
-  border-color: rgba(37, 99, 235, 0.22);
-  background: linear-gradient(135deg, #2563eb, #0f766e);
-  color: #fff;
 }
 
 .detail-field__placeholder {
