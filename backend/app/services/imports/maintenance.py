@@ -2,6 +2,7 @@ import datetime
 from pathlib import Path
 from typing import Optional
 
+from sqlalchemy import delete
 from sqlmodel import col, select
 
 from app.core.config import CACHE_DIR, MEDIA_DIR, TEMP_DIR
@@ -10,6 +11,7 @@ from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
 from app.models.trash_entry import TrashEntry
+from app.services.cache_thumb_service import generate_cache_thumb_entry
 from app.services.category_service import DEFAULT_CATEGORY_ID
 from app.services.file_scanner import list_image_files
 from app.services.parallel_processor import process_from_paths, process_hash_only_from_paths
@@ -108,9 +110,7 @@ def recalculate_album_counts() -> None:
             album.subtree_photo_count = 0
 
         # Clear existing album_image rows and rebuild
-        session.exec(select(AlbumImage)).all()  # load
-        from sqlalchemy import text as _text
-        session.exec(_text("DELETE FROM album_image"))  # type: ignore[arg-type]
+        session.connection().execute(delete(AlbumImage))
 
         cover_candidates: dict[str, ImageAsset] = {}
 
@@ -243,6 +243,155 @@ def _first_live_media_path(asset: ImageAsset) -> Optional[Path]:
         if resolved and resolved.exists():
             return resolved
     return None
+
+
+def _cache_hash_from_path(cache_path: str | Path | None) -> Optional[str]:
+    if not cache_path:
+        return None
+    stem = Path(cache_path).stem
+    if not stem.endswith("_cache"):
+        return None
+    file_hash = stem[:-6]
+    return file_hash or None
+
+
+def _repair_targeted_cache_entries(
+    image_ids: list[int] | None = None,
+    trash_entry_ids: list[int] | None = None,
+) -> dict[str, int]:
+    result = {
+        "cache_images_repaired": 0,
+        "cache_images_cleaned": 0,
+        "cache_trash_repaired": 0,
+        "cache_trash_cleaned": 0,
+    }
+
+    normalized_image_ids = sorted({int(value) for value in (image_ids or []) if int(value) > 0})
+    normalized_trash_entry_ids = sorted({int(value) for value in (trash_entry_ids or []) if int(value) > 0})
+
+    if normalized_image_ids:
+        with get_session() as session:
+            assets = session.exec(
+                select(ImageAsset)
+                .where(col(ImageAsset.id).in_(normalized_image_ids))
+                .order_by(col(ImageAsset.id))
+            ).all()
+
+            changed = False
+            for asset in assets:
+                next_thumbs: list[dict] = []
+                removed_missing_cache_refs = 0
+                for thumb in asset.thumbs or []:
+                    if not isinstance(thumb, dict):
+                        continue
+                    stored_path = thumb.get("path")
+                    if not isinstance(stored_path, str) or not stored_path:
+                        continue
+                    resolved = resolve_stored_path(stored_path)
+                    if resolved and resolved.exists():
+                        next_thumbs.append(thumb)
+                        continue
+                    if stored_path.replace("\\", "/").startswith("data/cache/"):
+                        removed_missing_cache_refs += 1
+                        continue
+                    next_thumbs.append(thumb)
+
+                if removed_missing_cache_refs:
+                    asset.thumbs = next_thumbs
+                    changed = True
+                    result["cache_images_cleaned"] += removed_missing_cache_refs
+
+                media_path = _first_live_media_path(asset)
+                if not media_path or asset.id is None:
+                    session.add(asset)
+                    continue
+
+                _key, cache_path_str, error, width, height = generate_cache_thumb_entry(
+                    str(asset.id),
+                    str(media_path),
+                    CACHE_DIR,
+                )
+                if error or not cache_path_str:
+                    session.add(asset)
+                    continue
+
+                rel_cache_path = to_project_relative(Path(cache_path_str))
+                next_hash = _cache_hash_from_path(cache_path_str)
+                previous_hash = asset.file_hash
+                previous_cache_exists = bool(
+                    previous_hash and (CACHE_DIR / f"{previous_hash}_cache.webp").exists()
+                )
+                next_thumb_entry = required_thumb_entry(
+                    rel_cache_path,
+                    width=width or 0,
+                    height=height or 0,
+                )
+                updated_thumbs = upsert_thumb(asset.thumbs, next_thumb_entry)
+                if updated_thumbs != asset.thumbs:
+                    asset.thumbs = updated_thumbs
+                    changed = True
+                if next_hash and asset.file_hash != next_hash:
+                    asset.file_hash = next_hash
+                    changed = True
+                if not previous_cache_exists or removed_missing_cache_refs:
+                    result["cache_images_repaired"] += 1
+
+                session.add(asset)
+
+            if changed:
+                session.commit()
+
+    if normalized_trash_entry_ids:
+        with get_session() as session:
+            entries = session.exec(
+                select(TrashEntry)
+                .where(col(TrashEntry.id).in_(normalized_trash_entry_ids))
+                .order_by(col(TrashEntry.id))
+            ).all()
+
+            changed = False
+            for entry in entries:
+                resolved_cache_path = resolve_stored_path(entry.preview_cache_path)
+                cache_missing = bool(
+                    entry.preview_cache_path
+                    and (resolved_cache_path is None or not resolved_cache_path.exists())
+                )
+                if cache_missing:
+                    entry.preview_cache_path = None
+                    changed = True
+                    result["cache_trash_cleaned"] += 1
+
+                preview_source = resolve_stored_path(entry.preview_path)
+                if not preview_source or not preview_source.exists() or not preview_source.is_file():
+                    session.add(entry)
+                    continue
+
+                _key, cache_path_str, error, _width, _height = generate_cache_thumb_entry(
+                    str(entry.id or ""),
+                    str(preview_source),
+                    CACHE_DIR,
+                )
+                if error or not cache_path_str:
+                    session.add(entry)
+                    continue
+
+                rel_cache_path = to_project_relative(Path(cache_path_str))
+                next_hash = _cache_hash_from_path(cache_path_str)
+                if entry.preview_cache_path != rel_cache_path:
+                    entry.preview_cache_path = rel_cache_path
+                    changed = True
+                if next_hash and entry.file_hash != next_hash:
+                    entry.file_hash = next_hash
+                    changed = True
+                if cache_missing or not entry.preview_cache_path:
+                    result["cache_trash_repaired"] += 1
+
+                session.add(entry)
+
+            if changed:
+                session.commit()
+
+    return result
 
 
 def ingest_media_entries(
@@ -415,7 +564,11 @@ def _ingest_new_media_files_full(active_album_paths: set[str]) -> tuple[int, int
     return new_ingested, hash_conflicts
 
 
-def refresh_library(mode: str = "quick") -> dict[str, int | str]:
+def refresh_library(
+    mode: str = "quick",
+    repair_cache_image_ids: list[int] | None = None,
+    repair_cache_trash_entry_ids: list[int] | None = None,
+) -> dict[str, int | str]:
     init_db()
     mode = (mode or "quick").strip().lower()
     if mode not in {"quick", "full"}:
@@ -547,6 +700,11 @@ def refresh_library(mode: str = "quick") -> dict[str, int | str]:
             session.add(db_asset)
         session.commit()
 
+    targeted_cache_result = _repair_targeted_cache_entries(
+        image_ids=repair_cache_image_ids,
+        trash_entry_ids=repair_cache_trash_entry_ids,
+    )
+
     rebuild_hash_index()
     recalculate_album_counts()
 
@@ -560,4 +718,5 @@ def refresh_library(mode: str = "quick") -> dict[str, int | str]:
         "hash_conflicts": hash_conflicts,
         "non_album_deduped": non_album_deduped,
         "cleaned_paths": cleaned_paths,
+        **targeted_cache_result,
     }

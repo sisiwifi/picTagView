@@ -89,6 +89,7 @@
             @toggle-select="onItemSelectionButtonClick(entry.item, entry.index)"
             @toggle-info="toggleInfoDisplayMode"
             @details="onReservedDetailsClick(entry.item, entry.index)"
+            @img-error="onMediaCardPreviewError(entry.item)"
           />
         </div>
       </div>
@@ -123,6 +124,7 @@
                 loading="lazy"
                 :alt="item.name || ''"
                 @load="onImgLoad(item, $event)"
+                @error="onPrimaryPreviewError(item)"
               />
               <div v-if="item.type === 'album'" class="album-badge">
                 <span class="badge-icon">📁</span>
@@ -176,6 +178,7 @@
               loading="lazy"
               :alt="item.name || ''"
               @load="onImgLoad(item, $event)"
+              @error="onPrimaryPreviewError(item)"
             />
             <div v-if="item.type === 'album'" class="album-badge">
               <span class="badge-icon">📁</span>
@@ -221,6 +224,7 @@
               class="list-thumb-img"
               :alt="entry.item.name || ''"
               @load="onImgLoad(entry.item, $event)"
+              @error="onPrimaryPreviewError(entry.item)"
             />
           </div>
           <div class="list-main">
@@ -305,6 +309,7 @@
       @open-tag-menu="openTagMenu"
       @delete="onReservedDeleteClick"
       @open-primary="openPrimaryFromDetails"
+      @preview-error="onSelectionDetailPreviewError"
     />
 
     <TagMenuDialog
@@ -384,7 +389,6 @@ import {
 
 const API_BASE = 'http://127.0.0.1:8000'
 const POLL_MS = 180
-const RADIUS = 50
 const DEBOUNCE_MS = 300
 const LONG_PRESS_MS = 220
 const TAG_BATCH_SIZE = 120
@@ -456,6 +460,11 @@ export default {
       items: [],
       loading: true,
       cacheUrls: {},
+      previewFailureTokens: {},
+      detailOriginalFailureTokens: {},
+      previewRepairQueue: [],
+      previewRepairTimer: null,
+      previewRepairInFlight: false,
       pollTimer: null,
       taskId: null,
       observer: null,
@@ -477,6 +486,7 @@ export default {
       paginationHostHeight: 0,
       viewMode: 'grid',
       pageBrowseMode: cachedPageConfig.browseMode || DEFAULT_PAGE_CONFIG.browseMode,
+      pageScrollWindowSize: cachedPageConfig.scrollWindowSize || DEFAULT_PAGE_CONFIG.scrollWindowSize,
       sortBy: 'alpha',
       sortDir: 'asc',
       albumInfo: null,
@@ -607,6 +617,9 @@ export default {
     },
     cacheSortSignature() {
       return `${this.sortBy}:${this.sortDir}:${this.items.length}`
+    },
+    scrollWindowRadius() {
+      return Math.max(1, Math.floor((this.pageScrollWindowSize || DEFAULT_PAGE_CONFIG.scrollWindowSize) / 2))
     },
     isPhotoGridMode() {
       return this.viewMode === 'grid' && !this.selectionMode
@@ -1303,6 +1316,10 @@ export default {
     window.removeEventListener('keydown', this.onWindowKeydown)
     window.removeEventListener('pointerdown', this.onWindowPointerDown)
     window.removeEventListener(PAGE_CONFIG_UPDATED_EVENT, this.onPageConfigUpdated)
+    if (this.previewRepairTimer) {
+      clearTimeout(this.previewRepairTimer)
+      this.previewRepairTimer = null
+    }
     if (this.scrollFrameId) {
       cancelAnimationFrame(this.scrollFrameId)
       this.scrollFrameId = null
@@ -1325,27 +1342,41 @@ export default {
     async fetchPageConfigSetting() {
       try {
         const config = await fetchPageConfig()
-        this.applyPageBrowseMode(config.browseMode, false)
+        this.applyPageConfig(config, false)
       } catch {
         // keep cached or default page config when settings fetch fails
       }
     },
 
     onPageConfigUpdated(event) {
-      this.applyPageBrowseMode(event?.detail?.browseMode, true)
+      this.applyPageConfig(event?.detail || {}, true)
     },
 
-    applyPageBrowseMode(nextMode, captureAnchor = true) {
-      const normalizedMode = nextMode === PAGE_BROWSE_MODE_PAGED
+    applyPageConfig(nextConfig = {}, captureAnchor = true) {
+      const normalizedMode = nextConfig?.browseMode === PAGE_BROWSE_MODE_PAGED
         ? PAGE_BROWSE_MODE_PAGED
         : PAGE_BROWSE_MODE_SCROLL
-      if (normalizedMode === this.pageBrowseMode) return
+      const numericWindowSize = Number.parseInt(
+        String(nextConfig?.scrollWindowSize || DEFAULT_PAGE_CONFIG.scrollWindowSize),
+        10,
+      )
+      const normalizedWindowSize = Number.isFinite(numericWindowSize) && numericWindowSize > 0
+        ? numericWindowSize
+        : DEFAULT_PAGE_CONFIG.scrollWindowSize
+      const modeChanged = normalizedMode !== this.pageBrowseMode
+      const windowChanged = normalizedWindowSize !== this.pageScrollWindowSize
+      if (!modeChanged && !windowChanged) return
 
       const anchor = captureAnchor ? this.captureViewportAnchor() : null
       this.pageBrowseMode = normalizedMode
-      this.clearPointerGesture()
-      this.closeSelectAllMenu()
-      this.normalizePaginationState()
+      this.pageScrollWindowSize = normalizedWindowSize
+      this.lastCacheRequestSignature = ''
+
+      if (modeChanged) {
+        this.clearPointerGesture()
+        this.closeSelectAllMenu()
+        this.normalizePaginationState()
+      }
 
       if (anchor) {
         this.pendingViewAnchor = anchor
@@ -1354,6 +1385,13 @@ export default {
       this.$nextTick(() => {
         this.refreshObservedGrid()
       })
+    },
+
+    applyPageBrowseMode(nextMode, captureAnchor = true) {
+      this.applyPageConfig({
+        browseMode: nextMode,
+        scrollWindowSize: this.pageScrollWindowSize,
+      }, captureAnchor)
     },
 
     measureItemGridMetrics() {
@@ -1505,6 +1543,10 @@ export default {
       this.cacheRequestGeneration = 0
       this.cacheStatusCursor = 0
       this.lastCacheRequestSignature = ''
+      this.previewFailureTokens = {}
+      this.detailOriginalFailureTokens = {}
+      this.previewRepairQueue = []
+      this.previewRepairInFlight = false
       this.selectionRowHeight = 0
       this.albumInfo = null
       this.pendingViewAnchor = null
@@ -1512,6 +1554,10 @@ export default {
       if (this.dimensionFlushTimer) {
         clearTimeout(this.dimensionFlushTimer)
         this.dimensionFlushTimer = null
+      }
+      if (this.previewRepairTimer) {
+        clearTimeout(this.previewRepairTimer)
+        this.previewRepairTimer = null
       }
       this.closeSelectionDetails()
       this.closeSelectAllMenu()
@@ -1610,15 +1656,84 @@ export default {
       return fallback
     },
 
-    resolvedUrl(item) {
+    previewStateKey(item) {
+      if (!item) return ''
+      if (Number.isInteger(item?.id)) return `${item?.type || 'item'}:${item.id}`
+      if (item?.public_id) return `${item?.type || 'item'}:${item.public_id}`
+      if (item?.album_path) return `${item?.type || 'item'}:${item.album_path}`
+      if (item?.media_rel_path) return `${item?.type || 'item'}:${item.media_rel_path}`
+      return ''
+    },
+
+    primaryPreviewPath(item) {
       if (!item) return ''
       if (item.id) {
         const cached = this.cacheUrls[item.id]
-        if (cached) return `${API_BASE}${cached}`
-        if (item.cache_thumb_url) return `${API_BASE}${item.cache_thumb_url}`
+        if (cached) return cached
       }
-      if (item.thumb_url) return `${API_BASE}${item.thumb_url}`
+      if (item.cache_thumb_url) return item.cache_thumb_url
+      if (item.thumb_url) return item.thumb_url
       return ''
+    },
+
+    originalPreviewPath(item) {
+      if (!item || item.type !== 'image' || !item.media_rel_path) return ''
+      return `/media/${String(item.media_rel_path).replace(/\\/g, '/')}`
+    },
+
+    isPrimaryPreviewSuppressed(item) {
+      const key = this.previewStateKey(item)
+      const token = this.primaryPreviewPath(item)
+      if (!key || !token) return false
+      return this.previewFailureTokens[key] === token
+    },
+
+    clearPreviewFailureState(item, includeDetail = true) {
+      const key = this.previewStateKey(item)
+      if (!key) return
+
+      if (Object.prototype.hasOwnProperty.call(this.previewFailureTokens, key)) {
+        const nextFailures = { ...this.previewFailureTokens }
+        delete nextFailures[key]
+        this.previewFailureTokens = nextFailures
+      }
+
+      if (!includeDetail) return
+      if (Object.prototype.hasOwnProperty.call(this.detailOriginalFailureTokens, key)) {
+        const nextDetailFailures = { ...this.detailOriginalFailureTokens }
+        delete nextDetailFailures[key]
+        this.detailOriginalFailureTokens = nextDetailFailures
+      }
+    },
+
+    markPrimaryPreviewFailure(item) {
+      const key = this.previewStateKey(item)
+      const token = this.primaryPreviewPath(item)
+      if (!key || !token) return false
+      if (this.previewFailureTokens[key] === token) return false
+      this.previewFailureTokens = {
+        ...this.previewFailureTokens,
+        [key]: token,
+      }
+      return true
+    },
+
+    markDetailOriginalFailure(item) {
+      const key = this.previewStateKey(item)
+      const token = this.originalPreviewPath(item)
+      if (!key || !token) return false
+      if (this.detailOriginalFailureTokens[key] === token) return false
+      this.detailOriginalFailureTokens = {
+        ...this.detailOriginalFailureTokens,
+        [key]: token,
+      }
+      return true
+    },
+
+    resolvedUrl(item) {
+      const previewPath = this.primaryPreviewPath(item)
+      if (!previewPath || this.isPrimaryPreviewSuppressed(item)) return ''
+      return `${API_BASE}${previewPath}`
     },
 
     openImageTarget(item) {
@@ -1773,7 +1888,144 @@ export default {
     },
 
     detailPreviewUrl(item) {
-      return this.resolvedUrl(item)
+      const previewPath = this.primaryPreviewPath(item)
+      if (!previewPath) return ''
+      if (!this.isPrimaryPreviewSuppressed(item)) {
+        return `${API_BASE}${previewPath}`
+      }
+
+      const key = this.previewStateKey(item)
+      const originalPath = this.originalPreviewPath(item)
+      if (key && originalPath && this.detailOriginalFailureTokens[key] !== originalPath) {
+        return `${API_BASE}${originalPath}`
+      }
+      return ''
+    },
+
+    onMediaCardPreviewError(item) {
+      this.onPrimaryPreviewError(item)
+    },
+
+    onPrimaryPreviewError(item) {
+      if (!item) return
+      const didChange = this.markPrimaryPreviewFailure(item)
+      if (!didChange && !Number.isInteger(item?.id)) return
+      this.enqueuePreviewRepair(item)
+    },
+
+    onSelectionDetailPreviewError(preview) {
+      const matchedEntry = this.selectedEntries.find(entry => this.itemKey(entry.item, entry.index) === preview?.key)
+      const item = matchedEntry?.item
+      if (!item) return
+
+      const originalPath = this.originalPreviewPath(item)
+      if (originalPath && preview?.previewUrl === `${API_BASE}${originalPath}`) {
+        this.markDetailOriginalFailure(item)
+        return
+      }
+
+      const didChange = this.markPrimaryPreviewFailure(item)
+      if (!didChange && !Number.isInteger(item?.id)) return
+      this.enqueuePreviewRepair(item)
+    },
+
+    enqueuePreviewRepair(item) {
+      if (!Number.isInteger(item?.id)) return
+      if (this.previewRepairQueue.includes(item.id)) return
+      this.previewRepairQueue = [...this.previewRepairQueue, item.id]
+      if (this.previewRepairTimer) {
+        clearTimeout(this.previewRepairTimer)
+      }
+      this.previewRepairTimer = setTimeout(() => {
+        this.previewRepairTimer = null
+        this.flushPreviewRepairQueue()
+      }, 90)
+    },
+
+    async flushPreviewRepairQueue() {
+      const imageIds = [...new Set(this.previewRepairQueue.filter(id => Number.isInteger(id) && id > 0))]
+      this.previewRepairQueue = []
+      if (!imageIds.length) return
+
+      if (this.previewRepairInFlight) {
+        this.previewRepairQueue = [...new Set([...this.previewRepairQueue, ...imageIds])]
+        return
+      }
+
+      this.previewRepairInFlight = true
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/refresh?mode=quick`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            repair_cache: true,
+            image_ids: imageIds,
+          }),
+        })
+        if (!res.ok) return
+        await res.json().catch(() => null)
+        await this.refreshPreviewMetadata(imageIds)
+      } catch {
+        // ignore targeted preview repair failures
+      } finally {
+        this.previewRepairInFlight = false
+        if (this.previewRepairQueue.length) {
+          this.flushPreviewRepairQueue()
+        }
+      }
+    },
+
+    async refreshPreviewMetadata(imageIds) {
+      if (!Array.isArray(imageIds) || !imageIds.length) return
+      try {
+        const res = await fetch(`${API_BASE}/api/images/meta?ids=${imageIds.join(',')}`)
+        if (!res.ok) return
+
+        const data = await res.json()
+        const metaMap = new Map((data.items || []).map(meta => [meta.id, meta]))
+        if (!metaMap.size) return
+
+        const nextCacheUrls = { ...this.cacheUrls }
+        const nextDimensions = { ...this.imgDimensions }
+        const nextItems = this.items.map((item) => {
+          if (!Number.isInteger(item?.id)) return item
+          const meta = metaMap.get(item.id)
+          if (!meta) return item
+
+          if (meta.cache_thumb_url) {
+            nextCacheUrls[item.id] = meta.cache_thumb_url
+          } else {
+            delete nextCacheUrls[item.id]
+          }
+
+          const width = Number(meta.width)
+          const height = Number(meta.height)
+          if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+            nextDimensions[item.id] = { w: width, h: height }
+          }
+
+          return {
+            ...item,
+            cache_thumb_url: meta.cache_thumb_url || '',
+            thumb_url: meta.thumb_url || item.thumb_url,
+            width: Number.isFinite(width) && width > 0 ? width : item.width,
+            height: Number.isFinite(height) && height > 0 ? height : item.height,
+          }
+        })
+
+        this.items = nextItems
+        this.cacheUrls = nextCacheUrls
+        this.imgDimensions = nextDimensions
+        this.layoutFingerprint = this.computeLayoutFingerprint(nextItems, nextDimensions)
+        imageIds.forEach((imageId) => {
+          const matched = nextItems.find(item => item?.id === imageId)
+          if (matched) {
+            this.clearPreviewFailureState(matched)
+          }
+        })
+      } catch {
+        // ignore preview metadata refresh failures
+      }
     },
 
     detailAspectRatio(item) {
@@ -1967,6 +2219,7 @@ export default {
     },
 
     onImgLoad(item, evt) {
+      this.clearPreviewFailureState(item)
       const { naturalWidth: width, naturalHeight: height } = evt.target
       if (!width || !height) return
       const key = item.id || item.public_id
@@ -2206,7 +2459,7 @@ export default {
       }
 
       if (!Number.isInteger(anchorIndex) || anchorIndex < 0) return -1
-      for (let offset = 0; offset <= RADIUS; offset++) {
+      for (let offset = 0; offset <= this.scrollWindowRadius; offset++) {
         const forwardIndex = anchorIndex + offset
         if (this.isCacheablePreviewItem(this.items[forwardIndex])) return forwardIndex
         const backwardIndex = anchorIndex - offset
@@ -2298,7 +2551,7 @@ export default {
       for (const index of plan.firstRowIndices || []) {
         pushIndex(index)
       }
-      for (let offset = 1; offset <= RADIUS; offset++) {
+      for (let offset = 1; offset <= this.scrollWindowRadius; offset++) {
         pushIndex(plan.cacheAnchorIndex + offset)
         pushIndex(plan.cacheAnchorIndex - offset)
       }

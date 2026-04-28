@@ -152,7 +152,7 @@ def _album_payload_snapshot(entry: TrashEntry, payload_path: Path) -> tuple[int,
     return image_count, fallback_preview
 
 
-def _reconcile_trash_entries() -> None:
+def _reconcile_trash_entries() -> bool:
     TRASH_DIR.mkdir(parents=True, exist_ok=True)
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -237,6 +237,8 @@ def _reconcile_trash_entries() -> None:
 
     if changed:
         _cleanup_unused_preview_files()
+
+    return changed
 
 
 def _project_preview_url(project_path: str | None) -> str | None:
@@ -543,8 +545,9 @@ def _cleanup_unused_preview_files() -> None:
             pass
 
 
-def list_trash_items() -> TrashListResponse:
-    _reconcile_trash_entries()
+def list_trash_items(run_reconcile: bool = False) -> TrashListResponse:
+    if run_reconcile:
+        _reconcile_trash_entries()
     with get_session() as session:
         entries = session.exec(select(TrashEntry).order_by(col(TrashEntry.created_at).desc())).all()
 
@@ -573,6 +576,16 @@ def list_trash_items() -> TrashListResponse:
         if entry.id is not None
     ]
     return TrashListResponse(items=items)
+
+
+def reconcile_trash_items() -> dict[str, int | bool]:
+    changed = _reconcile_trash_entries()
+    with get_session() as session:
+        total_items = len(session.exec(select(TrashEntry.id)).all())
+    return {
+        "changed": changed,
+        "total_items": total_items,
+    }
 
 
 def _move_image_to_trash(image_id: int, media_rel_path: str) -> int | None:

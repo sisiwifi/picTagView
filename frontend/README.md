@@ -68,9 +68,9 @@ frontend/
 ### 4.3 展示图库内容
 - `BrowsePage` 调用 `GET /api/dates/{date_group}/items` 或 `GET /api/albums/by-path/{album_path:path}`
 - 直图显示 `ThumbCard`，子目录显示相册封面并支持物理路径继续下钻
-- 同时消费 `GET /api/system/page-config` 的浏览方式设置；当模式为 `paged` 时，瀑布流、列表和选择网格都会按当前视口高度分页，列表页支持每页 `10 / 20 / 50 / 100`
+- 同时消费 `GET /api/system/page-config` 的浏览方式设置；当模式为 `paged` 时，瀑布流、列表和选择网格都会按当前视口高度分页，列表页支持每页 `10 / 20 / 50 / 100`；当模式为 `scroll` 时，还会读取固定窗口范围 `40 / 60 / ... / 200`，默认 `100`
 - 瀑布流会随页面方向自动切换：横屏继续使用等高 justified flow，竖屏切换为 2 列等宽 masonry；分页模式也沿用同一套方向规则
-- 浏览缓存缩略图通过 `POST /api/thumbnails/cache` 与 `GET /api/thumbnails/cache/status/{task_id}` 渐进生成和轮询
+- 浏览缓存缩略图通过 `POST /api/thumbnails/cache` 与 `GET /api/thumbnails/cache/status/{task_id}` 渐进生成和轮询；当 cache/temp 预览本身返回 `404` 时，BrowsePage 会立即触发带目标 `image_ids` 的 `POST /api/admin/refresh?mode=quick` 并回填最新 `cache_thumb_url`
 - 选择模式详情浮层中的 Tag 使用 `TagChipList` 渲染，显色来自后端返回的 Tag 元数据字段，统一为 HEX8：
    - `color`
    - `border_color`
@@ -79,8 +79,10 @@ frontend/
 ### 4.4 回收站浏览与页面配置
 - `TrashPage` 调用 `GET /api/trash/items`
 - 与 `BrowsePage` 共用 `PagePaginationBar` 和 `pageConfig.js`
-- 当设置页切到“分页浏览”时，回收站瀑布流与选择网格也会分页，并在窗口缩放后按当前首个可见项重新定位页码
+- 当设置页切到“分页浏览”时，回收站瀑布流与选择网格也会分页，并在窗口缩放后按当前首个可见项重新定位页码；当设置页保持“滚动浏览”时，会使用同一份窗口范围配置做可见区前后预修复
 - 回收站照片墙同样按页面方向切换布局：横屏使用等高 justified flow，竖屏使用 2 列等宽 masonry；页面不会插入额外空占位元素
+- 回收站卡片常规浏览只消费 `cache_thumb_url` / `thumb_url`；若预览缺失则先显示骨架，再静默触发目标 `trash_entry_ids` 的 quick refresh。`/trash-media/...` 只在详情层缩略图失败时作为少量兜底原图使用
+- TrashPage 首屏会先显示当前可展示条目，再异步调用 `POST /api/trash/reconcile` 做轻量对账；若对账结果改变列表，前端会在保留锚点的前提下静默刷新
 
 ### 4.5 文件名分析回写 Tag
 - 前端保留文件名分析回写能力，可调用 `POST /api/images/tags/filename-match`
@@ -185,11 +187,12 @@ npm run lint
    - `/api/tags/draft` 用于预占隐藏草稿 Tag
    - `/api/tags?sort_by=last_used_desc&limit=5` 用于输入为空时加载最近使用标签
    - `/api/tags/export/json` 与 `/api/tags/import/json` 用于设置页的 Tag JSON 导入导出
-   - `/api/trash/items`、`/api/trash/restore`、`/api/trash/hard-delete`、`DELETE /api/trash` 用于回收站页面
+   - `/api/trash/items`、`/api/trash/reconcile`、`/api/trash/restore`、`/api/trash/hard-delete`、`DELETE /api/trash` 用于回收站页面
    - `/api/thumbnails/cache` 与 `/api/thumbnails/cache/status/{task_id}` 用于浏览缓存缩略图异步生成
    - `DELETE /api/cache` 用于设置页清理 temp/cache 缩略图
    - `/api/system/cache-thumb-setting` 与 `/api/system/month-cover-setting` 用于设置页尺寸配置
-   - `/api/system/page-config` 用于读取/保存滚动浏览与分页浏览模式
+   - `/api/system/page-config` 用于读取/保存滚动浏览与分页浏览模式，以及滚动模式窗口范围
+   - `/api/admin/refresh?mode=quick` 支持按 `image_ids` 或 `trash_entry_ids` 做目标 cache 修复
    - `/api/system/tag-match-setting` 用于读取/保存文件名匹配过滤配置
    - `/api/system/image-viewers` 与 `/api/system/viewer-preference` 用于设置页看图器偏好
 - `ThumbCard` 负责显示缩略图，统一尺寸对齐

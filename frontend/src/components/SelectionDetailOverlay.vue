@@ -37,6 +37,7 @@
                   :alt="preview.name"
                   loading="lazy"
                   draggable="false"
+                  @error="$emit('preview-error', preview)"
                 />
                 <div v-else class="detail-preview-list__skeleton">
                   <span class="detail-preview-list__skeleton-label">...</span>
@@ -60,6 +61,7 @@
               :alt="primaryPreview.name"
               :style="primaryPreview.aspectRatio ? { aspectRatio: primaryPreview.aspectRatio } : null"
               draggable="false"
+              @error="$emit('preview-error', primaryPreview)"
             />
             <div v-else class="detail-preview-stage__skeleton">
               <span class="detail-preview-stage__skeleton-label">
@@ -210,7 +212,7 @@ export default {
     canEditTags: { type: Boolean, default: false },
     tagMenuDisabled: { type: Boolean, default: false },
   },
-  emits: ['close', 'delete', 'open-primary', 'open-tag-menu'],
+  emits: ['close', 'delete', 'open-primary', 'open-tag-menu', 'preview-error'],
   data() {
     return {
       asideScrolling: false,

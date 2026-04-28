@@ -15,6 +15,7 @@ from app.services.app_settings_service import (
     DEFAULT_CACHE_SHORT_SIDE_PX,
     DEFAULT_MONTH_COVER_SIZE_PX,
     DEFAULT_PAGE_BROWSE_MODE,
+    DEFAULT_PAGE_SCROLL_WINDOW_SIZE,
     MAX_CACHE_SHORT_SIDE_PX,
     MAX_MONTH_COVER_SIZE_PX,
     MIN_CACHE_SHORT_SIDE_PX,
@@ -107,7 +108,9 @@ def get_page_config_api() -> PageConfigResponse:
     data = get_page_config()
     return PageConfigResponse(
         browse_mode=data.get("browse_mode", DEFAULT_PAGE_BROWSE_MODE),
+        scroll_window_size=data.get("scroll_window_size", DEFAULT_PAGE_SCROLL_WINDOW_SIZE),
         default_browse_mode=DEFAULT_PAGE_BROWSE_MODE,
+        default_scroll_window_size=DEFAULT_PAGE_SCROLL_WINDOW_SIZE,
     )
 
 
@@ -120,7 +123,9 @@ def set_page_config_api(body: PageConfigRequest) -> PageConfigResponse:
     next_setting = set_page_config(body.model_dump())
     return PageConfigResponse(
         browse_mode=next_setting.get("browse_mode", DEFAULT_PAGE_BROWSE_MODE),
+        scroll_window_size=next_setting.get("scroll_window_size", DEFAULT_PAGE_SCROLL_WINDOW_SIZE),
         default_browse_mode=DEFAULT_PAGE_BROWSE_MODE,
+        default_scroll_window_size=DEFAULT_PAGE_SCROLL_WINDOW_SIZE,
     )
 
 

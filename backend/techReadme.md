@@ -133,7 +133,7 @@
 - 后端性能补充：日期列表、月份内条目列表和相册详情在组装 `thumb_url` / `cache_thumb_url` 时，会复用同一个请求级目录索引；接口语义仍保持“仅在文件实际存在时返回 URL”，但磁盘存在性判断从逐条 `Path.exists()` 收敛为每请求两次目录扫描。
 - 浏览锚点补充：BrowsePage 现区分“视觉锚点”和“缓存锚点”。视觉锚点用于 grid / list / 选择模式互切时恢复同一内容的位置，保证目标内容至少落在新布局的第一排内；缓存锚点则专门用于缓存缩略图生成请求。
 - 照片墙布局补充：BrowsePage 的“大缩略图”模式会优先使用浏览接口返回的 `width` / `height` 初始化 `justifiedRows` 布局，避免依赖图片逐张加载后再回填宽高，从而降低首轮重排频率；`onImgLoad` 现在只在 `width` / `height` 缺失时做异常兜底回填，不再作为常规排布来源。
-- 缓存队列补充：BrowsePage 与 CalendarOverview 发起的缓存缩略图请求已改为 `page_token + generation` 协议。前端会先按“缓存锚点、当前首排、前后 50 张”构造优先级列表，再交给后端共享 worker 池；同页新 generation 到来时，未启动的旧 job 会被丢弃，状态轮询通过 `cursor` 增量返回新增完成项。
+- 缓存队列补充：BrowsePage 与 CalendarOverview 发起的缓存缩略图请求已改为 `page_token + generation` 协议。前端会先按“缓存锚点、当前首排、前后 N 张”构造优先级列表，其中 `N` 由设置页 `scroll_window_size` 决定，可选 `40-200`、默认 `100`（即锚点前后各约 `50` 项），再交给后端共享 worker 池；同页新 generation 到来时，未启动的旧 job 会被丢弃，状态轮询通过 `cursor` 增量返回新增完成项。
 - Tag 请求策略补充：前端仅在信息区切换到 Tag 模式时，才会从当前页面条目中去重收集 `tags` ID，并分批调用 `GET /api/tags?ids=...` 批量换取 `display_name/name`；普通浏览与默认文件名模式不触发该请求，以减少 DB 压力与事务占用。
 - 返回与面包屑导航行为：
   - 前端路由已重构为层级结构（2026-04）：
@@ -212,7 +212,7 @@
   - 前端刷新策略变更（路由切换相关）：项目已移除“路由切换自动触发全库刷新”的行为，`frontend/src/router/index.js` 不再在每次路由变更时发起后台 `POST /api/admin/refresh`。当前前端刷新策略为：
     - 仅在 Gallery 页面由用户点击的“刷新”按钮触发完整的 `POST /api/admin/refresh?mode=full`（保留为手动触发的全库修复/补齐与新文件收编）。
     - 切换到首页（`/`）时仅请求 `GET /api/images/count`，用于刷新并显示库总数的统计信息。
-    - 在 Gallery 与 DateView（日历）页面，前端会对缩略图加载错误（例如 `404`）做出响应：当页面检测到应从 `TEMP_DIR` 读取的缩略图缺失且对应媒体文件存在时，会立即（无延迟）调用 `POST /api/admin/refresh` 以让后端补齐缺失的 temp 缩略图；刷新完成后前端会重新拉取相关数据并使用缓存击穿（例如追加时间戳）来重新加载刚生成的缩略图并更新显示。该策略避免了路由切换时与导入并发造成的冲突，同时将自动修复控制在真正发生缺失时触发。
+    - 在 Gallery、DateView（日历）、BrowsePage 与 TrashPage，前端会对缩略图加载错误（例如 `404`）做出响应：当页面检测到 `TEMP_DIR` 或 `CACHE_DIR` 中的目标预览缺失时，会立即（无延迟）调用 `POST /api/admin/refresh?mode=quick`；其中 BrowsePage 传入 `image_ids`，TrashPage 传入 `trash_entry_ids`。后端会补齐缺失预览并把新生成的缩略图路径、文件哈希等信息回写元数据，前端随后重新拉取对应数据以避免脏引用长期停留在页面中。
   - 文件时间规则：取创建时间与修改时间最小值，回刷到导入文件，并记录到元数据
   - 写入 `ImageAsset`（`quick_hash`、尺寸、mime、tags/thumbs 等扩展字段）
 
@@ -502,13 +502,13 @@
 4. 前端调用 `/api/dates` 和 `/api/dates/{date_group}/items` 构建图库视图
 5. 管理端 `/api/admin/refresh` 保持一致性（支持 `quick/full`）
 6. 用户从 BrowsePage 删除图片或相册时，请求 `/api/trash/move`，目标会从 `media/` 移入 `trash/` 并生成 `TrashEntry`
-7. TrashPage 通过 `/api/trash/items` 浏览回收站；该接口在返回条目前会先做一次批量轻量对账，清除已丢失 payload 的条目，并补齐仍存在条目的预览路径与已有 cache 引用，但不再同步生成 temp 预览，从而避免页面进入时卡顿
+7. TrashPage 通过 `/api/trash/items` 先展示当前可显示的回收站条目；轻量对账改由 `/api/trash/reconcile` 提供，前端在首屏绘制后静默异步调用，对账结果若改变列表则再按当前锚点刷新页面
 8. TrashPage 批量“还原”调用 `/api/trash/restore`，“删除”调用 `/api/trash/hard-delete`，“清空回收站”调用 `DELETE /api/trash`；其中图片恢复保留正常缩略图链路，相册恢复优先走轻量哈希收编再按需补预览，以降低等待时间
 
 补充：
 - 设置页可通过 `GET/POST /api/system/cache-thumb-setting` 管理缓存缩略图短边尺寸。
 - 设置页可通过 `GET/POST /api/system/month-cover-setting` 管理月份封面尺寸。
-- 设置页可通过 `GET/POST /api/system/page-config` 管理 BrowsePage 与 TrashPage 的“滚动浏览 / 分页浏览”模式；分页时每页内容由前端按当前视口高度切分，后端仅负责持久化模式本身。
+- 设置页可通过 `GET/POST /api/system/page-config` 管理 BrowsePage 与 TrashPage 的“滚动浏览 / 分页浏览”模式，以及滚动模式下的 `scroll_window_size`；分页时每页内容由前端按当前视口高度切分，后端负责持久化模式与窗口范围本身。
 - 当尺寸保存成功后，前端会调用 `DELETE /api/cache` 清空 `data/cache/` 与 `temp/`，后续缓存缩略图按新尺寸重新生成。
 
 ## 5. 配置与外部依赖
@@ -536,12 +536,12 @@
   - 删除动作会把 payload 物理移入 `TRASH_DIR` 并写入 `TrashEntry`；新写入条目直接扁平存放在 `trash/` 根下，而不是创建额外的深层 payload 目录
   - 删除动作会优先为新写入的 `TrashEntry` 复用或补齐共享 `CACHE_DIR/{file_hash}_cache.webp`，避免回收站再单独维护一套 temp 缩略图
   - 恢复动作会将 payload 移回 `MEDIA_DIR` 后复用导入链路重新建库；相册重名时通过 `unique_dir_dest()` 自动编号
-  - `GET /api/trash/items` 会执行一次轻量回收站对账：若用户手动删掉了某些 trash payload，则清理对应条目；若 cache 已缺失，只保留 payload 级回退，不在列表请求中同步补图
+  - `GET /api/trash/items` 只负责返回当前可显示条目；轻量回收站对账改由 `POST /api/trash/reconcile` 触发，供前端在首屏展示后静默执行
 - 缩略图缓存策略
   - **导入缩略图**（月份封面）：仅对每月代表图生成 `TEMP_DIR/{file_hash}.webp`，400×400 方形裁剪
   - **缓存展示缩略图**（相册内浏览）：按需生成 `CACHE_DIR/{file_hash}_cache.webp`，最短边 600，保持原始比例
-  - 回收站条目优先复用 `cache_thumb_url`；若 cache 缺失，则通过 `/trash-media/...` 提供预览回退，不再额外生成回收站专用 temp 缩略图
-  - 因为 `GET /api/trash/items` 已直接返回 `cache_thumb_url` 与宽高，TrashPage 不走 BrowsePage 的 generation/cursor 轮询协议；页面只在前端维护精确宽度排布缓存、视觉锚点恢复和缺失尺寸的 `img.onload` 兜底回填
+  - 回收站条目常规浏览优先复用 `cache_thumb_url`，其次兼容 `thumb_url`；若 cache/temp 预览缺失，前端先显示骨架，再通过带目标 `trash_entry_ids` 的 `POST /api/admin/refresh?mode=quick` 静默补齐。`/trash-media/...` 仅在详情层缩略图失败时作为少量兜底原图使用
+  - 因为 `GET /api/trash/items` 已直接返回 `cache_thumb_url` 与宽高，TrashPage 不走 BrowsePage 的 generation/cursor 轮询协议；页面只在前端维护精确宽度排布缓存、视觉锚点恢复、可见窗口定向修复与缺失尺寸的 `img.onload` 兜底回填
   - 重复上传同 hash 文件时不会重复写缩略图
 - 目录组织：
   - 原图存储：`MEDIA_DIR/<date_group>/[top_subdir/]...`（`YYYY-MM`）

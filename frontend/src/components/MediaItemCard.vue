@@ -8,6 +8,7 @@
         :alt="alt"
         loading="lazy"
         draggable="false"
+        @error="$emit('img-error', $event)"
       />
       <div v-else class="media-card__skeleton">
         <span class="media-card__skeleton-label">...</span>
@@ -80,7 +81,7 @@ export default {
     selected: { type: Boolean, default: false },
     disabled: { type: Boolean, default: false },
   },
-  emits: ['toggle-info', 'details', 'toggle-select'],
+  emits: ['toggle-info', 'details', 'toggle-select', 'img-error'],
   computed: {
     cardClasses() {
       return {

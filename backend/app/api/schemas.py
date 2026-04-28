@@ -134,11 +134,20 @@ class MonthCoverSettingResponse(BaseModel):
 
 class PageConfigRequest(BaseModel):
     browse_mode: str = "scroll"
+    scroll_window_size: int = 100
 
 
 class PageConfigResponse(BaseModel):
     browse_mode: str
+    scroll_window_size: int = 100
     default_browse_mode: str = "scroll"
+    default_scroll_window_size: int = 100
+
+
+class AdminRefreshRequest(BaseModel):
+    image_ids: List[int] = Field(default_factory=list)
+    trash_entry_ids: List[int] = Field(default_factory=list)
+    repair_cache: bool = False
 
 
 class TagMatchSettingRequest(BaseModel):

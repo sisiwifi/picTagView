@@ -12,6 +12,7 @@ from app.services.trash_service import (
     hard_delete_trash_entries,
     list_trash_items,
     move_targets_to_trash,
+    reconcile_trash_items,
     restore_trash_entries,
 )
 
@@ -21,6 +22,11 @@ router = APIRouter()
 @router.get("/api/trash/items", response_model=TrashListResponse)
 def trash_items() -> TrashListResponse:
     return list_trash_items()
+
+
+@router.post("/api/trash/reconcile")
+def trash_reconcile() -> dict[str, int | bool]:
+    return reconcile_trash_items()
 
 
 @router.post("/api/trash/move", response_model=TrashActionResult)

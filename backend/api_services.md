@@ -133,6 +133,7 @@
   - 模式：支持 mode=quick|full（默认 quick）
     - quick：路径对账 + 相册关系维护 + 缩略图/元数据补齐
     - full：在 quick 基础上额外扫描 media 并收编未入库图片，更新哈希索引
+  - Body（可选）：`{ repair_cache?: bool, image_ids?: number[], trash_entry_ids?: number[] }`；当 `repair_cache=true` 时，后端会只修复目标图片或回收站条目的 cache 预览，并把最新缩略图路径/哈希回写元数据
 
 ### 3.2 日期与相册接口
 
@@ -200,9 +201,14 @@
 - GET /api/trash/items
   - 实现：app/api/routers/trash.py，调用 app/services/trash_service.py
   - 用途：列出回收站条目，供 TrashPage 瀑布流与选择态使用
-  - 说明：返回前会先执行一次批量轻量对账，清除已丢失 payload 的 `TrashEntry`，并为仍存在的条目成批补齐 `preview_path` 与 `temp/*.webp`；不再在进入页面时逐条强制生成 `data/cache/*.webp`
+  - 说明：仅返回当前可显示条目，不再在列表请求中同步执行轻量对账；缺失 cache 的补齐由前端在首屏后通过定向 quick refresh 或 `POST /api/trash/reconcile` 静默触发
   - 返回：`{ items: [...] }`，条目包含类型、名称、预览图、原路径、图片尺寸与 Tag ID 列表；`category_id` 仅在图片条目上返回
-  - 前端约定：TrashPage 直接消费返回值中的 `cache_thumb_url` / `thumb_url` / `trash_media_url`，不再额外调用 `/api/thumbnails/cache`；页面切换锚点恢复、瀑布流排布缓存与选择态虚拟化都在前端本地完成
+  - 前端约定：TrashPage 常规卡片只消费 `cache_thumb_url` / `thumb_url`，并在缺失时显示骨架；`trash_media_url` 只在详情层缩略图失败时作为原图兜底，不再作为常规浏览路径
+
+- POST /api/trash/reconcile
+  - 实现：app/api/routers/trash.py，调用 app/services/trash_service.py
+  - 用途：对回收站执行轻量对账，清理已丢失 payload 的 `TrashEntry`，并补齐仍存在条目的 `preview_path` / `preview_cache_path` 引用
+  - 返回：`{ changed: bool, total_items: int }`
 
 ### 3.4b 主分类接口
 
@@ -283,13 +289,13 @@
 - GET /api/system/page-config
   - 实现：app/api/routers/system.py
   - 用途：读取页面浏览模式配置
-  - 返回：`{ browse_mode, default_browse_mode }`，当前支持 `scroll` 与 `paged`
+  - 返回：`{ browse_mode, default_browse_mode, scroll_window_size, default_scroll_window_size }`，当前支持 `scroll` 与 `paged`
 
 - POST /api/system/page-config
   - 实现：app/api/routers/system.py
-  - Body：`{ browse_mode: "scroll" | "paged" }`
-  - 用途：保存页面浏览模式，供 BrowsePage 与 TrashPage 统一切换滚动浏览 / 分页浏览
-  - 说明：前端仍会根据页面方向切换瀑布流样式；该接口只持久化滚动 / 分页模式本身，不保存横竖屏布局偏好。
+  - Body：`{ browse_mode: "scroll" | "paged", scroll_window_size?: 40|60|80|100|120|140|160|180|200 }`
+  - 用途：保存页面浏览模式，供 BrowsePage 与 TrashPage 统一切换滚动浏览 / 分页浏览，并持久化滚动模式下的窗口范围
+  - 说明：前端仍会根据页面方向切换瀑布流样式；该接口只持久化滚动 / 分页模式与窗口范围本身，不保存横竖屏布局偏好。
 
 - GET /api/system/tag-match-setting
   - 实现：app/api/routers/system.py
@@ -420,7 +426,7 @@
 - `GET /api/albums/open-by-path/{album_path:path}` 用于在系统文件管理器中打开相册目录；当前由 BrowsePage 在相册详情浮层点击“查看相册”时调用。
 - BrowsePage 的“大缩略图”照片墙应优先消费 `/api/dates/*` 与 `/api/albums/*` 返回的 `width` / `height` 初始化布局；前端 `onload` 仅在元数据缺失时做异常兜底回填，不再把图片实际加载当作常态排布来源。
 - BrowsePage 当前仅对列表模式与选择模式启用窗口化渲染，借此减少 DOM 数量与选择态下的重排压力；“大缩略图”照片墙仍保留全量渲染，但会按“页面标识 + 排序签名 + 精确容器宽度 + 布局指纹”缓存 `justifiedRows` 结果，降低反复重算的成本。
-- BrowsePage 现把“视觉锚点”和“缓存锚点”拆开：视觉锚点用于浏览态 / 选择态切换时把同一内容恢复到新布局首排内，缓存锚点用于向 `/api/thumbnails/cache` 发送 generation 请求；普通照片墙优先请求“缓存锚点 + 当前首排 + 前后 50 张”。
+- BrowsePage 现把“视觉锚点”和“缓存锚点”拆开：视觉锚点用于浏览态 / 选择态切换时把同一内容恢复到新布局首排内，缓存锚点用于向 `/api/thumbnails/cache` 发送 generation 请求；普通照片墙优先请求“缓存锚点 + 当前首排 + 前后 N 张”，其中 `N` 由 `scroll_window_size` 决定，可选 `40-200`，默认 `100`。
 - 缓存缩略图请求不再为每次滚动单独开启一组后台批处理，而是统一进入共享 worker 队列；前端通过 `cursor` 增量轮询，只拉取新的完成项。
 - BrowsePage 的选择逻辑现已扩展到列表显示：列表模式可通过长按进入选择态，并继续使用与卡片选择界面相同的 Ctrl/Shift、多选与统一选择符号；该行为仅是前端交互扩展，不新增后端接口。
 - BrowsePage 选择模式的详情浮层只使用 cache/temp 缩略图做预览，不把原图当作弹层内展示源；弹层尺寸由主视图区当前可视宽高共同约束，左侧图片区内的缩略图按原图比例自适应显示；多选时左侧预览列表需可滚动且隐藏滚动条，右下保留删除占位按钮；若选中图片则主操作继续复用 `/api/images/{image_id}/open`，若选中相册则主操作改为调用 `/api/albums/open-by-path/{album_path:path}` 打开目录。

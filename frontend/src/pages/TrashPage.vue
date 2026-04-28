@@ -83,6 +83,7 @@
             @toggle-select="onItemSelectionButtonClick(entry.item, entry.index)"
             @toggle-info="noop"
             @details="openDetailsForItem(entry.item, entry.index)"
+            @img-error="onMediaCardPreviewError(entry.item)"
           />
         </div>
       </div>
@@ -122,6 +123,7 @@
               class="list-thumb-img"
               :alt="entry.item.name || ''"
               @load="onImgLoad(entry.item, $event)"
+              @error="onPrimaryPreviewError(entry.item)"
             />
           </div>
           <div class="list-main">
@@ -163,6 +165,7 @@
                 loading="lazy"
                 :alt="item.name || ''"
                 @load="onImgLoad(item, $event)"
+                @error="onPrimaryPreviewError(item)"
               />
               <div v-if="item.type === 'album'" class="album-badge">
                 <span class="badge-icon">📁</span>
@@ -216,6 +219,7 @@
               loading="lazy"
               :alt="item.name || ''"
               @load="onImgLoad(item, $event)"
+              @error="onPrimaryPreviewError(item)"
             />
             <div v-if="item.type === 'album'" class="album-badge">
               <span class="badge-icon">📁</span>
@@ -295,6 +299,7 @@
       @close="closeSelectionDetails"
       @open-primary="restoreSelection"
       @delete="hardDeleteSelection"
+      @preview-error="onSelectionDetailPreviewError"
     />
 
     <ConfirmationDialog
@@ -416,6 +421,7 @@ export default {
     return {
       items: [],
       loading: true,
+      observer: null,
       sortBy: 'date',
       sortDir: 'desc',
       viewMode: 'grid',
@@ -437,6 +443,14 @@ export default {
       dimensionFlushTimer: null,
       resizeObserver: null,
       pageBrowseMode: cachedPageConfig.browseMode || DEFAULT_PAGE_CONFIG.browseMode,
+      pageScrollWindowSize: cachedPageConfig.scrollWindowSize || DEFAULT_PAGE_CONFIG.scrollWindowSize,
+      previewFailureTokens: {},
+      detailOriginalFailureTokens: {},
+      previewRepairQueue: [],
+      previewRepairTimer: null,
+      previewRepairInFlight: false,
+      lastPreviewRepairSignature: '',
+      reconcileInFlight: false,
       photoPageIndex: 0,
       selectionGridPageIndex: 0,
       selectionMode: false,
@@ -498,6 +512,10 @@ export default {
 
     cacheSortSignature() {
       return `${this.sortBy}:${this.sortDir}:${this.items.length}`
+    },
+
+    scrollWindowRadius() {
+      return Math.max(1, Math.floor((this.pageScrollWindowSize || DEFAULT_PAGE_CONFIG.scrollWindowSize) / 2))
     },
 
     isPortrait() {
@@ -1011,7 +1029,7 @@ export default {
         key: this.itemKey(item, index),
         name: item.name || '未命名',
         type: item.type || 'image',
-        previewUrl: this.resolvedUrl(item),
+        previewUrl: this.detailPreviewUrl(item),
         aspectRatio: this.detailAspectRatio(item),
       }))
     },
@@ -1171,6 +1189,7 @@ export default {
 
   beforeUnmount() {
     this.unlockPageScroll()
+    this.teardownObserver()
     this.teardownResizeObserver()
     this.clearPointerGesture()
     window.removeEventListener('resize', this.onResize)
@@ -1178,6 +1197,10 @@ export default {
     window.removeEventListener('keydown', this.onWindowKeydown)
     window.removeEventListener('pointerdown', this.onWindowPointerDown)
     window.removeEventListener(PAGE_CONFIG_UPDATED_EVENT, this.onPageConfigUpdated)
+    if (this.previewRepairTimer) {
+      clearTimeout(this.previewRepairTimer)
+      this.previewRepairTimer = null
+    }
     if (this.dimensionFlushTimer) {
       clearTimeout(this.dimensionFlushTimer)
       this.dimensionFlushTimer = null
@@ -1196,27 +1219,41 @@ export default {
     async fetchPageConfigSetting() {
       try {
         const config = await fetchPageConfig()
-        this.applyPageBrowseMode(config.browseMode, false)
+        this.applyPageConfig(config, false)
       } catch {
         // keep cached or default page config when settings fetch fails
       }
     },
 
     onPageConfigUpdated(event) {
-      this.applyPageBrowseMode(event?.detail?.browseMode, true)
+      this.applyPageConfig(event?.detail || {}, true)
     },
 
-    applyPageBrowseMode(nextMode, captureAnchor = true) {
-      const normalizedMode = nextMode === PAGE_BROWSE_MODE_PAGED
+    applyPageConfig(nextConfig = {}, captureAnchor = true) {
+      const normalizedMode = nextConfig?.browseMode === PAGE_BROWSE_MODE_PAGED
         ? PAGE_BROWSE_MODE_PAGED
         : PAGE_BROWSE_MODE_SCROLL
-      if (normalizedMode === this.pageBrowseMode) return
+      const numericWindowSize = Number.parseInt(
+        String(nextConfig?.scrollWindowSize || DEFAULT_PAGE_CONFIG.scrollWindowSize),
+        10,
+      )
+      const normalizedWindowSize = Number.isFinite(numericWindowSize) && numericWindowSize > 0
+        ? numericWindowSize
+        : DEFAULT_PAGE_CONFIG.scrollWindowSize
+      const modeChanged = normalizedMode !== this.pageBrowseMode
+      const windowChanged = normalizedWindowSize !== this.pageScrollWindowSize
+      if (!modeChanged && !windowChanged) return
 
       const anchor = captureAnchor ? this.captureViewportAnchor() : null
       this.pageBrowseMode = normalizedMode
-      this.clearPointerGesture()
-      this.closeSelectAllMenu()
-      this.normalizePaginationState()
+      this.pageScrollWindowSize = normalizedWindowSize
+      this.lastPreviewRepairSignature = ''
+
+      if (modeChanged) {
+        this.clearPointerGesture()
+        this.closeSelectAllMenu()
+        this.normalizePaginationState()
+      }
 
       if (anchor) {
         this.pendingViewAnchor = anchor
@@ -1225,6 +1262,13 @@ export default {
       this.$nextTick(() => {
         this.refreshObservedGrid()
       })
+    },
+
+    applyPageBrowseMode(nextMode, captureAnchor = true) {
+      this.applyPageConfig({
+        browseMode: nextMode,
+        scrollWindowSize: this.pageScrollWindowSize,
+      }, captureAnchor)
     },
 
     itemLayoutKey(item, index = null) {
@@ -1274,6 +1318,9 @@ export default {
       }
 
       this.normalizePaginationState()
+      this.$nextTick(() => {
+        this.queueCurrentPagePreviewRepair(true, 'restore-paged')
+      })
     },
 
     scrollItemGridIntoView() {
@@ -1298,6 +1345,7 @@ export default {
       this.normalizePaginationState()
       this.$nextTick(() => {
         this.scrollItemGridIntoView()
+        this.queueCurrentPagePreviewRepair(true, 'pagination-change')
       })
     },
 
@@ -1353,6 +1401,11 @@ export default {
       this.layoutFingerprint = ''
       this.lastScrollDirection = 'none'
       this.lastObservedScrollTop = typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0
+      this.previewFailureTokens = {}
+      this.detailOriginalFailureTokens = {}
+      this.previewRepairQueue = []
+      this.previewRepairInFlight = false
+      this.lastPreviewRepairSignature = ''
       this.pendingViewAnchor = null
       this.pendingDimensionCorrections = {}
       this.selectionRowHeight = 0
@@ -1374,6 +1427,11 @@ export default {
         clearTimeout(this.dimensionFlushTimer)
         this.dimensionFlushTimer = null
       }
+      if (this.previewRepairTimer) {
+        clearTimeout(this.previewRepairTimer)
+        this.previewRepairTimer = null
+      }
+      this.teardownObserver()
       this.teardownResizeObserver()
       if (!this.selectionMode) {
         this.viewMode = 'grid'
@@ -1386,6 +1444,7 @@ export default {
         this.$nextTick(() => this.refreshObservedGrid())
         this.ensureCategoryLabelsLoaded()
         this.ensureTagLabelsLoaded()
+        void this.triggerSilentReconcile()
       } catch (err) {
         this.items = []
         this.imgDimensions = {}
@@ -1470,6 +1529,9 @@ export default {
         if (this.isVirtualizedMode) {
           this.scrollTop = window.scrollY || window.pageYOffset || 0
           this.syncVirtualWindow()
+          if (!this.isPagedBrowseMode) {
+            this.queueVisiblePreviewRepair(this.currentVisibleRepairAnchorIndex(), false, 'scroll')
+          }
         }
         if (this.selectionDetailsOpen) {
           this.updateSelectionDetailsBounds()
@@ -1489,6 +1551,7 @@ export default {
 
     refreshObservedGrid() {
       this.$nextTick(() => {
+        this.teardownObserver()
         this.measureItemGridMetrics()
         this.normalizePaginationState()
 
@@ -1499,12 +1562,19 @@ export default {
           this.virtualEndIndex = this.items.length
           this.virtualAnchorIndex = this.items.length ? 0 : -1
         }
+        if (this.isPhotoGridMode && !this.isPagedBrowseMode) {
+          this.setupObserver()
+        }
         this.setupResizeObserver()
         if (this.isSelectionGridMode) {
           this.measureSelectionRowHeight()
         }
         if (this.pendingViewAnchor) {
           this.restorePendingViewAnchor()
+        } else if (this.isPagedBrowseMode) {
+          this.queueCurrentPagePreviewRepair(true, 'refresh-paged')
+        } else {
+          this.queueVisiblePreviewRepair(this.currentVisibleRepairAnchorIndex(), true, 'refresh')
         }
       })
     },
@@ -1674,6 +1744,7 @@ export default {
         this.logTrashDebug('anchor-restore', { mode: 'list', targetIndex })
         window.requestAnimationFrame(() => {
           this.syncVirtualWindow(true)
+          this.queueVisiblePreviewRepair(targetIndex, true, 'restore')
         })
         return
       }
@@ -1685,6 +1756,7 @@ export default {
         this.logTrashDebug('anchor-restore', { mode: 'selection-grid', targetIndex, rowIndex })
         window.requestAnimationFrame(() => {
           this.syncVirtualWindow(true)
+          this.queueVisiblePreviewRepair(targetIndex, true, 'restore')
         })
         return
       }
@@ -1697,6 +1769,9 @@ export default {
             const desiredTop = this.virtualContainerTop + placement.top - RESTORE_ANCHOR_PADDING_PX
             window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
             this.logTrashDebug('anchor-restore', { mode: 'masonry', targetIndex, top: placement.top })
+            window.requestAnimationFrame(() => {
+              this.queueVisiblePreviewRepair(targetIndex, true, 'restore')
+            })
             return
           }
         }
@@ -1706,10 +1781,14 @@ export default {
         const desiredTop = (window.scrollY || window.pageYOffset || 0) + rect.top - RESTORE_ANCHOR_PADDING_PX
         window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
         this.logTrashDebug('anchor-restore', { mode: 'photo-grid', targetIndex })
+        window.requestAnimationFrame(() => {
+          this.queueVisiblePreviewRepair(targetIndex, true, 'restore')
+        })
       })
     },
 
     onImgLoad(item, event) {
+      this.clearPreviewFailureState(item)
       if (!item) return
       const existing = this.imgDimensions[this.itemLayoutKey(item)]
       if (existing?.w > 0 && existing?.h > 0) return
@@ -1752,12 +1831,325 @@ export default {
       this.logTrashDebug('dimension-fallback', { count: entries.length })
     },
 
-    resolvedUrl(item) {
+    previewStateKey(item) {
       if (!item) return ''
-      if (item.cache_thumb_url) return `${API_BASE}${item.cache_thumb_url}`
-      if (item.thumb_url) return `${API_BASE}${item.thumb_url}`
-      if (item.trash_media_url) return `${API_BASE}${item.trash_media_url}`
+      if (item?.entry_key) return `trash:${item.entry_key}`
+      if (Number.isInteger(item?.id)) return `trash:${item.id}`
       return ''
+    },
+
+    primaryPreviewPath(item) {
+      if (!item) return ''
+      if (item.cache_thumb_url) return item.cache_thumb_url
+      if (item.thumb_url) return item.thumb_url
+      return ''
+    },
+
+    originalPreviewPath(item) {
+      if (!item?.trash_media_url) return ''
+      return item.trash_media_url
+    },
+
+    isPrimaryPreviewSuppressed(item) {
+      const key = this.previewStateKey(item)
+      const token = this.primaryPreviewPath(item)
+      if (!key || !token) return false
+      return this.previewFailureTokens[key] === token
+    },
+
+    clearPreviewFailureState(item, includeDetail = true) {
+      const key = this.previewStateKey(item)
+      if (!key) return
+
+      if (Object.prototype.hasOwnProperty.call(this.previewFailureTokens, key)) {
+        const nextFailures = { ...this.previewFailureTokens }
+        delete nextFailures[key]
+        this.previewFailureTokens = nextFailures
+      }
+
+      if (!includeDetail) return
+      if (Object.prototype.hasOwnProperty.call(this.detailOriginalFailureTokens, key)) {
+        const nextDetailFailures = { ...this.detailOriginalFailureTokens }
+        delete nextDetailFailures[key]
+        this.detailOriginalFailureTokens = nextDetailFailures
+      }
+    },
+
+    markPrimaryPreviewFailure(item) {
+      const key = this.previewStateKey(item)
+      const token = this.primaryPreviewPath(item)
+      if (!key || !token) return false
+      if (this.previewFailureTokens[key] === token) return false
+      this.previewFailureTokens = {
+        ...this.previewFailureTokens,
+        [key]: token,
+      }
+      return true
+    },
+
+    markDetailOriginalFailure(item) {
+      const key = this.previewStateKey(item)
+      const token = this.originalPreviewPath(item)
+      if (!key || !token) return false
+      if (this.detailOriginalFailureTokens[key] === token) return false
+      this.detailOriginalFailureTokens = {
+        ...this.detailOriginalFailureTokens,
+        [key]: token,
+      }
+      return true
+    },
+
+    detailPreviewUrl(item) {
+      const previewPath = this.primaryPreviewPath(item)
+      if (!previewPath) return ''
+      if (!this.isPrimaryPreviewSuppressed(item)) {
+        return `${API_BASE}${previewPath}`
+      }
+
+      const key = this.previewStateKey(item)
+      const originalPath = this.originalPreviewPath(item)
+      if (key && originalPath && this.detailOriginalFailureTokens[key] !== originalPath) {
+        return `${API_BASE}${originalPath}`
+      }
+      return ''
+    },
+
+    resolvedUrl(item) {
+      const previewPath = this.primaryPreviewPath(item)
+      if (!previewPath || this.isPrimaryPreviewSuppressed(item)) return ''
+      return `${API_BASE}${previewPath}`
+    },
+
+    onMediaCardPreviewError(item) {
+      this.onPrimaryPreviewError(item)
+    },
+
+    onPrimaryPreviewError(item) {
+      if (!item) return
+      const didChange = this.markPrimaryPreviewFailure(item)
+      if (!didChange && !Number.isInteger(item?.id)) return
+      this.enqueuePreviewRepairIds([item.id])
+    },
+
+    onSelectionDetailPreviewError(preview) {
+      const matchedEntry = this.selectedEntries.find(entry => this.itemKey(entry.item, entry.index) === preview?.key)
+      const item = matchedEntry?.item
+      if (!item) return
+
+      const originalPath = this.originalPreviewPath(item)
+      if (originalPath && preview?.previewUrl === `${API_BASE}${originalPath}`) {
+        this.markDetailOriginalFailure(item)
+        return
+      }
+
+      const didChange = this.markPrimaryPreviewFailure(item)
+      if (!didChange && !Number.isInteger(item?.id)) return
+      this.enqueuePreviewRepairIds([item.id])
+    },
+
+    needsTrashPreviewRepair(item) {
+      if (!Number.isInteger(item?.id)) return false
+      if (this.isPrimaryPreviewSuppressed(item)) return true
+      return !item.cache_thumb_url
+    },
+
+    currentPageAnchorIndex() {
+      if (!this.items.length) return -1
+      if (this.viewMode === 'list') return this.listPageStartIndex
+      if (this.isSelectionGridMode) return this.selectionGridPageStartIndex
+      if (this.isPortraitMasonryMode) {
+        return this.masonryPages[this.normalizedPhotoPageIndex]?.startIndex ?? 0
+      }
+      return this.photoGridPages[this.normalizedPhotoPageIndex]?.startIndex ?? 0
+    },
+
+    currentVisibleRepairAnchorIndex() {
+      if (this.isPagedBrowseMode) return this.currentPageAnchorIndex()
+      if (this.isPhotoGridMode) {
+        return this.captureViewportAnchor()?.index ?? 0
+      }
+      return Number.isInteger(this.virtualAnchorIndex) && this.virtualAnchorIndex >= 0
+        ? this.virtualAnchorIndex
+        : 0
+    },
+
+    collectRepairEntryIds(anchorIndex) {
+      if (!Number.isInteger(anchorIndex) || anchorIndex < 0) return []
+      const entryIds = []
+      const seenIds = new Set()
+      const pushIndex = (index) => {
+        if (!Number.isInteger(index) || index < 0 || index >= this.items.length) return
+        const item = this.items[index]
+        if (!this.needsTrashPreviewRepair(item) || seenIds.has(item.id)) return
+        seenIds.add(item.id)
+        entryIds.push(item.id)
+      }
+
+      for (let offset = 0; offset <= this.scrollWindowRadius; offset += 1) {
+        pushIndex(anchorIndex + offset)
+        if (offset > 0) {
+          pushIndex(anchorIndex - offset)
+        }
+      }
+      return entryIds
+    },
+
+    queueCurrentPagePreviewRepair(immediate = false, reason = 'paged-refresh') {
+      const anchorIndex = this.currentPageAnchorIndex()
+      if (!Number.isInteger(anchorIndex) || anchorIndex < 0) return
+      this.queueVisiblePreviewRepair(anchorIndex, immediate, reason)
+    },
+
+    queueVisiblePreviewRepair(anchorIndex, immediate = false, reason = 'visible-window') {
+      const entryIds = this.collectRepairEntryIds(anchorIndex)
+      if (!entryIds.length) return
+
+      const signature = [
+        this.pageBrowseMode,
+        this.viewMode,
+        anchorIndex,
+        entryIds.join(','),
+      ].join('|')
+
+      const dispatch = () => {
+        if (signature === this.lastPreviewRepairSignature) return
+        this.lastPreviewRepairSignature = signature
+        this.logTrashDebug('preview-repair-queued', { reason, anchorIndex, count: entryIds.length })
+        this.enqueuePreviewRepairIds(entryIds)
+      }
+
+      if (immediate) {
+        dispatch()
+        return
+      }
+
+      if (this.previewRepairTimer) {
+        clearTimeout(this.previewRepairTimer)
+      }
+      this.previewRepairTimer = setTimeout(() => {
+        this.previewRepairTimer = null
+        dispatch()
+      }, 120)
+    },
+
+    enqueuePreviewRepairIds(entryIds) {
+      const normalizedIds = [...new Set((entryIds || []).filter(id => Number.isInteger(id) && id > 0))]
+      if (!normalizedIds.length) return
+      this.previewRepairQueue = [...new Set([...this.previewRepairQueue, ...normalizedIds])]
+      if (this.previewRepairInFlight) return
+      void this.flushPreviewRepairQueue()
+    },
+
+    async flushPreviewRepairQueue() {
+      const entryIds = [...new Set(this.previewRepairQueue.filter(id => Number.isInteger(id) && id > 0))]
+      this.previewRepairQueue = []
+      if (!entryIds.length) return
+
+      if (this.previewRepairInFlight) {
+        this.previewRepairQueue = [...new Set([...this.previewRepairQueue, ...entryIds])]
+        return
+      }
+
+      this.previewRepairInFlight = true
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/refresh?mode=quick`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            repair_cache: true,
+            trash_entry_ids: entryIds,
+          }),
+        })
+        if (!res.ok) return
+        const data = await res.json().catch(() => ({}))
+        const didChange = Object.entries(data || {}).some(([key, value]) => (
+          key.startsWith('cache_') && Number(value) > 0
+        ))
+        if (didChange) {
+          await this.reloadTrashItemsPreservingAnchor({
+            preserveSelection: true,
+            reopenDetails: this.selectionDetailsOpen,
+          })
+        }
+      } catch {
+        // ignore targeted preview repair failures
+      } finally {
+        this.previewRepairInFlight = false
+        if (this.previewRepairQueue.length) {
+          void this.flushPreviewRepairQueue()
+        }
+      }
+    },
+
+    restoreSelectionFromKeys(selectionKeys, selectionMode = false) {
+      const wantedKeys = new Set(selectionKeys || [])
+      const nextSelectedMap = {}
+      let nextTypeLock = null
+
+      for (let index = 0; index < this.items.length; index += 1) {
+        const item = this.items[index]
+        const key = this.itemKey(item, index)
+        if (!wantedKeys.has(key)) continue
+        nextSelectedMap[key] = true
+        if (!nextTypeLock && (item?.type === 'album' || item?.type === 'image')) {
+          nextTypeLock = item.type
+        }
+      }
+
+      this.selectedMap = nextSelectedMap
+      this.selectionTypeLock = nextTypeLock
+      this.selectionAnchorIndex = null
+      if (selectionMode) {
+        this.selectionMode = Object.keys(nextSelectedMap).length > 0
+      }
+    },
+
+    async reloadTrashItemsPreservingAnchor({ preserveSelection = true, reopenDetails = false } = {}) {
+      const anchor = this.captureViewportAnchor()
+      const selectedKeys = preserveSelection ? Object.keys(this.selectedMap) : []
+      const selectionMode = preserveSelection ? this.selectionMode : false
+      try {
+        const res = await fetch(`${API_BASE}/api/trash/items`)
+        if (!res.ok) return false
+        const data = await res.json()
+        this.applyFetchedItems(data.items || [])
+        this.lastPreviewRepairSignature = ''
+        if (preserveSelection) {
+          this.restoreSelectionFromKeys(selectedKeys, selectionMode)
+        }
+        if (anchor) {
+          this.pendingViewAnchor = anchor
+        }
+        this.$nextTick(() => {
+          this.refreshObservedGrid()
+          if (reopenDetails && this.selectedCount) {
+            this.openSelectionDetails()
+          }
+        })
+        return true
+      } catch {
+        return false
+      }
+    },
+
+    async triggerSilentReconcile() {
+      if (this.reconcileInFlight) return
+      this.reconcileInFlight = true
+      try {
+        const res = await fetch(`${API_BASE}/api/trash/reconcile`, { method: 'POST' })
+        if (!res.ok) return
+        const data = await res.json().catch(() => ({}))
+        if (data?.changed) {
+          await this.reloadTrashItemsPreservingAnchor({
+            preserveSelection: true,
+            reopenDetails: this.selectionDetailsOpen,
+          })
+        }
+      } catch {
+        // ignore silent reconcile failures
+      } finally {
+        this.reconcileInFlight = false
+      }
     },
 
     itemDateTs(item) {
@@ -2616,6 +3008,31 @@ export default {
         return
       }
       this.closeSelectAllMenu()
+    },
+
+    setupObserver() {
+      if (!this.$refs.itemGrid || !this.isPhotoGridMode) return
+      this.observer = new IntersectionObserver(
+        (entries) => {
+          const visible = entries
+            .filter(entry => entry.isIntersecting)
+            .map(entry => parseInt(entry.target.dataset.index, 10))
+          if (!visible.length) return
+          const topIndex = Math.min(...visible)
+          this.queueVisiblePreviewRepair(topIndex, false, 'observer')
+        },
+        { root: null, rootMargin: '0px', threshold: 0.1 },
+      )
+      for (const el of this.$refs.itemGrid.querySelectorAll('[data-index]')) {
+        this.observer.observe(el)
+      }
+    },
+
+    teardownObserver() {
+      if (this.observer) {
+        this.observer.disconnect()
+        this.observer = null
+      }
     },
 
     setupResizeObserver() {

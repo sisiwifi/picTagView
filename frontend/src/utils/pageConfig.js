@@ -4,22 +4,36 @@ const STORAGE_KEY = 'ptv.pageConfig'
 export const PAGE_CONFIG_UPDATED_EVENT = 'ptv:page-config-updated'
 export const PAGE_BROWSE_MODE_SCROLL = 'scroll'
 export const PAGE_BROWSE_MODE_PAGED = 'paged'
+export const PAGE_SCROLL_WINDOW_OPTIONS = Object.freeze([40, 60, 80, 100, 120, 140, 160, 180, 200])
 
 export const DEFAULT_PAGE_CONFIG = Object.freeze({
   browseMode: PAGE_BROWSE_MODE_SCROLL,
+  scrollWindowSize: 100,
 })
 
 function normalizeBrowseMode(value) {
   return value === PAGE_BROWSE_MODE_PAGED ? PAGE_BROWSE_MODE_PAGED : PAGE_BROWSE_MODE_SCROLL
 }
 
+function normalizeScrollWindowSize(value) {
+  const numericValue = Number.parseInt(String(value ?? ''), 10)
+  if (PAGE_SCROLL_WINDOW_OPTIONS.includes(numericValue)) {
+    return numericValue
+  }
+  return DEFAULT_PAGE_CONFIG.scrollWindowSize
+}
+
 export function normalizePageConfig(rawConfig) {
   const browseMode = normalizeBrowseMode(
     rawConfig?.browse_mode || rawConfig?.browseMode || DEFAULT_PAGE_CONFIG.browseMode,
   )
+  const scrollWindowSize = normalizeScrollWindowSize(
+    rawConfig?.scroll_window_size || rawConfig?.scrollWindowSize || DEFAULT_PAGE_CONFIG.scrollWindowSize,
+  )
 
   return {
     browseMode,
+    scrollWindowSize,
   }
 }
 
@@ -69,6 +83,7 @@ export async function savePageConfig(nextConfig) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       browse_mode: normalized.browseMode,
+      scroll_window_size: normalized.scrollWindowSize,
     }),
   })
 

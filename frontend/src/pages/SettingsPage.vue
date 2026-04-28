@@ -198,6 +198,27 @@
           </div>
         </div>
 
+        <div v-if="pageBrowseMode === 'scroll'" class="setting-row setting-row--compact">
+          <div class="setting-info">
+            <span class="setting-label">滚动窗口范围</span>
+            <span class="setting-desc">控制滚动浏览时围绕当前锚点预热的预览数量，默认 100，即锚点前后各约 50 项。</span>
+          </div>
+          <div class="setting-select-wrap">
+            <select
+              class="setting-select"
+              :value="String(pageScrollWindowSize)"
+              :disabled="pageConfigLoading || pageConfigSaving"
+              @change="onPageScrollWindowSizeChange"
+            >
+              <option
+                v-for="option in pageScrollWindowOptions"
+                :key="option"
+                :value="String(option)"
+              >{{ option }}</option>
+            </select>
+          </div>
+        </div>
+
         <p v-if="pageConfigError" class="viewer-error">{{ pageConfigError }}</p>
       </div>
 
@@ -368,6 +389,7 @@ import TagImportDialog from '../components/TagImportDialog.vue'
 import {
   PAGE_BROWSE_MODE_PAGED,
   PAGE_BROWSE_MODE_SCROLL,
+  PAGE_SCROLL_WINDOW_OPTIONS,
   fetchPageConfig,
   savePageConfig,
 } from '../utils/pageConfig'
@@ -413,6 +435,8 @@ export default {
       pageConfigLoading: false,
       pageConfigSaving: false,
       pageBrowseMode: PAGE_BROWSE_MODE_SCROLL,
+      pageScrollWindowSize: 100,
+      pageScrollWindowOptions: PAGE_SCROLL_WINDOW_OPTIONS,
       pageConfigError: '',
       floatingMessage: {
         visible: false,
@@ -513,6 +537,7 @@ export default {
       try {
         const config = await fetchPageConfig()
         this.pageBrowseMode = config.browseMode || PAGE_BROWSE_MODE_SCROLL
+        this.pageScrollWindowSize = config.scrollWindowSize || 100
       } catch (err) {
         this.pageConfigError = `加载页面配置失败：${toErrorMessage(err)}`
       } finally {
@@ -528,9 +553,38 @@ export default {
       this.pageConfigSaving = true
       this.pageConfigError = ''
       try {
-        const savedConfig = await savePageConfig({ browseMode: normalizedMode })
+        const savedConfig = await savePageConfig({
+          browseMode: normalizedMode,
+          scrollWindowSize: this.pageScrollWindowSize,
+        })
         this.pageBrowseMode = savedConfig.browseMode
+        this.pageScrollWindowSize = savedConfig.scrollWindowSize
         this.showFloatingMessage('success', `浏览方式已切换为${savedConfig.browseMode === PAGE_BROWSE_MODE_PAGED ? '分页浏览' : '滚动浏览'}。`)
+      } catch (err) {
+        this.pageConfigError = `保存页面配置失败：${toErrorMessage(err)}`
+        this.showFloatingMessage('error', this.pageConfigError)
+      } finally {
+        this.pageConfigSaving = false
+      }
+    },
+
+    async onPageScrollWindowSizeChange(event) {
+      const nextSize = Number.parseInt(String(event?.target?.value || ''), 10)
+      const normalizedSize = PAGE_SCROLL_WINDOW_OPTIONS.includes(nextSize)
+        ? nextSize
+        : 100
+      if (normalizedSize === this.pageScrollWindowSize) return
+
+      this.pageConfigSaving = true
+      this.pageConfigError = ''
+      try {
+        const savedConfig = await savePageConfig({
+          browseMode: this.pageBrowseMode,
+          scrollWindowSize: normalizedSize,
+        })
+        this.pageBrowseMode = savedConfig.browseMode
+        this.pageScrollWindowSize = savedConfig.scrollWindowSize
+        this.showFloatingMessage('success', `滚动窗口范围已更新为 ${savedConfig.scrollWindowSize}。`)
       } catch (err) {
         this.pageConfigError = `保存页面配置失败：${toErrorMessage(err)}`
         this.showFloatingMessage('error', this.pageConfigError)

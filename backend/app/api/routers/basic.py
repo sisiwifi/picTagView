@@ -4,7 +4,7 @@ from typing import List, Optional
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from sqlmodel import select
 
-from app.api.schemas import ImportResponse
+from app.api.schemas import AdminRefreshRequest, ImportResponse
 from app.db.session import get_session
 from app.models.image_asset import ImageAsset
 from app.services.category_service import require_category
@@ -62,5 +62,10 @@ def images_count() -> dict:
 
 
 @router.post("/api/admin/refresh")
-def refresh(mode: str = "quick") -> dict:
-    return refresh_library(mode=mode)
+def refresh(mode: str = "quick", body: AdminRefreshRequest | None = None) -> dict:
+    request_body = body or AdminRefreshRequest()
+    return refresh_library(
+        mode=mode,
+        repair_cache_image_ids=request_body.image_ids if request_body.repair_cache else None,
+        repair_cache_trash_entry_ids=request_body.trash_entry_ids if request_body.repair_cache else None,
+    )

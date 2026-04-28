@@ -21,6 +21,18 @@ DEFAULT_TAG_MATCH_DROP_NUMERIC_ONLY = True
 
 DEFAULT_PAGE_BROWSE_MODE = "scroll"
 PAGE_BROWSE_MODE_OPTIONS = {"scroll", "paged"}
+DEFAULT_PAGE_SCROLL_WINDOW_SIZE = 100
+PAGE_SCROLL_WINDOW_OPTIONS = tuple(range(40, 201, 20))
+
+
+def _normalize_page_scroll_window_size(value: object) -> int:
+    try:
+        normalized = int(value)
+    except Exception:
+        return DEFAULT_PAGE_SCROLL_WINDOW_SIZE
+    if normalized in PAGE_SCROLL_WINDOW_OPTIONS:
+        return normalized
+    return DEFAULT_PAGE_SCROLL_WINDOW_SIZE
 
 
 def load_app_settings() -> dict:
@@ -169,9 +181,13 @@ def get_page_config() -> dict:
     browse_mode = str(raw.get("browse_mode", DEFAULT_PAGE_BROWSE_MODE) or DEFAULT_PAGE_BROWSE_MODE).strip()
     if browse_mode not in PAGE_BROWSE_MODE_OPTIONS:
         browse_mode = DEFAULT_PAGE_BROWSE_MODE
+    scroll_window_size = _normalize_page_scroll_window_size(
+        raw.get("scroll_window_size", DEFAULT_PAGE_SCROLL_WINDOW_SIZE),
+    )
 
     return {
         "browse_mode": browse_mode,
+        "scroll_window_size": scroll_window_size,
     }
 
 
@@ -187,9 +203,15 @@ def set_page_config(setting: dict) -> dict:
             browse_mode = DEFAULT_PAGE_BROWSE_MODE
         current["browse_mode"] = browse_mode
 
+    if "scroll_window_size" in setting:
+        current["scroll_window_size"] = _normalize_page_scroll_window_size(
+            setting.get("scroll_window_size"),
+        )
+
     data = load_app_settings()
     data["page_config"] = {
         "browse_mode": current["browse_mode"],
+        "scroll_window_size": current["scroll_window_size"],
     }
     save_app_settings(data)
     return current
