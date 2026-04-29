@@ -31,6 +31,14 @@
           <span :class="['btn__icon', { spinning: refreshing }]">🔄</span>
           刷新
         </button>
+        <button
+          v-if="importing"
+          class="btn btn--danger"
+          :disabled="stopRequested"
+          @click="stopImport"
+        >
+          {{ stopRequested ? '停止中…' : '停止导入' }}
+        </button>
       </div>
 
       <input
@@ -94,6 +102,7 @@ const DEFAULT_CATEGORY_ID = 1
 const AUTO_CATEGORY_KEY = 'auto'
 const IMPORT_CHUNK = 50
 const IMAGE_EXT_RE = /\.(jpe?g|png|webp|gif|bmp|tiff?)$/i
+const IMPORT_STOP_ERROR_NAME = 'ImportStoppedError'
 
 function toErrorMessage(err) {
   if (!err) return '未知错误'
@@ -104,6 +113,16 @@ function toErrorMessage(err) {
   } catch {
     return String(err)
   }
+}
+
+function createImportStopError() {
+  const error = new Error('导入已停止')
+  error.name = IMPORT_STOP_ERROR_NAME
+  return error
+}
+
+function isImportStopError(err) {
+  return Boolean(err && (err.name === IMPORT_STOP_ERROR_NAME || err.name === 'AbortError'))
 }
 
 export default {
@@ -132,11 +151,17 @@ export default {
       nextImportRowId: 1,
       checkingThumbs: false,
       currentFolderLabel: '',
+      stopRequested: false,
     }
   },
 
   created() {
+    this._activeImportController = null
     this._checkMissingThumbs()
+  },
+
+  beforeUnmount() {
+    this.abortActiveImportRequest()
   },
 
   activated() {
@@ -160,6 +185,19 @@ export default {
       this.noticeType = 'info'
       this.noticeTitle = ''
       this.noticeLines = []
+    },
+
+    abortActiveImportRequest() {
+      if (!this._activeImportController) return
+      this._activeImportController.abort()
+      this._activeImportController = null
+    },
+
+    stopImport() {
+      if (!this.importing || this.stopRequested) return
+      this.stopRequested = true
+      this.status = '正在停止导入…'
+      this.abortActiveImportRequest()
     },
 
     defaultImportCategoryValue() {
@@ -333,6 +371,8 @@ export default {
       let skippedCount = 0
 
       for (const batch of batches) {
+        if (this.stopRequested) throw createImportStopError()
+
         const firstFile = batch.files[0]
         this.currentItem = batch.subdir
           ? `${row.label}/${batch.subdir}/${batch.batchTotal > 1 ? `(${batch.batchIndex}/${batch.batchTotal})` : ''}`
@@ -350,7 +390,22 @@ export default {
         fd.append('created_time_json', JSON.stringify(createdTimes))
         fd.append('category_id', row.categoryValue)
 
-        const res = await fetch(`${API_BASE}/api/import`, { method: 'POST', body: fd })
+        const controller = new AbortController()
+        this._activeImportController = controller
+        let res
+        try {
+          res = await fetch(`${API_BASE}/api/import`, { method: 'POST', body: fd, signal: controller.signal })
+        } catch (err) {
+          if (this.stopRequested || isImportStopError(err)) {
+            throw createImportStopError()
+          }
+          throw err
+        } finally {
+          if (this._activeImportController === controller) {
+            this._activeImportController = null
+          }
+        }
+
         if (!res.ok) {
           const message = await this.readErrorMessage(res, '导入失败，请检查后端服务')
           throw new Error(message)
@@ -360,6 +415,8 @@ export default {
         importedCount += Array.isArray(data.imported) ? data.imported.length : 0
         skippedCount += Array.isArray(data.skipped) ? data.skipped.length : 0
         this.doneFiles = Math.min(this.doneFiles + batch.imageCount, this.totalFiles)
+
+        if (this.stopRequested) throw createImportStopError()
       }
 
       return { importedCount, skippedCount }
@@ -380,8 +437,10 @@ export default {
       const failedRows = []
       let importedCount = 0
       let skippedCount = 0
+      let stopIndex = -1
 
       this.importing = true
+      this.stopRequested = false
       window.__ptvImporting = true
       this.clearNotice()
       this.importDialogError = ''
@@ -391,6 +450,11 @@ export default {
 
       try {
         for (const [index, row] of rowsToImport.entries()) {
+          if (this.stopRequested) {
+            stopIndex = index
+            break
+          }
+
           this.currentFolderLabel = row.label
           this.status = `正在导入（${index + 1}/${rowsToImport.length}）${row.label}…`
           try {
@@ -398,6 +462,10 @@ export default {
             importedCount += result.importedCount
             skippedCount += result.skippedCount
           } catch (err) {
+            if (isImportStopError(err)) {
+              stopIndex = index
+              break
+            }
             failedRows.push({
               id: row.id,
               label: row.label,
@@ -406,7 +474,17 @@ export default {
           }
         }
 
-        if (failedRows.length) {
+        if (stopIndex >= 0) {
+          const keepIdSet = new Set([
+            ...failedRows.map(item => item.id),
+            ...rowsToImport.slice(stopIndex).map(row => row.id),
+          ])
+          this.importDialogRows = this.importDialogRows.filter(row => keepIdSet.has(row.id))
+          this.selectedImportRowIds = []
+          this.importDialogError = '导入已停止，已保留当前及未完成的文件夹，可继续导入。'
+          this.importDialogOpen = this.importDialogRows.length > 0
+          this.status = `导入已停止：已导入 ${importedCount} 张，重复跳过 ${skippedCount} 张。`
+        } else if (failedRows.length) {
           const failedIdSet = new Set(failedRows.map(item => item.id))
           this.importDialogRows = this.importDialogRows.filter(row => failedIdSet.has(row.id))
           this.selectedImportRowIds = []
@@ -422,6 +500,8 @@ export default {
         }
       } finally {
         this.importing = false
+        this.stopRequested = false
+        this.abortActiveImportRequest()
         window.__ptvImporting = false
         this.currentFolderLabel = ''
         this.currentItem = ''
@@ -505,6 +585,8 @@ export default {
 .btn--primary:not(:disabled):hover { @apply bg-indigo-700; }
 .btn--secondary { @apply bg-white text-slate-600 border border-slate-300 shadow-sm; }
 .btn--secondary:not(:disabled):hover { @apply bg-slate-50; }
+.btn--danger { @apply bg-rose-600 text-white; }
+.btn--danger:not(:disabled):hover { @apply bg-rose-700; }
 .btn__icon { @apply inline-block; }
 .spinning  { animation: spin 0.8s linear infinite; }
 

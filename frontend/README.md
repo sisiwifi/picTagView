@@ -58,7 +58,8 @@ frontend/
 - 调用 `POST /api/import`
 - 使用 `FormData` 传递 `files`、`last_modified_json`、`created_time_json`、`category_id`
 - 前端会把根目录直下文件与首层嵌套子目录分别按每批 50 个文件拆分后顺序上传
-- `/gallery` 路由启用 `meta.keepAlive`，切换到其他页面时不会销毁导入队列；返回后继续显示当前进度
+- 导入进行中会显示“停止导入”按钮；点击后会中止当前前端请求，并停止继续提交后续批次，当前及未完成的文件夹会保留在导入表单中便于继续导入
+- `/gallery` 路由启用 `meta.keepAlive`，切换到其他页面时不会销毁导入队列；返回后继续显示当前进度与停止按钮状态
 
 ### 4.2 日历总览
 - `CalendarOverview` 获取 `GET /api/dates`
@@ -120,7 +121,7 @@ frontend/
 - `/settings/categories` -> `CategorySettingsPage`
 - `/trash` -> `TrashPage`
 
-* `App.vue` 会对声明 `meta.keepAlive` 的路由使用 `KeepAlive` 包裹；当前仅 `GalleryPage` 依赖该机制来保留导入状态
+* `App.vue` 会保持 `KeepAlive` 容器常驻，再单独渲染非保活路由；当前仅 `GalleryPage` 依赖该机制来保留导入状态，避免从 `/gallery` 切到普通页面时被意外卸载
 
 * 两个 browse 路由共享 `meta.reuseKey = 'browse'`，用于复用同一个 `BrowsePage` 组件实例
 

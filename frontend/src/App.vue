@@ -4,11 +4,15 @@
       <AppSidebar />
       <main class="flex-1 min-w-0 p-10">
         <router-view v-slot="{ Component, route }">
+          <KeepAlive>
+            <component
+              v-if="route.meta?.keepAlive"
+              :is="Component"
+              :key="route.meta?.reuseKey || route.name"
+            />
+          </KeepAlive>
           <Transition name="page" mode="out-in">
-            <KeepAlive v-if="route.meta?.keepAlive">
-              <component :is="Component" :key="route.meta?.reuseKey || route.name" />
-            </KeepAlive>
-            <component v-else :is="Component" :key="route.meta?.reuseKey || route.name" />
+            <component v-if="!route.meta?.keepAlive" :is="Component" :key="route.meta?.reuseKey || route.name" />
           </Transition>
         </router-view>
       </main>
