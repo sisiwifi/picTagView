@@ -132,6 +132,9 @@ frontend/
 ```
 cd frontend
 npm install
+
+cd backend
+python -m venv .venv; .\.venv\Scripts\python -m pip install --upgrade pip; .\.venv\Scripts\pip install -r backend\requirements.txt
 ```
 
 ### 6.2 开发模式
