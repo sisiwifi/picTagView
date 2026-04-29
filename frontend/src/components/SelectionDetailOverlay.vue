@@ -71,142 +71,144 @@
           </div>
         </div>
 
-        <div
-          class="detail-panel__aside"
-          :class="{ 'detail-panel__aside--scrolling': asideScrolling }"
-          @scroll.passive="onAsideScroll"
-        >
-          <p v-if="isMulti" class="detail-panel__summary">已选择 {{ previewItems.length }} 项</p>
+        <div class="detail-panel__aside-shell">
+          <div
+            class="detail-panel__aside"
+            :class="{ 'detail-panel__aside--scrolling': asideScrolling }"
+            @scroll.passive="onAsideScroll"
+          >
+            <p v-if="isMulti" class="detail-panel__summary">已选择 {{ previewItems.length }} 项</p>
 
-          <div class="detail-field">
-            <div class="detail-field__head">
-              <span class="detail-field__label">名称</span>
-            </div>
-            <div class="detail-field__value">
-              <div v-if="editingField === 'name'" class="detail-inline-editor">
-                <input
-                    ref="nameEditorInput"
-                    v-model="nameDraft"
-                  class="detail-inline-editor__input"
-                  type="text"
-                  autocomplete="off"
-                  spellcheck="false"
-                  :disabled="editBusy"
-                    @blur="onNameEditBlur"
-                    @keydown.enter.prevent="handleNameEditCommitKey"
-                  @keydown.esc.prevent="cancelNameEdit"
-                >
+            <div class="detail-field">
+              <div class="detail-field__head">
+                <span class="detail-field__label">名称</span>
               </div>
-              <template v-else>
+              <div class="detail-field__value">
+                <div v-if="editingField === 'name'" class="detail-inline-editor">
+                  <input
+                      ref="nameEditorInput"
+                      v-model="nameDraft"
+                    class="detail-inline-editor__input"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    :disabled="editBusy"
+                      @blur="onNameEditBlur"
+                      @keydown.enter.prevent="handleNameEditCommitKey"
+                    @keydown.esc.prevent="cancelNameEdit"
+                  >
+                </div>
+                <template v-else>
+                    <div class="detail-field__display detail-field__display--editable">
+                      <em v-if="nameField.isVarious" class="detail-field__various detail-field__various--inline">various</em>
+                      <span v-else class="detail-field__text detail-field__text--inline">{{ nameField.text || '—' }}</span>
+                      <button
+                        v-if="showCategoryField && canEditName"
+                        class="detail-field__icon-btn"
+                        type="button"
+                        title="编辑文件名"
+                        aria-label="编辑文件名"
+                        :disabled="editBusy"
+                        @click="startNameEdit"
+                      >✎</button>
+                    </div>
+                </template>
+              </div>
+            </div>
+
+            <div v-if="showCategoryField" class="detail-field">
+              <div class="detail-field__head">
+                <span class="detail-field__label">主分类</span>
+              </div>
+              <div class="detail-field__value">
+                <div v-if="editingField === 'category'" class="detail-inline-editor">
+                  <select
+                    ref="categoryEditorSelect"
+                    v-model="categoryDraft"
+                    class="detail-inline-editor__input detail-inline-editor__select"
+                    :disabled="editBusy"
+                    @blur="onCategoryEditBlur"
+                    @keydown.enter.prevent="handleCategoryEditCommitKey"
+                    @keydown.esc.prevent="cancelCategoryEdit"
+                  >
+                    <option v-for="option in categoryOptions" :key="option.value" :value="String(option.value)">{{ option.label }}</option>
+                  </select>
+                </div>
+                <template v-else>
                   <div class="detail-field__display detail-field__display--editable">
-                    <em v-if="nameField.isVarious" class="detail-field__various detail-field__various--inline">various</em>
-                    <span v-else class="detail-field__text detail-field__text--inline">{{ nameField.text || '—' }}</span>
+                    <em v-if="categoryField.isVarious" class="detail-field__various detail-field__various--inline">various</em>
+                    <span v-else class="detail-field__text detail-field__text--inline">{{ categoryField.text || '—' }}</span>
                     <button
-                      v-if="showCategoryField && canEditName"
+                      v-if="canEditCategory"
                       class="detail-field__icon-btn"
                       type="button"
-                      title="编辑文件名"
-                      aria-label="编辑文件名"
+                      title="编辑主分类"
+                      aria-label="编辑主分类"
                       :disabled="editBusy"
-                      @click="startNameEdit"
+                      @click="startCategoryEdit"
                     >✎</button>
                   </div>
-              </template>
-            </div>
-          </div>
-
-          <div v-if="showCategoryField" class="detail-field">
-            <div class="detail-field__head">
-              <span class="detail-field__label">主分类</span>
-            </div>
-            <div class="detail-field__value">
-              <div v-if="editingField === 'category'" class="detail-inline-editor">
-                <select
-                  ref="categoryEditorSelect"
-                  v-model="categoryDraft"
-                  class="detail-inline-editor__input detail-inline-editor__select"
-                  :disabled="editBusy"
-                  @blur="onCategoryEditBlur"
-                  @keydown.enter.prevent="handleCategoryEditCommitKey"
-                  @keydown.esc.prevent="cancelCategoryEdit"
-                >
-                  <option v-for="option in categoryOptions" :key="option.value" :value="String(option.value)">{{ option.label }}</option>
-                </select>
+                </template>
               </div>
-              <template v-else>
+            </div>
+
+            <div class="detail-field detail-field--tags">
+              <span class="detail-field__label">标签</span>
+              <div class="detail-field__tag-row detail-field__tag-row--single">
+                <div class="detail-field__value detail-field__value--tags">
+                  <div class="detail-field__tag-stack">
+                    <em v-if="tagsField.isVarious" class="detail-field__various">various</em>
+                    <span v-else-if="tagsField.isEmpty" class="detail-field__text">无标签</span>
+                    <span
+                      v-else-if="tagsField.text && !(Array.isArray(tagsField.items) && tagsField.items.length)"
+                      class="detail-field__text"
+                    >{{ tagsField.text }}</span>
+                    <TagChipList
+                      :tags="Array.isArray(tagsField.items) ? tagsField.items : []"
+                      :compact="true"
+                      :show-add-button="canEditTags"
+                      :add-disabled="tagMenuDisabled"
+                      @add-click="$emit('open-tag-menu')"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="detail-field">
+              <span class="detail-field__label">{{ sizeLabel }}</span>
+              <div class="detail-field__value">
+                <em v-if="sizeField.isVarious" class="detail-field__various">various</em>
+                <span v-else class="detail-field__text">{{ sizeField.text || '—' }}</span>
+              </div>
+            </div>
+
+            <div class="detail-field">
+              <span class="detail-field__label">导入时间</span>
+              <div class="detail-field__value">
+                <em v-if="importedField.isVarious" class="detail-field__various">various</em>
+                <span v-else class="detail-field__text">{{ importedField.text || '—' }}</span>
+              </div>
+            </div>
+
+            <div class="detail-field">
+              <div class="detail-field__head">
+                <span class="detail-field__label">创建时间</span>
+              </div>
+              <div class="detail-field__value">
                 <div class="detail-field__display detail-field__display--editable">
-                  <em v-if="categoryField.isVarious" class="detail-field__various detail-field__various--inline">various</em>
-                  <span v-else class="detail-field__text detail-field__text--inline">{{ categoryField.text || '—' }}</span>
+                  <em v-if="createdField.isVarious" class="detail-field__various detail-field__various--inline">various</em>
+                  <span v-else class="detail-field__text detail-field__text--inline">{{ createdField.text || '—' }}</span>
                   <button
-                    v-if="canEditCategory"
+                    v-if="showCategoryField && canEditCreatedAt"
                     class="detail-field__icon-btn"
                     type="button"
-                    title="编辑主分类"
-                    aria-label="编辑主分类"
+                    title="编辑创建时间"
+                    aria-label="编辑创建时间"
                     :disabled="editBusy"
-                    @click="startCategoryEdit"
+                    @click="openCreatedEdit"
                   >✎</button>
                 </div>
-              </template>
-            </div>
-          </div>
-
-          <div class="detail-field detail-field--tags">
-            <span class="detail-field__label">标签</span>
-            <div class="detail-field__tag-row detail-field__tag-row--single">
-              <div class="detail-field__value detail-field__value--tags">
-                <div class="detail-field__tag-stack">
-                  <em v-if="tagsField.isVarious" class="detail-field__various">various</em>
-                  <span v-else-if="tagsField.isEmpty" class="detail-field__text">无标签</span>
-                  <span
-                    v-else-if="tagsField.text && !(Array.isArray(tagsField.items) && tagsField.items.length)"
-                    class="detail-field__text"
-                  >{{ tagsField.text }}</span>
-                  <TagChipList
-                    :tags="Array.isArray(tagsField.items) ? tagsField.items : []"
-                    :compact="true"
-                    :show-add-button="canEditTags"
-                    :add-disabled="tagMenuDisabled"
-                    @add-click="$emit('open-tag-menu')"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="detail-field">
-            <span class="detail-field__label">{{ sizeLabel }}</span>
-            <div class="detail-field__value">
-              <em v-if="sizeField.isVarious" class="detail-field__various">various</em>
-              <span v-else class="detail-field__text">{{ sizeField.text || '—' }}</span>
-            </div>
-          </div>
-
-          <div class="detail-field">
-            <span class="detail-field__label">导入时间</span>
-            <div class="detail-field__value">
-              <em v-if="importedField.isVarious" class="detail-field__various">various</em>
-              <span v-else class="detail-field__text">{{ importedField.text || '—' }}</span>
-            </div>
-          </div>
-
-          <div class="detail-field">
-            <div class="detail-field__head">
-              <span class="detail-field__label">创建时间</span>
-            </div>
-            <div class="detail-field__value">
-              <div class="detail-field__display detail-field__display--editable">
-                <em v-if="createdField.isVarious" class="detail-field__various detail-field__various--inline">various</em>
-                <span v-else class="detail-field__text detail-field__text--inline">{{ createdField.text || '—' }}</span>
-                <button
-                  v-if="showCategoryField && canEditCreatedAt"
-                  class="detail-field__icon-btn"
-                  type="button"
-                  title="编辑创建时间"
-                  aria-label="编辑创建时间"
-                  :disabled="editBusy"
-                  @click="openCreatedEdit"
-                >✎</button>
               </div>
             </div>
           </div>
@@ -818,40 +820,62 @@ export default {
   letter-spacing: 0.08em;
 }
 
+.detail-panel__aside-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: clamp(1.35rem, 2.4vw, 2.1rem);
+  border-left: 1px solid rgba(226, 232, 240, 0.9);
+  overflow: hidden;
+}
+
 .detail-panel__aside {
   display: flex;
   flex-direction: column;
   gap: 1.15rem;
   min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  --detail-aside-scrollbar-width: 10px;
+  --detail-aside-scrollbar-thumb: transparent;
+  --detail-aside-scrollbar-border: transparent;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: clamp(1.35rem, 2.4vw, 2.1rem);
-  border-left: 1px solid rgba(226, 232, 240, 0.9);
-  scrollbar-width: none;
+  padding-right: 0.85rem;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
 }
 
 .detail-panel__aside::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  width: var(--detail-aside-scrollbar-width);
+  height: var(--detail-aside-scrollbar-width);
 }
 
-.detail-panel__aside--scrolling {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(203, 213, 225, 0.92) transparent;
-}
-
-.detail-panel__aside--scrolling::-webkit-scrollbar {
-  width: 9px;
-}
-
-.detail-panel__aside--scrolling::-webkit-scrollbar-track {
+.detail-panel__aside::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.detail-panel__aside--scrolling::-webkit-scrollbar-thumb {
+.detail-panel__aside::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  border: 2px solid rgba(255, 255, 255, 0.92);
-  background: rgba(203, 213, 225, 0.96);
+  border: 2px solid var(--detail-aside-scrollbar-border);
+  background: var(--detail-aside-scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+.detail-panel__aside--scrolling {
+  scrollbar-color: rgba(203, 213, 225, 0.92) transparent;
+  --detail-aside-scrollbar-thumb: rgba(203, 213, 225, 0.96);
+  --detail-aside-scrollbar-border: rgba(255, 255, 255, 0.92);
+}
+
+.detail-panel__aside--scrolling::-webkit-scrollbar-thumb {
+  background: var(--detail-aside-scrollbar-thumb);
+}
+
+.detail-panel__aside > :last-child {
+  padding-bottom: 0.1rem;
 }
 
 .detail-panel__summary {
@@ -1030,14 +1054,14 @@ export default {
 }
 
 .detail-panel__actions {
-  position: sticky;
-  bottom: 0;
-  margin-top: auto;
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 0.8rem;
+  margin-top: 0.95rem;
   padding-top: 0.8rem;
   padding-bottom: 0.2rem;
+  padding-right: 0.85rem;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.98) 38%);
 }
 
@@ -1245,10 +1269,24 @@ export default {
     overflow: visible;
   }
 
-  .detail-panel__aside {
+  .detail-panel__aside-shell {
     border-left: 0;
     border-top: 1px solid rgba(226, 232, 240, 0.9);
+    padding-top: clamp(1.35rem, 2.4vw, 2.1rem);
+    padding-right: clamp(1.35rem, 2.4vw, 2.1rem);
+    padding-bottom: clamp(1.35rem, 2.4vw, 2.1rem);
+    padding-left: clamp(1.35rem, 2.4vw, 2.1rem);
+  }
+
+  .detail-panel__aside {
     overflow-y: visible;
+    padding-right: 0;
+    scrollbar-gutter: auto;
+  }
+
+  .detail-panel__actions {
+    margin-top: 1rem;
+    padding-right: 0;
   }
 
   .detail-preview-stage,
