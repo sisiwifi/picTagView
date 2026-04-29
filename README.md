@@ -76,7 +76,6 @@ picTagView_main/
 │   │   │   ├── album_image.py       # 相册与图片关联模型
 │   │   │   ├── category.py          # 主分类模型
 │   │   │   ├── image_asset.py       # 图片资源主表
-│   │   │   ├── soft_delete.py       # 软删除相关基础字段
 │   │   │   ├── tag.py               # 标签模型
 │   │   │   └── trash_entry.py       # 回收站条目模型
 │   │   ├── services/                # 业务服务层
