@@ -7,10 +7,22 @@
       :show-sort="true"
       :sort-by="sortBy"
       :sort-dir="sortDir"
-      @back="goBackOneLevel"
+      @back="onPageBack"
       @update:sortBy="onSortModeSelect"
       @toggle-sort-dir="toggleSortDir"
     >
+      <button
+        v-for="action in pageHeaderActions"
+        :key="action.key"
+        class="browse-header__action"
+        :class="action.className"
+        type="button"
+        :disabled="action.disabled"
+        @click="runConfiguredHandler(action.handler)"
+      >
+        {{ action.label }}
+      </button>
+
       <div class="vm-btns" role="group" aria-label="视图模式">
         <button
           class="vm-btn"
@@ -55,8 +67,8 @@
       <LoadingSpinner v-if="loading" />
 
       <div v-else-if="!items.length" class="empty-hint">
-        <span class="empty-hint__icon">📂</span>
-        <p>此页面尚无内容。</p>
+        <span class="empty-hint__icon">{{ emptyStateIcon }}</span>
+        <p>{{ emptyStateText }}</p>
       </div>
 
       <div
@@ -262,11 +274,14 @@
     >
       <span class="selection-island__count">{{ selectionSummaryText }}</span>
       <button
+        v-for="action in pageSelectionActions"
+        :key="action.key"
         class="selection-island__btn"
+        :class="action.className"
         type="button"
-        :disabled="!selectedCount || actionBusy"
-        @click="openSelectionDetailsFromIsland"
-      >详情</button>
+        :disabled="action.disabled"
+        @click="runConfiguredHandler(action.handler)"
+      >{{ action.label }}</button>
       <div
         ref="selectionIslandMenu"
         class="selection-island__menu-wrap"
@@ -303,9 +318,14 @@
       :raw-name="selectionDetailRawName"
       :raw-category-id="selectionDetailRawCategoryId"
       :raw-created-at="selectionDetailRawCreatedAt"
-      :primary-action-label="selectionDetailPrimaryActionLabel"
-      :can-open-primary-action="canOpenPrimaryActionFromDetails && !actionBusy"
-      :danger-action-disabled="actionBusy"
+      :primary-action-label="selectionDetailPolicy.primaryActionLabel"
+      :primary-action-tone="selectionDetailPolicy.primaryActionTone"
+      :can-open-primary-action="selectionDetailPolicy.canOpenPrimaryAction"
+      :primary-action-disabled="selectionDetailPolicy.primaryActionDisabled"
+      :secondary-action-label="selectionDetailPolicy.secondaryActionLabel"
+      :secondary-action-tone="selectionDetailPolicy.secondaryActionTone"
+      :secondary-action-disabled="selectionDetailPolicy.secondaryActionDisabled"
+      :metadata-permissions="selectionDetailPolicy.metadataPermissions"
       :can-edit-tags="canOpenTagMenu"
       :tag-menu-disabled="tagMenuBusy || actionBusy"
       :can-edit-name="canEditSelectionName"
@@ -316,8 +336,8 @@
       :category-options="selectionDetailCategoryOptions"
       @close="closeSelectionDetails"
       @open-tag-menu="openTagMenu"
-      @delete="onReservedDeleteClick"
       @open-primary="openPrimaryFromDetails"
+      @secondary-action="onSelectionDetailSecondaryAction"
       @preview-error="onSelectionDetailPreviewError"
       @submit-name-edit="submitSelectionNameEdit"
       @submit-category-edit="submitSelectionCategoryEdit"
@@ -372,8 +392,8 @@
 
     <ActionProgressOverlay
       :visible="actionBusy"
-      title="删除中"
-      :message="actionBusyText || '正在移动所选内容到回收站，请稍候…'"
+      :title="actionBusyTitleResolved"
+      :message="actionBusyMessageResolved"
     />
   </section>
 </template>
@@ -390,6 +410,7 @@ import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
 import TagMenuDialog from '../components/TagMenuDialog.vue'
 import TagFormDialog from '../components/TagFormDialog.vue'
 import { normalizeTagColors } from '../utils/tagColors'
+import { getCommonBrowsePageContract } from '../utils/commonBrowsePage'
 import {
   DEFAULT_PAGE_CONFIG,
   PAGE_BROWSE_MODE_PAGED,
@@ -561,12 +582,26 @@ export default {
       selectAllMenuOpen: false,
       metadataEditBusy: false,
       actionBusy: false,
+      actionBusyTitle: '',
       actionBusyText: '',
+      messageText: '',
+      messageType: 'success',
+      lastPreviewRepairSignature: '',
+      reconcileInFlight: false,
       confirmDialog: createDialogState(),
     }
   },
 
   computed: {
+    pageContractName() {
+      return this.$route.meta?.browseContract || 'calendar'
+    },
+    pageContract() {
+      return getCommonBrowsePageContract(this.pageContractName)
+    },
+    isTrashMode() {
+      return this.pageContractName === 'trash'
+    },
     dateGroup() {
       return this.$route.params.group || ''
     },
@@ -583,41 +618,16 @@ export default {
       return `${this.dateGroup}/${this.albumPath}`
     },
     headerCrumbs() {
-      const crumbs = [
-        { label: '日期视图', title: '日期视图', to: '/calendar' },
-      ]
-
-      if (!this.isAlbumMode) {
-        crumbs.push({ label: this.dateGroup, current: true })
-        return crumbs
-      }
-
-      crumbs.push({
-        label: this.dateGroup,
-        title: this.dateGroup,
-        to: `/calendar/${this.dateGroup}`,
-      })
-
-      const segments = this.albumPath.split('/').filter(Boolean)
-      for (let i = 0; i < segments.length; i++) {
-        const isLast = i === segments.length - 1
-        const segPath = segments.slice(0, i + 1).join('/')
-        const ancestorTitle = this.getAncestorTitle(i, segments[i])
-        if (isLast) {
-          crumbs.push({
-            label: this.bcLabel(this.albumInfo?.title || segments[i]),
-            title: this.albumInfo?.title || segments[i],
-            current: true,
-          })
-        } else {
-          crumbs.push({
-            label: this.bcLabel(ancestorTitle),
-            title: ancestorTitle,
-            to: `/calendar/${this.dateGroup}/${segPath}`,
-          })
-        }
-      }
-      return crumbs
+      return this.pageContract.buildCrumbs(this)
+    },
+    pageHeaderActions() {
+      return this.pageContract.buildHeaderActions(this)
+    },
+    emptyStateIcon() {
+      return this.pageContract.emptyState?.icon || '📂'
+    },
+    emptyStateText() {
+      return this.pageContract.emptyState?.text || '此页面尚无内容。'
     },
     totalCount() {
       return this.items.length
@@ -1281,6 +1291,9 @@ export default {
     selectionDetailPrimaryActionLabel() {
       return this.selectionDetailType === 'album' ? '查看相册' : '查看原图'
     },
+    selectionDetailPolicy() {
+      return this.pageContract.buildDetailPolicy(this)
+    },
     canOpenPrimaryActionFromDetails() {
       if (this.selectedEntries.length !== 1) return false
       const entry = this.selectedEntries[0]
@@ -1311,12 +1324,23 @@ export default {
     canOpenTagMenu() {
       return this.selectedImageIds.length > 0
     },
+    pageSelectionActions() {
+      return this.pageContract.buildSelectionActions(this)
+    },
+    actionBusyTitleResolved() {
+      return this.actionBusyTitle || (this.isTrashMode ? '处理中' : '删除中')
+    },
+    actionBusyMessageResolved() {
+      if (this.actionBusyText) return this.actionBusyText
+      return this.isTrashMode
+        ? '正在处理回收站操作，请稍候…'
+        : '正在移动所选内容到回收站，请稍候…'
+    },
   },
 
   watch: {
-    '$route.params': {
+    '$route.fullPath': {
       handler() { this.loadData() },
-      deep: true,
     },
     photoGridRowCount(newVal, oldVal) {
       if (newVal !== oldVal) {
@@ -1589,8 +1613,10 @@ export default {
       const selectionSnapshot = preserveSelection ? this.captureSelectionSnapshot() : null
 
       this.loading = true
-      this.sortBy = this.isAlbumMode ? 'alpha' : 'date'
-      this.sortDir = 'asc'
+      this.messageText = ''
+      const defaultSort = this.pageContract.defaultSort(this)
+      this.sortBy = defaultSort.sortBy
+      this.sortDir = defaultSort.sortDir
       this.cacheUrls = {}
       this.imgDimensions = {}
       this.layoutFingerprint = ''
@@ -1604,6 +1630,7 @@ export default {
       this.detailOriginalFailureTokens = {}
       this.previewRepairQueue = []
       this.previewRepairInFlight = false
+      this.lastPreviewRepairSignature = ''
       this.selectionRowHeight = 0
       this.albumInfo = null
       this.pendingViewAnchor = null
@@ -1646,14 +1673,15 @@ export default {
       }
 
       try {
-        if (this.isAlbumMode) {
-          await this.fetchAlbum()
-        } else {
-          await this.fetchDateGroup()
-        }
-      } catch {
+        const payload = await this.pageContract.loadItems(this)
+        this.albumInfo = payload?.album || null
+        this.applyFetchedItems(payload?.items || [])
+      } catch (err) {
         this.items = []
         this.albumInfo = null
+        if (this.isTrashMode) {
+          this.showMessage('error', err?.message || '加载回收站失败')
+        }
       } finally {
         this.loading = false
       }
@@ -1665,10 +1693,7 @@ export default {
         window.scrollTo({ top: 0, behavior: 'instant' })
       }
       this.refreshObservedGrid()
-      this.ensureCategoryLabelsLoaded()
-      if (this.selectionInfoMode === 'tags') {
-        this.ensureTagLabelsLoaded()
-      }
+      this.pageContract.afterLoad(this)
     },
 
     async fetchDateGroup() {
@@ -1693,7 +1718,8 @@ export default {
     },
 
     applyFetchedItems(rawItems) {
-      const nextItems = this.sortItems(rawItems || [])
+      const normalizedItems = this.pageContract.normalizeItems(rawItems || [], this)
+      const nextItems = this.sortItems(normalizedItems || [])
       const nextCacheUrls = {}
       const nextDimensions = {}
 
@@ -1702,7 +1728,7 @@ export default {
           nextCacheUrls[item.id] = item.cache_thumb_url
         }
 
-        const key = item.id || item.public_id
+        const key = item.layout_key || item.id || item.public_id
         const width = Number(item?.width)
         const height = Number(item?.height)
         if (key && Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
@@ -1726,6 +1752,7 @@ export default {
 
     previewStateKey(item) {
       if (!item) return ''
+      if (item.stable_key) return String(item.stable_key)
       if (Number.isInteger(item?.id)) return `${item?.type || 'item'}:${item.id}`
       if (item?.public_id) return `${item?.type || 'item'}:${item.public_id}`
       if (item?.album_path) return `${item?.type || 'item'}:${item.album_path}`
@@ -1745,6 +1772,7 @@ export default {
     },
 
     originalPreviewPath(item) {
+      if (item?.preview_original_url) return item.preview_original_url
       if (!item || item.type !== 'image' || !item.media_rel_path) return ''
       return `/media/${String(item.media_rel_path).replace(/\\/g, '/')}`
     },
@@ -1920,32 +1948,17 @@ export default {
 
     openItem(item) {
       if (this.selectionMode) return
-      if (item.type === 'album') {
-        if (item.album_path) {
-          this.$router.push(`/calendar/${item.album_path}`)
-        } else if (item.public_id) {
-          const base = this.isAlbumMode
-            ? `/calendar/${this.dateGroup}/${this.albumPath}`
-            : `/calendar/${this.dateGroup}`
-          this.$router.push(`${base}/${encodeURIComponent(item.name)}`)
-        }
-      } else if (item.id) {
-        this.openImageTarget(item)
-      }
+      this.pageContract.openItem(this, item)
     },
 
     openPrimaryFromDetails() {
-      if (!this.canOpenPrimaryActionFromDetails) return
       const target = this.selectedEntries[0]?.item
       if (!target) return
+      this.pageContract.openPrimary(this, target)
+    },
 
-      if (target.type === 'album') {
-        if (!target.album_path) return
-        fetch(`${API_BASE}/api/albums/open-by-path/${encodeURI(target.album_path)}`).catch(() => {})
-        return
-      }
-
-      this.openImageTarget(target)
+    onSelectionDetailSecondaryAction() {
+      this.pageContract.runSecondaryAction(this)
     },
 
     openSelectionDetailsFromIsland() {
@@ -2119,28 +2132,29 @@ export default {
     },
 
     async flushPreviewRepairQueue() {
-      const imageIds = [...new Set(this.previewRepairQueue.filter(id => Number.isInteger(id) && id > 0))]
+      const repairIds = [...new Set(this.previewRepairQueue.filter(id => Number.isInteger(id) && id > 0))]
       this.previewRepairQueue = []
-      if (!imageIds.length) return
+      if (!repairIds.length) return
 
       if (this.previewRepairInFlight) {
-        this.previewRepairQueue = [...new Set([...this.previewRepairQueue, ...imageIds])]
+        this.previewRepairQueue = [...new Set([...this.previewRepairQueue, ...repairIds])]
         return
       }
 
       this.previewRepairInFlight = true
       try {
+        const repairPayloadKey = this.pageContract.previewRepairPayloadKey || 'image_ids'
         const res = await fetch(`${API_BASE}/api/admin/refresh?mode=quick`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             repair_cache: true,
-            image_ids: imageIds,
+            [repairPayloadKey]: repairIds,
           }),
         })
         if (!res.ok) return
         await res.json().catch(() => null)
-        await this.refreshPreviewMetadata(imageIds)
+        await this.pageContract.afterPreviewRepair(this, repairIds)
       } catch {
         // ignore targeted preview repair failures
       } finally {
@@ -2221,6 +2235,7 @@ export default {
     },
 
     async fetchSelectionDetailMetadata() {
+      if (this.isTrashMode) return
       const imageIds = this.selectedEntries
         .map(({ item }) => item)
         .filter(item => item?.type === 'image' && Number.isInteger(item?.id) && !this.itemHasDetailMetadata(item))
@@ -2577,18 +2592,13 @@ export default {
       return this.formatDateTime(item.file_created_at)
     },
 
-    goBackOneLevel() {
-      if (this.isAlbumMode) {
-        const segments = this.albumPath.split('/').filter(Boolean)
-        if (segments.length > 1) {
-          const parentPath = segments.slice(0, -1).join('/')
-          this.$router.push(`/calendar/${this.dateGroup}/${parentPath}`)
-        } else {
-          this.$router.push(`/calendar/${this.dateGroup}`)
-        }
-      } else {
-        this.$router.push('/calendar')
-      }
+    onPageBack() {
+      this.pageContract.back(this)
+    },
+
+    runConfiguredHandler(handlerName) {
+      if (!handlerName || typeof this[handlerName] !== 'function') return
+      this[handlerName]()
     },
 
     onImgLoad(item, evt) {
@@ -3204,6 +3214,9 @@ export default {
     },
 
     itemKey(item, index) {
+      if (item?.stable_key) {
+        return String(item.stable_key)
+      }
       if (item?.type === 'album') {
         return `album:${item.public_id || item.album_path || item.id || index}`
       }
@@ -4253,6 +4266,11 @@ export default {
       }
     },
 
+    showMessage(type, text) {
+      this.messageType = type
+      this.messageText = text
+    },
+
     closeConfirmDialog() {
       if (this.confirmDialog.busy) return
       this.confirmDialog = createDialogState()
@@ -4303,6 +4321,7 @@ export default {
       if (!this.selectedCount || this.actionBusy) return null
 
       this.actionBusy = true
+      this.actionBusyTitle = '删除中'
       this.actionBusyText = '正在移动所选内容到回收站，请稍候…'
 
       const payload = {
@@ -4351,12 +4370,192 @@ export default {
         }
       } finally {
         this.actionBusy = false
+        this.actionBusyTitle = ''
         this.actionBusyText = ''
       }
     },
 
     onReservedDeleteClick() {
-      this.moveSelectedToTrash()
+      this.onSelectionDetailSecondaryAction()
+    },
+
+    restoreSelection() {
+      if (!this.selectedCount || this.actionBusy) return
+      this.closeSelectAllMenu()
+      this.openConfirmDialog({
+        title: '确认还原',
+        message: `确认还原已选中的 ${this.selectedCount} 项吗？\n若目标位置已存在同名项目，系统会自动补编号避免覆盖。`,
+        confirmLabel: '还原',
+        cancelLabel: '取消',
+        tone: 'accent',
+        busyLabel: '还原中…',
+        onConfirm: () => this.executeRestoreSelection(),
+      })
+    },
+
+    async executeRestoreSelection() {
+      if (!this.selectedCount || this.actionBusy) return null
+      this.actionBusy = true
+      this.actionBusyTitle = '还原中'
+      this.actionBusyText = '正在还原所选内容，请稍候…'
+      try {
+        const res = await fetch(`${API_BASE}/api/trash/restore`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entry_ids: this.selectedEntries.map(({ item }) => item.id) }),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        if (data.errors?.length) {
+          this.showMessage('error', data.errors.join('；'))
+        } else {
+          this.showMessage('success', `已还原 ${data.restored} 项。`)
+        }
+        await this.loadData()
+        return null
+      } catch (err) {
+        this.showMessage('error', err?.message || '还原失败')
+        return null
+      } finally {
+        this.actionBusy = false
+        this.actionBusyTitle = ''
+        this.actionBusyText = ''
+      }
+    },
+
+    hardDeleteSelection() {
+      if (!this.selectedCount || this.actionBusy) return
+      this.closeSelectAllMenu()
+      this.openConfirmDialog({
+        title: '确认彻底删除',
+        message: `确认彻底删除已选中的 ${this.selectedCount} 项吗？\n此操作会直接移除 trash 中的文件，且无法恢复。`,
+        confirmLabel: '彻底删除',
+        cancelLabel: '取消',
+        tone: 'danger',
+        busyLabel: '删除中…',
+        onConfirm: () => this.executeHardDeleteSelection(),
+      })
+    },
+
+    async executeHardDeleteSelection() {
+      if (!this.selectedCount || this.actionBusy) return null
+      this.actionBusy = true
+      this.actionBusyTitle = '删除中'
+      this.actionBusyText = '正在彻底删除所选内容，请稍候…'
+      try {
+        const res = await fetch(`${API_BASE}/api/trash/hard-delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entry_ids: this.selectedEntries.map(({ item }) => item.id) }),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        if (data.errors?.length) {
+          this.showMessage('error', data.errors.join('；'))
+        } else {
+          this.showMessage('success', `已删除 ${data.deleted} 项。`)
+        }
+        await this.loadData()
+        return null
+      } catch (err) {
+        this.showMessage('error', err?.message || '删除失败')
+        return null
+      } finally {
+        this.actionBusy = false
+        this.actionBusyTitle = ''
+        this.actionBusyText = ''
+      }
+    },
+
+    clearTrash() {
+      if (!this.totalCount || this.actionBusy) return
+      this.closeSelectAllMenu()
+      this.openConfirmDialog({
+        title: '确认清空回收站',
+        message: '确认清空回收站吗？\n此操作会物理删除 trash 中的全部文件和目录，且无法恢复。',
+        confirmLabel: '清空回收站',
+        cancelLabel: '取消',
+        tone: 'danger',
+        busyLabel: '清空中…',
+        onConfirm: () => this.executeClearTrash(),
+      })
+    },
+
+    async executeClearTrash() {
+      if (!this.totalCount || this.actionBusy) return null
+      this.actionBusy = true
+      this.actionBusyTitle = '清空中'
+      this.actionBusyText = '正在清空回收站，请稍候…'
+      try {
+        const res = await fetch(`${API_BASE}/api/trash`, { method: 'DELETE' })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        if (data.errors?.length) {
+          this.showMessage('error', data.errors.join('；'))
+        } else {
+          this.showMessage('success', `已清空回收站，共删除 ${data.deleted} 项。`)
+        }
+        await this.loadData()
+        return null
+      } catch (err) {
+        this.showMessage('error', err?.message || '清空回收站失败')
+        return null
+      } finally {
+        this.actionBusy = false
+        this.actionBusyTitle = ''
+        this.actionBusyText = ''
+      }
+    },
+
+    async reloadContractItemsPreservingAnchor({ preserveSelection = true, reopenDetails = false, runAfterLoad = true } = {}) {
+      const anchor = this.captureViewportAnchor()
+      const selectionSnapshot = preserveSelection ? this.captureSelectionSnapshot() : null
+
+      try {
+        const payload = await this.pageContract.loadItems(this)
+        this.albumInfo = payload?.album || null
+        this.applyFetchedItems(payload?.items || [])
+        this.lastPreviewRepairSignature = ''
+        if (preserveSelection) {
+          this.restoreSelectionSnapshot(selectionSnapshot)
+        }
+        if (anchor) {
+          this.pendingViewAnchor = anchor
+        }
+        this.$nextTick(() => {
+          this.refreshObservedGrid()
+          if (runAfterLoad) {
+            this.pageContract.afterLoad(this)
+          }
+          if (reopenDetails && this.selectedCount) {
+            this.openSelectionDetails()
+          }
+        })
+        return true
+      } catch {
+        return false
+      }
+    },
+
+    async triggerSilentRepair() {
+      if (!this.isTrashMode || this.reconcileInFlight) return
+      this.reconcileInFlight = true
+      try {
+        const res = await fetch(`${API_BASE}/api/trash/reconcile`, { method: 'POST' })
+        if (!res.ok) return
+        const data = await res.json().catch(() => ({}))
+        if (data?.changed) {
+          await this.reloadContractItemsPreservingAnchor({
+            preserveSelection: true,
+            reopenDetails: this.selectionDetailsOpen,
+            runAfterLoad: false,
+          })
+        }
+      } catch {
+        // ignore silent reconcile failures
+      } finally {
+        this.reconcileInFlight = false
+      }
     },
 
     async triggerCacheForPlan(plan, orderedImageIds, reason = 'cache-anchor') {
@@ -4643,11 +4842,66 @@ export default {
   cursor: not-allowed;
 }
 
+.browse-header__action {
+  height: 30px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  padding: 0 0.8rem;
+  background: rgba(255, 255, 255, 0.92);
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+
+.browse-header__action:hover:not(:disabled) {
+  border-color: rgba(100, 116, 139, 0.34);
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.browse-header__action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.browse-header__action--danger {
+  border-color: rgba(234, 88, 12, 0.22);
+  background: rgba(255, 237, 213, 0.86);
+  color: #b45309;
+}
+
+.browse-header__action--danger:hover:not(:disabled) {
+  border-color: rgba(234, 88, 12, 0.3);
+  background: rgba(255, 237, 213, 1);
+}
+
 .empty-hint {
   @apply border-2 border-dashed border-slate-300 bg-slate-50 rounded-xl py-16 text-center text-slate-400 text-sm;
 }
 
 .empty-hint__icon { @apply text-5xl block mb-3; }
+
+.page-note {
+  margin: 0.5rem 0 0;
+  padding: 0.7rem 0.95rem;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.page-note--success {
+  color: #166534;
+  background: rgba(220, 252, 231, 0.88);
+  border: 1px solid rgba(34, 197, 94, 0.18);
+}
+
+.page-note--error {
+  color: #b91c1c;
+  background: rgba(254, 226, 226, 0.92);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
 
 .selection-grid {
   display: grid;

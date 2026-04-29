@@ -6,7 +6,6 @@ import CalendarOverview from '../pages/CalendarOverview.vue'
 import BrowsePage from '../pages/BrowsePage.vue'
 import CategorySettingsPage from '../pages/CategorySettingsPage.vue'
 import SettingsPage from '../pages/SettingsPage.vue'
-import TrashPage from '../pages/TrashPage.vue'
 
 const routes = [
   {
@@ -57,7 +56,8 @@ const routes = [
   {
     path: '/trash',
     name: 'trash',
-    component: TrashPage
+    component: BrowsePage,
+    meta: { reuseKey: 'browse', browseContract: 'trash' }
   }
 ]
 

@@ -103,7 +103,7 @@
                       <em v-if="nameField.isVarious" class="detail-field__various detail-field__various--inline">various</em>
                       <span v-else class="detail-field__text detail-field__text--inline">{{ nameField.text || '—' }}</span>
                       <button
-                        v-if="showCategoryField && canEditName"
+                        v-if="showCategoryField && resolvedCanEditName"
                         class="detail-field__icon-btn"
                         type="button"
                         title="编辑文件名"
@@ -139,7 +139,7 @@
                     <em v-if="categoryField.isVarious" class="detail-field__various detail-field__various--inline">various</em>
                     <span v-else class="detail-field__text detail-field__text--inline">{{ categoryField.text || '—' }}</span>
                     <button
-                      v-if="canEditCategory"
+                      v-if="resolvedCanEditCategory"
                       class="detail-field__icon-btn"
                       type="button"
                       title="编辑主分类"
@@ -166,7 +166,7 @@
                     <TagChipList
                       :tags="Array.isArray(tagsField.items) ? tagsField.items : []"
                       :compact="true"
-                      :show-add-button="canEditTags"
+                      :show-add-button="resolvedCanEditTags"
                       :add-disabled="tagMenuDisabled"
                       @add-click="$emit('open-tag-menu')"
                     />
@@ -200,7 +200,7 @@
                   <em v-if="createdField.isVarious" class="detail-field__various detail-field__various--inline">various</em>
                   <span v-else class="detail-field__text detail-field__text--inline">{{ createdField.text || '—' }}</span>
                   <button
-                    v-if="showCategoryField && canEditCreatedAt"
+                    v-if="showCategoryField && resolvedCanEditCreatedAt"
                     class="detail-field__icon-btn"
                     type="button"
                     title="编辑创建时间"
@@ -216,6 +216,7 @@
           <div class="detail-panel__actions">
             <button
               class="detail-panel__action"
+              :class="primaryActionToneClass"
               type="button"
               :disabled="!canOpenPrimaryAction || primaryActionDisabled"
               @click="$emit('open-primary')"
@@ -223,12 +224,13 @@
               {{ primaryActionLabel }}
             </button>
             <button
-              class="detail-panel__action detail-panel__action--danger"
+              class="detail-panel__action"
+              :class="secondaryActionToneClass"
               type="button"
-              :disabled="dangerActionDisabled"
-              @click="$emit('delete')"
+              :disabled="secondaryActionDisabledResolved"
+              @click="emitSecondaryAction"
             >
-              {{ dangerActionLabel }}
+              {{ secondaryActionLabelResolved }}
             </button>
           </div>
         </div>
@@ -361,15 +363,23 @@ export default {
       default: null,
     },
     primaryActionLabel: { type: String, default: '查看原图' },
+    primaryActionTone: { type: String, default: 'accent' },
     canOpenPrimaryAction: { type: Boolean, default: false },
     primaryActionDisabled: { type: Boolean, default: false },
     dangerActionLabel: { type: String, default: '删除' },
     dangerActionDisabled: { type: Boolean, default: false },
+    secondaryActionLabel: { type: String, default: '' },
+    secondaryActionTone: { type: String, default: '' },
+    secondaryActionDisabled: { type: Boolean, default: null },
     canEditTags: { type: Boolean, default: false },
     tagMenuDisabled: { type: Boolean, default: false },
     canEditName: { type: Boolean, default: false },
     canEditCategory: { type: Boolean, default: false },
     canEditCreatedAt: { type: Boolean, default: false },
+    metadataPermissions: {
+      type: Object,
+      default: () => ({}),
+    },
     editBusy: { type: Boolean, default: false },
     currentDateGroup: { type: String, default: '' },
     categoryOptions: { type: Array, default: () => [] },
@@ -380,6 +390,7 @@ export default {
     'open-primary',
     'open-tag-menu',
     'preview-error',
+    'secondary-action',
     'submit-name-edit',
     'submit-category-edit',
     'submit-created-edit',
@@ -426,6 +437,45 @@ export default {
       }
       return ''
     },
+    resolvedCanEditName() {
+      if (typeof this.metadataPermissions?.name === 'boolean') {
+        return this.metadataPermissions.name
+      }
+      return this.canEditName
+    },
+    resolvedCanEditCategory() {
+      if (typeof this.metadataPermissions?.category === 'boolean') {
+        return this.metadataPermissions.category
+      }
+      return this.canEditCategory
+    },
+    resolvedCanEditTags() {
+      if (typeof this.metadataPermissions?.tags === 'boolean') {
+        return this.metadataPermissions.tags
+      }
+      return this.canEditTags
+    },
+    resolvedCanEditCreatedAt() {
+      if (typeof this.metadataPermissions?.createdAt === 'boolean') {
+        return this.metadataPermissions.createdAt
+      }
+      return this.canEditCreatedAt
+    },
+    secondaryActionLabelResolved() {
+      return this.secondaryActionLabel || this.dangerActionLabel
+    },
+    secondaryActionDisabledResolved() {
+      if (typeof this.secondaryActionDisabled === 'boolean') {
+        return this.secondaryActionDisabled
+      }
+      return this.dangerActionDisabled
+    },
+    primaryActionToneClass() {
+      return this.actionToneClass(this.primaryActionTone)
+    },
+    secondaryActionToneClass() {
+      return this.actionToneClass(this.secondaryActionTone || 'danger')
+    },
   },
   watch: {
     visible(nextVisible) {
@@ -454,6 +504,35 @@ export default {
     this.clearAsideScrollState()
   },
   methods: {
+    actionToneClass(tone) {
+      switch (tone) {
+        case 'danger':
+          return 'detail-panel__action--danger'
+        case 'neutral':
+          return 'detail-panel__action--neutral'
+        case 'ghost':
+          return 'detail-panel__action--ghost'
+        case 'accent':
+        default:
+          return 'detail-panel__action--accent'
+      }
+    },
+    hasListener(eventName) {
+      const vnodeProps = this.$?.vnode?.props || {}
+      const propName = `on${String(eventName)
+        .split('-')
+        .map(segment => segment ? `${segment[0].toUpperCase()}${segment.slice(1)}` : '')
+        .join('')}`
+      const handler = vnodeProps[propName]
+      return typeof handler === 'function' || Array.isArray(handler)
+    },
+    emitSecondaryAction() {
+      if (this.hasListener('secondary-action')) {
+        this.$emit('secondary-action')
+        return
+      }
+      this.$emit('delete')
+    },
     resetEditState() {
       this.editingField = ''
       this.inlineConfirm = createInlineConfirmState()
@@ -492,7 +571,7 @@ export default {
       this.asideScrollTimer = null
     },
     startNameEdit() {
-      if (!this.canEditName || this.editBusy || this.inlineConfirm.visible) return
+      if (!this.resolvedCanEditName || this.editBusy || this.inlineConfirm.visible) return
       if (this.editingField && this.editingField !== 'name') return
       this.editingField = 'name'
       this.nameDraft = this.rawName || ''
@@ -509,7 +588,7 @@ export default {
       }
     },
     requestNameEditConfirmation() {
-      if (!this.canEditName || this.editBusy) return
+      if (!this.resolvedCanEditName || this.editBusy) return
       const nextName = String(this.nameDraft || '').trim()
       const currentName = String(this.rawName || '').trim()
       if (!nextName || nextName === currentName) {
@@ -535,7 +614,7 @@ export default {
       this.requestNameEditConfirmation()
     },
     startCategoryEdit() {
-      if (!this.canEditCategory || this.editBusy || this.inlineConfirm.visible) return
+      if (!this.resolvedCanEditCategory || this.editBusy || this.inlineConfirm.visible) return
       if (this.editingField && this.editingField !== 'category') return
       this.editingField = 'category'
       if (this.rawCategoryId != null) {
@@ -556,7 +635,7 @@ export default {
       }
     },
     requestCategoryEditConfirmation() {
-      if (!this.canEditCategory || this.editBusy) return
+      if (!this.resolvedCanEditCategory || this.editBusy) return
       const nextCategoryId = String(this.categoryDraft || '')
       const currentCategoryId = this.rawCategoryId != null ? String(this.rawCategoryId) : ''
       if (!nextCategoryId || nextCategoryId === currentCategoryId) {
@@ -621,7 +700,7 @@ export default {
       }
     },
     openCreatedEdit() {
-      if (!this.canEditCreatedAt || this.editBusy || this.inlineConfirm.visible || this.editingField) return
+      if (!this.resolvedCanEditCreatedAt || this.editBusy || this.inlineConfirm.visible || this.editingField) return
       this.seedCreatedDrafts()
       this.createdDialogVisible = true
     },
@@ -631,7 +710,7 @@ export default {
       this.seedCreatedDrafts()
     },
     submitCreatedEdit() {
-      if (!this.canEditCreatedAt || this.editBusy) return
+      if (!this.resolvedCanEditCreatedAt || this.editBusy) return
       if (!this.createdDateDraft || !this.createdTimeDraft) return
       const normalizedTime = this.createdTimeDraft.length === 5
         ? `${this.createdTimeDraft}:00`
@@ -1070,8 +1149,6 @@ export default {
   border: 1px solid rgba(148, 163, 184, 0.32);
   border-radius: 16px;
   padding: 0.72rem 1rem;
-  background: #ffffff;
-  color: #0f172a;
   font-size: 0.88rem;
   font-weight: 700;
   cursor: pointer;
@@ -1090,14 +1167,38 @@ export default {
   box-shadow: none;
 }
 
+.detail-panel__action--accent {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border-color: rgba(37, 99, 235, 0.25);
+  color: #ffffff;
+  box-shadow: 0 16px 26px rgba(37, 99, 235, 0.22);
+}
+
+.detail-panel__action--accent:hover:not(:disabled) {
+  border-color: rgba(29, 78, 216, 0.36);
+  box-shadow: 0 18px 30px rgba(37, 99, 235, 0.28);
+}
+
 .detail-panel__action--danger {
   border-color: rgba(234, 88, 12, 0.22);
   background: rgba(255, 237, 213, 0.86);
   color: #b45309;
 }
 
-.detail-panel__action--danger:hover {
+.detail-panel__action--danger:hover:not(:disabled) {
   border-color: rgba(234, 88, 12, 0.3);
+}
+
+.detail-panel__action--neutral {
+  background: rgba(226, 232, 240, 0.92);
+  border-color: rgba(148, 163, 184, 0.3);
+  color: #0f172a;
+}
+
+.detail-panel__action--ghost {
+  background: rgba(255, 255, 255, 0.76);
+  border-color: rgba(148, 163, 184, 0.34);
+  color: #334155;
 }
 
 .detail-subdialog {

@@ -36,9 +36,10 @@ frontend/
 │   │   ├── TagImportDialog.vue
 │   │   ├── TagMenuDialog.vue
 │   │   ├── ThumbCard.vue
-│   │   └── TrashPageHeader.vue
+│   │   └── SelectionDetailOverlay.vue
 │   ├── utils/
 │   │   ├── pageConfig.js
+│   │   ├── commonBrowsePage.js
 │   │   └── tagColors.js
 │   └── pages/
 │       ├── HomePage.vue
@@ -48,7 +49,6 @@ frontend/
 │       ├── CategorySettingsPage.vue
 │       ├── EmptyPage.vue
 │       ├── SettingsPage.vue
-│       └── TrashPage.vue
 └── vue.config.js
 ```
 
@@ -67,7 +67,7 @@ frontend/
 - 点击月组进入 `/calendar/{date_group}` 浏览页
 
 ### 4.3 展示图库内容
-- `BrowsePage` 调用 `GET /api/dates/{date_group}/items` 或 `GET /api/albums/by-path/{album_path:path}`
+- `BrowsePage` 通过 `route.meta.browseContract = 'calendar'` 调用 `GET /api/dates/{date_group}/items` 或 `GET /api/albums/by-path/{album_path:path}`；`/trash` 则复用同一个 `BrowsePage`，通过 `browseContract = 'trash'` 调用 `GET /api/trash/items`
 - 直图显示 `ThumbCard`，子目录显示相册封面并支持物理路径继续下钻
 - 同时消费 `GET /api/system/page-config` 的浏览方式设置；当模式为 `paged` 时，瀑布流、列表和选择网格都会按当前视口高度分页，列表页支持每页 `10 / 20 / 50 / 100`；当模式为 `scroll` 时，还会读取固定窗口范围 `40 / 60 / ... / 200`，默认 `100`
 - 瀑布流会随页面方向自动切换：横屏继续使用等高 justified flow，竖屏切换为 2 列等宽 masonry；分页模式也沿用同一套方向规则
@@ -80,12 +80,12 @@ frontend/
 - 创建时间修改也不再触发整页重载：若图片仍属于当前 `date_group` 或当前相册路径，只做本地字段更新与重排；若已移出当前视图，则只从当前列表局部移除并刷新排布。
 
 ### 4.4 回收站浏览与页面配置
-- `TrashPage` 调用 `GET /api/trash/items`
-- 与 `BrowsePage` 共用 `PagePaginationBar` 和 `pageConfig.js`
-- 当设置页切到“分页浏览”时，回收站瀑布流与选择网格也会分页，并在窗口缩放后按当前首个可见项重新定位页码；当设置页保持“滚动浏览”时，会使用同一份窗口范围配置做可见区前后预修复
+- `/trash` 复用 `BrowsePage`，由 `browseContract = 'trash'` 注入数据源、页头按钮、选择岛动作与详情浮层策略
+- 回收站与日历浏览共用同一个 `PagePaginationBar` 和 `pageConfig.js`，但回收站的空状态、排序、选择按钮与详情底部动作都由页面契约提供
+- 当设置页切到“分页浏览”时，回收站 contract 也会分页，并在窗口缩放后按当前首个可见项重新定位页码；当设置页保持“滚动浏览”时，会使用同一份窗口范围配置做可见区前后预修复
 - 回收站照片墙同样按页面方向切换布局：横屏使用等高 justified flow，竖屏使用 2 列等宽 masonry；页面不会插入额外空占位元素
 - 回收站卡片常规浏览只消费 `cache_thumb_url` / `thumb_url`；若预览缺失则先显示骨架，再静默触发目标 `trash_entry_ids` 的 quick refresh。`/trash-media/...` 只在详情层缩略图失败时作为少量兜底原图使用
-- TrashPage 首屏会先显示当前可展示条目，再异步调用 `POST /api/trash/reconcile` 做轻量对账；若对账结果改变列表，前端会在保留锚点的前提下静默刷新
+- 回收站首屏会先显示当前可展示条目，再异步调用 `POST /api/trash/reconcile` 做轻量对账；若对账结果改变列表，前端会在保留锚点的前提下静默刷新
 
 ### 4.5 文件名分析回写 Tag
 - 前端保留文件名分析回写能力，可调用 `POST /api/images/tags/filename-match`
@@ -119,11 +119,11 @@ frontend/
 - `/calendar/:group/:albumPath+` -> `BrowsePage`
 - `/settings` -> `SettingsPage`
 - `/settings/categories` -> `CategorySettingsPage`
-- `/trash` -> `TrashPage`
+- `/trash` -> `BrowsePage`（`meta.reuseKey = 'browse'`，`meta.browseContract = 'trash'`）
 
 * `App.vue` 会保持 `KeepAlive` 容器常驻，再单独渲染非保活路由；当前仅 `GalleryPage` 依赖该机制来保留导入状态，避免从 `/gallery` 切到普通页面时被意外卸载
 
-* 两个 browse 路由共享 `meta.reuseKey = 'browse'`，用于复用同一个 `BrowsePage` 组件实例
+* `/calendar/:group`、`/calendar/:group/:albumPath+` 和 `/trash` 都复用同一个 `BrowsePage` 组件实例；前两者使用 `browseContract = 'calendar'`，`/trash` 使用 `browseContract = 'trash'`
 
 * 具体文件中有嵌套路由、组件复用与参数处理
 

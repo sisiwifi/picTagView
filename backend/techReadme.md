@@ -148,6 +148,7 @@
   - 面包屑结构：日期视图 › YYYY-MM › 相册1 › 相册2（当前），完全由 URL 路径段驱动，无需异步补标题。
   - BrowsePage 同时承载月份列表和相册浏览，通过 `$route.params` 判断模式：无 `albumPath` 为月份模式，有则为相册模式，调用 `GET /api/albums/by-path/{path}` 获取数据。
   - 组件复用策略：两个 browse 路由共享 `meta.reuseKey = 'browse'`，App.vue 使用 `:key="route.meta?.reuseKey || route.name"` 避免组件销毁重建，消除跨层级导航闪动。
+  - 后续若要以 BrowsePage 为基底构建新的浏览页，统一通过 `browseContract` 注入页面差异，避免复制整套页面壳；更完整的契约字段、生命周期钩子与适配器规范见 [frontend/commonBrowsePage.md](../frontend/commonBrowsePage.md)。
   - Gallery 路由额外声明 `meta.keepAlive = true`；`App.vue` 需要保持 `<KeepAlive>` 容器本身常驻，只把普通路由放在独立分支渲染，这样 Gallery 导入队列与进度状态在切换页面时才会进入 deactivated 而不是被卸载。
   - 返回按钮语义统一为"目录上一级"：在相册内返回上一级相册或月份列表，月份列表返回日期总览。
   - CalendarOverview 为纯月份网格页面，不再内含详情子视图。
@@ -162,12 +163,12 @@
   - 日期视图详情（非相册视图）默认 `Date` 升序。
   - 相册视图默认 `Alpha` 升序。
 - 回收站交互补充：
-  - 设置页右上角新增更显眼的“回收站”入口，跳转到独立的 `TrashPage`，不复用 BrowsePage 路由状态。
-  - TrashPage header 左侧提供“返回”按钮，右侧项目数前提供“清空回收站”按钮；选择态右下角操作岛提供“详情 / 还原 / 删除 / 全选 / 取消选择”，并与 BrowsePage 共用同一套窄屏单行紧凑布局与向页面边缘收拢的交互。
-  - TrashPage 详情浮层复用 `SelectionDetailOverlay.vue`，但主动作切换为“还原”，危险动作切换为“删除”，并禁用 Tag 编辑入口（无 `+` 按钮）。
-  - TrashPage 详情浮层的 Tag 区改为复用 `TagChipList` 显示，与 BrowsePage 保持同款显色样式；该页面仅展示，不提供编辑能力。
-  - BrowsePage 的“删除到回收站”与 TrashPage 的“还原 / 删除 / 清空回收站”统一改为 `ConfirmationDialog.vue` 居中弹窗确认，不再使用浏览器原生 `confirm/alert`。
-  - TrashPage 的瀑布流与选择态切换现在也会捕获首屏视觉锚点，并在切换后恢复到对应条目附近；选择态卡片按可视窗口虚拟渲染，避免大回收站一次性挂载全部卡片。
+  - 设置页右上角新增更显眼的“回收站”入口，但路由直接复用 `BrowsePage`，通过 `browseContract = 'trash'` 注入回收站策略，不再维护独立的回收站页面。
+  - `BreadcrumbHeader.vue` 通过 slot 注入回收站页头右侧操作按钮；选择态右下角操作岛由页面契约提供“详情 / 还原 / 删除 / 全选 / 取消选择”，并与日历浏览共用同一套窄屏单行紧凑布局与向页面边缘收拢的交互。
+  - 详情浮层复用 `SelectionDetailOverlay.vue`，但主动作切换为“还原”，危险动作切换为“删除”，并禁用 Tag 编辑入口（无 `+` 按钮）。
+  - 详情浮层的 Tag 区改为复用 `TagChipList` 显示，与 BrowsePage 保持同款显色样式；该页面仅展示，不提供编辑能力。
+  - BrowsePage 的“删除到回收站”与回收站 contract 的“还原 / 删除 / 清空回收站”统一改为 `ConfirmationDialog.vue` 居中弹窗确认，不再使用浏览器原生 `confirm/alert`。
+  - 回收站 contract 的列表刷新会捕获首屏视觉锚点，并在 contract 变化或静默对账后恢复到对应条目附近；选择态卡片按可视窗口虚拟渲染，避免大回收站一次性挂载全部卡片。
   - 批量删除/清空/还原确认后，页面会立即进入 busy 锁定态：确认按钮不可重复点击，主界面显示“处理中”遮罩，降低大批量操作下的重复误触风险。
 
 ### 3.3 `app/services/import_service.py`（门面）
@@ -215,7 +216,7 @@
   - 前端刷新策略变更（路由切换相关）：项目已移除“路由切换自动触发全库刷新”的行为，`frontend/src/router/index.js` 不再在每次路由变更时发起后台 `POST /api/admin/refresh`。当前前端刷新策略为：
     - 仅在 Gallery 页面由用户点击的“刷新”按钮触发完整的 `POST /api/admin/refresh?mode=full`（保留为手动触发的全库修复/补齐与新文件收编）。
     - 切换到首页（`/`）时仅请求 `GET /api/images/count`，用于刷新并显示库总数的统计信息。
-    - 在 Gallery、DateView（日历）、BrowsePage 与 TrashPage，前端会对缩略图加载错误（例如 `404`）做出响应：当页面检测到 `TEMP_DIR` 或 `CACHE_DIR` 中的目标预览缺失时，会立即（无延迟）调用 `POST /api/admin/refresh?mode=quick`；其中 BrowsePage 传入 `image_ids`，TrashPage 传入 `trash_entry_ids`。后端会补齐缺失预览并把新生成的缩略图路径、文件哈希等信息回写元数据，前端随后重新拉取对应数据以避免脏引用长期停留在页面中。
+    - 在 Gallery、DateView（日历）与 BrowsePage 的两个 contract（calendar / trash）中，前端会对缩略图加载错误（例如 `404`）做出响应：当页面检测到 `TEMP_DIR` 或 `CACHE_DIR` 中的目标预览缺失时，会立即（无延迟）调用 `POST /api/admin/refresh?mode=quick`；其中 calendar contract 传入 `image_ids`，trash contract 传入 `trash_entry_ids`。后端会补齐缺失预览并把新生成的缩略图路径、文件哈希等信息回写元数据，前端随后重新拉取对应数据以避免脏引用长期停留在页面中。
   - 文件时间规则：取创建时间与修改时间最小值，回刷到导入文件，并记录到元数据
   - 写入 `ImageAsset`（`quick_hash`、尺寸、mime、tags/thumbs 等扩展字段）
 
@@ -505,13 +506,13 @@
 4. 前端调用 `/api/dates` 和 `/api/dates/{date_group}/items` 构建图库视图
 5. 管理端 `/api/admin/refresh` 保持一致性（支持 `quick/full`）
 6. 用户从 BrowsePage 删除图片或相册时，请求 `/api/trash/move`，目标会从 `media/` 移入 `trash/` 并生成 `TrashEntry`
-7. TrashPage 通过 `/api/trash/items` 先展示当前可显示的回收站条目；轻量对账改由 `/api/trash/reconcile` 提供，前端在首屏绘制后静默异步调用，对账结果若改变列表则再按当前锚点刷新页面
-8. TrashPage 批量“还原”调用 `/api/trash/restore`，“删除”调用 `/api/trash/hard-delete`，“清空回收站”调用 `DELETE /api/trash`；其中图片恢复保留正常缩略图链路，相册恢复优先走轻量哈希收编再按需补预览，以降低等待时间
+7. 回收站 contract 通过 `/api/trash/items` 先展示当前可显示的回收站条目；轻量对账改由 `/api/trash/reconcile` 提供，前端在首屏绘制后静默异步调用，对账结果若改变列表则再按当前锚点刷新页面
+8. 回收站 contract 批量“还原”调用 `/api/trash/restore`，“删除”调用 `/api/trash/hard-delete`，“清空回收站”调用 `DELETE /api/trash`；其中图片恢复保留正常缩略图链路，相册恢复优先走轻量哈希收编再按需补预览，以降低等待时间
 
 补充：
 - 设置页可通过 `GET/POST /api/system/cache-thumb-setting` 管理缓存缩略图短边尺寸。
 - 设置页可通过 `GET/POST /api/system/month-cover-setting` 管理月份封面尺寸。
-- 设置页可通过 `GET/POST /api/system/page-config` 管理 BrowsePage 与 TrashPage 的“滚动浏览 / 分页浏览”模式，以及滚动模式下的 `scroll_window_size`；分页时每页内容由前端按当前视口高度切分，后端负责持久化模式与窗口范围本身。
+- 设置页可通过 `GET/POST /api/system/page-config` 管理 BrowsePage 的 calendar / trash contract 共享的“滚动浏览 / 分页浏览”模式，以及滚动模式下的 `scroll_window_size`；分页时每页内容由前端按当前视口高度切分，后端负责持久化模式与窗口范围本身。
 - 当尺寸保存成功后，前端会调用 `DELETE /api/cache` 清空 `data/cache/` 与 `temp/`，后续缓存缩略图按新尺寸重新生成。
 
 ## 5. 配置与外部依赖
@@ -544,7 +545,7 @@
   - **导入缩略图**（月份封面）：仅对每月代表图生成 `TEMP_DIR/{file_hash}.webp`，400×400 方形裁剪
   - **缓存展示缩略图**（相册内浏览）：按需生成 `CACHE_DIR/{file_hash}_cache.webp`，最短边 600，保持原始比例
   - 回收站条目常规浏览优先复用 `cache_thumb_url`，其次兼容 `thumb_url`；若 cache/temp 预览缺失，前端先显示骨架，再通过带目标 `trash_entry_ids` 的 `POST /api/admin/refresh?mode=quick` 静默补齐。`/trash-media/...` 仅在详情层缩略图失败时作为少量兜底原图使用
-  - 因为 `GET /api/trash/items` 已直接返回 `cache_thumb_url` 与宽高，TrashPage 不走 BrowsePage 的 generation/cursor 轮询协议；页面只在前端维护精确宽度排布缓存、视觉锚点恢复、可见窗口定向修复与缺失尺寸的 `img.onload` 兜底回填
+  - 因为 `GET /api/trash/items` 已直接返回 `cache_thumb_url` 与宽高，BrowsePage 的 trash contract 不走 BrowsePage 日历契约的 generation/cursor 轮询协议；页面只在前端维护精确宽度排布缓存、视觉锚点恢复、可见窗口定向修复与缺失尺寸的 `img.onload` 兜底回填
   - 重复上传同 hash 文件时不会重复写缩略图
 - 目录组织：
   - 原图存储：`MEDIA_DIR/<date_group>/[top_subdir/]...`（`YYYY-MM`）

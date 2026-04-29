@@ -168,7 +168,7 @@
 
       <div class="settings-card">
         <h3 class="card-title">页面配置</h3>
-        <p class="card-desc">统一控制 BrowsePage 与 TrashPage 的浏览方式；分页模式会启用页码导航，滚动模式保持当前布局。</p>
+        <p class="card-desc">统一控制 Common Browse 页面契约的浏览方式；分页模式会启用页码导航，滚动模式保持当前布局。</p>
 
         <div class="setting-row setting-row--compact">
           <div class="setting-info">
