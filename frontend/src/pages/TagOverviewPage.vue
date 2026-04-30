@@ -124,7 +124,28 @@
                   :title="editMode ? `编辑标签：${tag.name || ''}` : (tag.description || '')"
                   @click="openTag(tag)"
                 >
-                  {{ tag.display_name || tag.name || '' }}
+                  <span
+                    :ref="`rank-chip-${rankChipKey('usage', tag.id)}`"
+                    class="tag-rank-card__chip-viewport"
+                  >
+                    <span
+                      class="tag-rank-card__chip-track"
+                      :class="{ 'tag-rank-card__chip-track--scrolling': isRankChipAutoScrolling(rankChipKey('usage', tag.id)) }"
+                      :style="rankChipTrackStyle(rankChipKey('usage', tag.id))"
+                    >
+                      <span class="tag-rank-card__chip-label">{{ tag.display_name || tag.name || '' }}</span>
+                      <span
+                        v-if="isRankChipAutoScrolling(rankChipKey('usage', tag.id))"
+                        class="tag-rank-card__chip-gap"
+                        aria-hidden="true"
+                      ></span>
+                      <span
+                        v-if="isRankChipAutoScrolling(rankChipKey('usage', tag.id))"
+                        class="tag-rank-card__chip-label"
+                        aria-hidden="true"
+                      >{{ tag.display_name || tag.name || '' }}</span>
+                    </span>
+                  </span>
                 </button>
                 <span class="tag-rank-card__metric">{{ formatUsageCount(tag.usage_count) }}</span>
                 <button
@@ -156,7 +177,28 @@
                   :title="editMode ? `编辑标签：${tag.name || ''}` : (tag.description || '')"
                   @click="openTag(tag)"
                 >
-                  {{ tag.display_name || tag.name || '' }}
+                  <span
+                    :ref="`rank-chip-${rankChipKey('recent', tag.id)}`"
+                    class="tag-rank-card__chip-viewport"
+                  >
+                    <span
+                      class="tag-rank-card__chip-track"
+                      :class="{ 'tag-rank-card__chip-track--scrolling': isRankChipAutoScrolling(rankChipKey('recent', tag.id)) }"
+                      :style="rankChipTrackStyle(rankChipKey('recent', tag.id))"
+                    >
+                      <span class="tag-rank-card__chip-label">{{ tag.display_name || tag.name || '' }}</span>
+                      <span
+                        v-if="isRankChipAutoScrolling(rankChipKey('recent', tag.id))"
+                        class="tag-rank-card__chip-gap"
+                        aria-hidden="true"
+                      ></span>
+                      <span
+                        v-if="isRankChipAutoScrolling(rankChipKey('recent', tag.id))"
+                        class="tag-rank-card__chip-label"
+                        aria-hidden="true"
+                      >{{ tag.display_name || tag.name || '' }}</span>
+                    </span>
+                  </span>
                 </button>
                 <span class="tag-rank-card__metric tag-rank-card__metric--datetime">{{ formatLastUsedAt(tag.last_used_at) }}</span>
                 <button
@@ -217,6 +259,29 @@ import { API_BASE, topLevelPageVars } from './topLevelPageConvention'
 
 const TAG_PAGE_SIZE = 400
 const GROUP_COLLAPSED_HEIGHT_PX = 88
+const RANK_TAG_AUTOSCROLL_GAP_PX = 24
+const RANK_TAG_AUTOSCROLL_SPEED_PX_PER_SECOND = 28
+const RANK_TAG_AUTOSCROLL_MIN_DURATION_S = 3.8
+
+function booleanMapEquals(left, right) {
+  const leftKeys = Object.keys(left || {})
+  const rightKeys = Object.keys(right || {})
+  if (leftKeys.length !== rightKeys.length) return false
+  return leftKeys.every(key => Boolean(left[key]) === Boolean(right[key]))
+}
+
+function rankOverflowMapEquals(left, right) {
+  const leftKeys = Object.keys(left || {})
+  const rightKeys = Object.keys(right || {})
+  if (leftKeys.length !== rightKeys.length) return false
+  return leftKeys.every(key => {
+    const leftItem = left[key] || {}
+    const rightItem = right[key] || {}
+    return Boolean(leftItem.active) === Boolean(rightItem.active)
+      && Number(leftItem.distance || 0) === Number(rightItem.distance || 0)
+      && Number(leftItem.duration || 0) === Number(rightItem.duration || 0)
+  })
+}
 
 function normalizeInitial(name) {
   const firstChar = String(name || '').trim().charAt(0).toUpperCase()
@@ -264,6 +329,7 @@ export default {
       editMode: false,
       groupExpansion: {},
       groupOverflow: {},
+      rankChipOverflow: {},
       tagFormVisible: false,
       tagFormMode: 'create',
       tagFormSaving: false,
@@ -333,9 +399,11 @@ export default {
   },
   mounted() {
     this.fetchAllTags()
+    this.installLayoutResizeObserver()
     window.addEventListener('resize', this.handleWindowResize, { passive: true })
   },
   beforeUnmount() {
+    this.layoutResizeObserver?.disconnect?.()
     window.removeEventListener('resize', this.handleWindowResize)
   },
   methods: {
@@ -375,9 +443,7 @@ export default {
 
         this.tags = nextTags
         this.syncGroupState()
-        this.$nextTick(() => {
-          this.measureGroupOverflow()
-        })
+        this.refreshLayoutMeasurements()
       } catch (err) {
         this.tags = []
         this.loadError = `标签总览加载失败：${err?.message || '未知错误'}`
@@ -396,7 +462,7 @@ export default {
       this.groupOverflow = nextOverflow
     },
     measureGroupOverflow() {
-      const nextOverflow = { ...this.groupOverflow }
+      const nextOverflow = {}
       for (const group of this.tagGroups) {
         const rawRef = this.$refs[`group-body-${group.key}`]
         const el = Array.isArray(rawRef) ? rawRef[0] : rawRef
@@ -410,12 +476,73 @@ export default {
           nextOverflow[group.key] = el.scrollHeight > GROUP_COLLAPSED_HEIGHT_PX + 2
         }
       }
-      this.groupOverflow = nextOverflow
+      if (!booleanMapEquals(this.groupOverflow, nextOverflow)) {
+        this.groupOverflow = nextOverflow
+      }
+    },
+    measureRankChipOverflow() {
+      const nextOverflow = {}
+      const rankEntries = [
+        ...this.topUsageTags.map(tag => this.rankChipKey('usage', tag?.id)),
+        ...this.recentTags.map(tag => this.rankChipKey('recent', tag?.id)),
+      ]
+
+      for (const key of rankEntries) {
+        const rawRef = this.$refs[`rank-chip-${key}`]
+        const viewport = Array.isArray(rawRef) ? rawRef[0] : rawRef
+        const label = viewport?.querySelector?.('.tag-rank-card__chip-label')
+        if (!viewport || !label) continue
+
+        const labelWidth = Math.ceil(label.scrollWidth)
+        const overflowDistance = labelWidth - viewport.clientWidth
+        if (overflowDistance <= 0) continue
+
+        const duration = Math.max(
+          RANK_TAG_AUTOSCROLL_MIN_DURATION_S,
+          Number(((labelWidth + RANK_TAG_AUTOSCROLL_GAP_PX) / RANK_TAG_AUTOSCROLL_SPEED_PX_PER_SECOND).toFixed(2))
+        )
+        nextOverflow[key] = {
+          active: true,
+          distance: Math.ceil(labelWidth + RANK_TAG_AUTOSCROLL_GAP_PX),
+          duration,
+        }
+      }
+
+      if (!rankOverflowMapEquals(this.rankChipOverflow, nextOverflow)) {
+        this.rankChipOverflow = nextOverflow
+      }
+    },
+    refreshLayoutMeasurements() {
+      this.$nextTick(() => {
+        window.requestAnimationFrame(() => {
+          this.measureGroupOverflow()
+          this.measureRankChipOverflow()
+        })
+      })
+    },
+    installLayoutResizeObserver() {
+      if (typeof ResizeObserver === 'undefined' || !this.$el) return
+      this.layoutResizeObserver = new ResizeObserver(() => {
+        this.refreshLayoutMeasurements()
+      })
+      this.layoutResizeObserver.observe(this.$el)
     },
     handleWindowResize() {
-      this.$nextTick(() => {
-        this.measureGroupOverflow()
-      })
+      this.refreshLayoutMeasurements()
+    },
+    rankChipKey(section, tagId) {
+      return `${section}-${Number(tagId || 0)}`
+    },
+    isRankChipAutoScrolling(key) {
+      return Boolean(this.rankChipOverflow[key]?.active)
+    },
+    rankChipTrackStyle(key) {
+      const state = this.rankChipOverflow[key]
+      if (!state?.active) return null
+      return {
+        '--tag-rank-scroll-distance': `${state.distance}px`,
+        '--tag-rank-scroll-duration': `${state.duration}s`,
+      }
     },
     async fetchTagFormExistingNames() {
       const fallbackNames = this.tags
@@ -551,9 +678,7 @@ export default {
         }
         this.resetTagFormState()
         this.syncGroupState()
-        this.$nextTick(() => {
-          this.measureGroupOverflow()
-        })
+        this.refreshLayoutMeasurements()
       } catch (err) {
         this.tagFormError = `标签保存失败：${err?.message || '未知错误'}`
       } finally {
@@ -563,6 +688,7 @@ export default {
     toggleEditMode() {
       if (this.tagFormVisible || this.tagFormSaving || this.confirmDialogVisible || this.confirmDialogBusy) return
       this.editMode = !this.editMode
+      this.refreshLayoutMeasurements()
     },
     requestDeleteTag(tag) {
       if (!this.editMode || !Number.isInteger(tag?.id) || this.tagFormVisible || this.tagFormSaving) return
@@ -609,9 +735,7 @@ export default {
 
         this.tags = this.tags.filter(item => item?.id !== tagId)
         this.syncGroupState()
-        this.$nextTick(() => {
-          this.measureGroupOverflow()
-        })
+        this.refreshLayoutMeasurements()
         this.closeDeleteConfirmation(true)
       } catch (err) {
         this.confirmDialogError = `删除标签失败：${err?.message || '未知错误'}`
@@ -624,9 +748,7 @@ export default {
         ...this.groupExpansion,
         [groupKey]: !this.groupExpansion[groupKey],
       }
-      this.$nextTick(() => {
-        this.measureGroupOverflow()
-      })
+      this.refreshLayoutMeasurements()
     },
     isGroupExpanded(groupKey) {
       return Boolean(this.groupExpansion[groupKey])
@@ -787,10 +909,10 @@ export default {
 .tag-overview-group__fade {
   position: absolute;
   right: 0;
-  bottom: 2rem;
+  bottom: 0;
   left: 0;
-  height: 2.8rem;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.94) 56%, rgba(255, 255, 255, 1));
+  height: 3.25rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.88) 56%, rgba(255, 255, 255, 1));
   pointer-events: none;
 }
 
@@ -878,11 +1000,41 @@ export default {
 }
 
 .tag-rank-card__chip {
+  flex: 1 1 auto;
+  min-width: 0;
   border: 0;
   background: transparent;
-  max-width: min(100%, 13rem);
+  padding: 0;
+}
+
+.tag-rank-card__chip-viewport {
+  display: block;
+  width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-rank-card__chip-track {
+  display: inline-flex;
+  align-items: center;
+  min-width: max-content;
+  white-space: nowrap;
+}
+
+.tag-rank-card__chip-track--scrolling {
+  animation: tag-rank-chip-pan var(--tag-rank-scroll-duration, 4s) linear infinite;
+  will-change: transform;
+}
+
+.tag-rank-card__chip-label {
+  display: inline-block;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.tag-rank-card__chip-gap {
+  width: 1.5rem;
+  flex: 0 0 auto;
 }
 
 .tag-rank-card__remove {
@@ -915,6 +1067,22 @@ export default {
 
 .tag-rank-card__empty {
   @apply m-0 rounded-2xl bg-slate-50 px-3 py-4 text-sm text-slate-500;
+}
+
+@keyframes tag-rank-chip-pan {
+  0%, 14% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(calc(-1 * var(--tag-rank-scroll-distance, 0px)));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tag-rank-card__chip-track--scrolling {
+    animation: none;
+  }
 }
 
 @media (max-width: 1100px) {
