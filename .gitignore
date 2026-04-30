@@ -1,6 +1,8 @@
 media/
 backend/temp/
 backend/data/cache/
+backend/scripts/
+backend/tests/
 __pycache__/
 **/__pycache__/
 *.py[cod]
