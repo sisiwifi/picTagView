@@ -1,220 +1,235 @@
 # picTagView Frontend 技术说明书
 
-## 1. 项目位置
-- `D:\Python_projects\picTagView_main\frontend`
+本文档描述前端的当前页面结构、路由、共享浏览壳和运行约定，内容以 `frontend/src` 下的现行代码为准。
 
-## 2. 技术栈
-- Vue 3（Vue CLI 项目）
-- Vue Router（页面导航）
-- Fetch API（当前代码未引入 Axios，页面内直接请求后端 API）
-- Tailwind CSS（样式工具类）
-- ES6+ JavaScript
-- Node.js + npm（构建与脚本运行）
+## 1. 项目位置与技术栈
 
-## 3. 目录结构
+- 项目目录：`D:\Python_projects\picTagView_main\frontend`
+- 框架：Vue 3
+- 路由：Vue Router 4
+- 样式：Tailwind CSS
+- 构建：Vue CLI 5
+- 网络：原生 `fetch`
+
+## 2. 目录结构
+
 ```text
 frontend/
 ├── public/
 ├── src/
 │   ├── App.vue
 │   ├── main.js
-│   ├── router/
-│   │   └── index.js
+│   ├── router/index.js
 │   ├── assets/
-│   │   ├── tailwind.css
-│   │   └── tag-chips.css
 │   ├── components/
-│   │   ├── BreadcrumbHeader.vue
-│   │   ├── LoadingSpinner.vue
-│   │   ├── MediaItemCard.vue
-│   │   ├── PagePaginationBar.vue
-│   │   ├── SelectionDetailOverlay.vue
-│   │   ├── Sidebar.vue
-│   │   ├── TagChipList.vue
-│   │   ├── TagColorPicker.vue
-│   │   ├── TagFormDialog.vue
-│   │   ├── TagImportDialog.vue
-│   │   ├── TagMenuDialog.vue
-│   │   ├── ThumbCard.vue
-│   │   └── SelectionDetailOverlay.vue
-│   ├── utils/
-│   │   ├── pageConfig.js
-│   │   ├── commonBrowsePage.js
-│   │   └── tagColors.js
-│   └── pages/
-│       ├── HomePage.vue
-│       ├── GalleryPage.vue
-│       ├── CalendarOverview.vue
-│       ├── BrowsePage.vue
-│       ├── CategorySettingsPage.vue
-│       ├── EmptyPage.vue
-│       ├── SearchPage.vue
-│       ├── FavoritesPage.vue
-│       ├── SettingsPage.vue
-│       ├── TopLevelPageHeader.vue
-│       └── topLevelPageConvention.js
-└── vue.config.js
+│   ├── pages/
+│   └── utils/
+├── package.json
+├── vue.config.js
+└── README.md
 ```
 
-## 4. 主要功能说明
-### 4.1 上传与导入
-- `GalleryPage` 提供多行文件夹导入 UI，可为每一行单独选择主分类
-- 调用 `POST /api/import`
-- 使用 `FormData` 传递 `files`、`last_modified_json`、`created_time_json`、`category_id`
-- 前端会把根目录直下文件与首层嵌套子目录分别按每批 50 个文件拆分后顺序上传
-- 导入进行中会显示“停止导入”按钮；点击后会中止当前前端请求，并停止继续提交后续批次，当前及未完成的文件夹会保留在导入表单中便于继续导入
-- `/gallery` 路由启用 `meta.keepAlive`，切换到其他页面时不会销毁导入队列；返回后继续显示当前进度与停止按钮状态
+关键目录当前分工：
 
-### 4.2 日历总览
-- `CalendarOverview` 获取 `GET /api/dates`
-- 按 `year -> month` 做嵌套显示
-- 点击月组进入 `/calendar/{date_group}` 浏览页
+- `src/pages/`：一级页、`BrowsePage.vue`、`TagOverviewPage.vue`、设置页等
+- `src/components/`：详情浮层、Tag/收藏菜单、分页条、主分类和确认弹窗等
+- `src/utils/commonBrowsePage.js`：统一浏览页契约
+- `src/utils/pageConfig.js`：页面浏览模式读写与本地缓存
+- `src/pages/topLevelPageConvention.js`：顶层页导航、统一搜索输入逻辑和顶层缩略图约定
 
-### 4.3 展示图库内容
-- `BrowsePage` 通过 `route.meta.browseContract = 'calendar'` 调用 `GET /api/dates/{date_group}/items` 或 `GET /api/albums/by-path/{album_path:path}`；`/trash` 则复用同一个 `BrowsePage`，通过 `browseContract = 'trash'` 调用 `GET /api/trash/items`
-- 直图显示 `ThumbCard`，子目录显示相册封面并支持物理路径继续下钻
-- 同时消费 `GET /api/system/page-config` 的浏览方式设置；当模式为 `paged` 时，瀑布流、列表和选择网格都会按当前视口高度分页，列表页支持每页 `10 / 20 / 50 / 100`；当模式为 `scroll` 时，还会读取固定窗口范围 `40 / 60 / ... / 200`，默认 `100`
-- 瀑布流会随页面方向自动切换：横屏继续使用等高 justified flow，竖屏切换为 2 列等宽 masonry；分页模式也沿用同一套方向规则
-- 浏览缓存缩略图通过 `POST /api/thumbnails/cache` 与 `GET /api/thumbnails/cache/status/{task_id}` 渐进生成和轮询；当 cache/temp 预览本身返回 `404` 时，BrowsePage 会立即触发带目标 `image_ids` 的 `POST /api/admin/refresh?mode=quick` 并回填最新 `cache_thumb_url`
-- 选择模式详情浮层中的 Tag 使用 `TagChipList` 渲染，显色来自后端返回的 Tag 元数据字段，统一为 HEX8：
-   - `color`
-   - `border_color`
-   - `background_color`
-- 选择模式详情浮层中的文件名 / 主分类编辑会直接把 `PATCH /api/images/metadata` 返回的增量结果回写到当前 `items`；不会因为这两类修改重新调用整页列表接口或清空缩略图。
-- 创建时间修改也不再触发整页重载：若图片仍属于当前 `date_group` 或当前相册路径，只做本地字段更新与重排；若已移出当前视图，则只从当前列表局部移除并刷新排布。
+## 3. 当前路由
 
-### 4.4 回收站浏览与页面配置
-- `/trash` 复用 `BrowsePage`，由 `browseContract = 'trash'` 注入数据源、页头按钮、选择岛动作与详情浮层策略
-- 回收站与日历浏览共用同一个 `PagePaginationBar` 和 `pageConfig.js`，但回收站的空状态、排序、选择按钮与详情底部动作都由页面契约提供
-- 当设置页切到“分页浏览”时，回收站 contract 也会分页，并在窗口缩放后按当前首个可见项重新定位页码；当设置页保持“滚动浏览”时，会使用同一份窗口范围配置做可见区前后预修复
-- 回收站照片墙同样按页面方向切换布局：横屏使用等高 justified flow，竖屏使用 2 列等宽 masonry；页面不会插入额外空占位元素
-- 回收站卡片常规浏览只消费 `cache_thumb_url` / `thumb_url`；若预览缺失则先显示骨架，再静默触发目标 `trash_entry_ids` 的 quick refresh。`/trash-media/...` 只在详情层缩略图失败时作为少量兜底原图使用
-- 回收站首屏会先显示当前可展示条目，再异步调用 `POST /api/trash/reconcile` 做轻量对账；若对账结果改变列表，前端会在保留锚点的前提下静默刷新
+| 路由 | 组件 | 说明 |
+| --- | --- | --- |
+| `/` | `HomePage.vue` | 首页统计 |
+| `/search` | `SearchPage.vue` | 单输入搜索 |
+| `/tags` | `TagOverviewPage.vue` | 标签总览与编辑入口 |
+| `/tags/:tagId` | `BrowsePage.vue` | 标签二级浏览，`browseContract = 'tag'` |
+| `/gallery` | `GalleryPage.vue` | 导入与刷新，`meta.keepAlive = true` |
+| `/calendar` | `CalendarOverview.vue` | 日期总览 |
+| `/calendar/:group` | `BrowsePage.vue` | 月份浏览 |
+| `/calendar/:group/:albumPath+` | `BrowsePage.vue` | 相册层级浏览 |
+| `/favorites` | `FavoritesPage.vue` | 收藏夹总览 |
+| `/favorites/:collectionId` | `BrowsePage.vue` | 收藏夹二级浏览，`browseContract = 'collection'` |
+| `/settings` | `SettingsPage.vue` | 设置页 |
+| `/settings/categories` | `CategorySettingsPage.vue` | 主分类配置 |
+| `/trash` | `BrowsePage.vue` | 回收站浏览，`browseContract = 'trash'` |
 
-### 4.5 文件名分析回写 Tag
-- 前端保留文件名分析回写能力，可调用 `POST /api/images/tags/filename-match`
-- 支持批量图片分析并回写 tags，前端会即时刷新当前选择项的标签显示
-- 多选显示规则：优先显示公共标签；没有公共标签但存在差异时显示 `various`
+说明：
 
-### 4.6 Tag 菜单手动回写
-- 选择模式详情浮层的 Tag 区末尾提供 `+` 按钮，点击后弹出 Tag 标签菜单
-- 菜单顶部“现有标签”在多选时显示所选图片的公共标签，右侧 `x` 按钮可移除该标签
-- 菜单输入框为空时，固定高度建议容器显示最近使用的 5 个标签（`last_used_at` 最新）
-- 菜单输入框有内容时按 `name` 与 `display_name` 搜索，建议项显示 `display_name`
-- 每条建议右侧提供 `+` 与笔形按钮：`+` 先写入当前弹层草稿，笔形按钮可打开标签元数据编辑弹窗
-- “添加新标签”会先调用 `POST /api/tags/draft` 预占真实 `id/public_id`，再进入标签表单弹窗；取消时删除草稿，保存时通过 `PATCH /api/tags/{id}` 转正
-- 标签表单弹窗支持 `name` 正则校验、`type` 下拉选择、Tag 预览、7 个预设配色，以及 HEX8 + HSV + 透明度取色器
-- 菜单底部保留“添加新标签（预留）”入口，原“编辑标签”位置改为“自动标签”按钮
-- “自动标签”在菜单内调用 `POST /api/images/tags/filename-match` 做预分析并合并到草稿，不会立即回写
-- 菜单右下角提供“取消 / 确定”：
-   - 取消或右上角关闭：丢弃草稿，不改动任何图片标签
-   - 确定：对所有变更图片调用 `POST /api/images/tags/apply`（`merge_mode=replace`）一次性提交
+- `BrowsePage.vue` 在多个路由间通过 `meta.reuseKey = 'browse'` 复用实例。
+- `GalleryPage.vue` 通过 `meta.keepAlive = true` 保留导入中的本地状态和队列。
 
-### 4.7 管理与重建
-- 交互按钮触发 `POST /api/admin/refresh`
-- 后端当前返回 `{ mode, pruned, total_images, cache_deleted, regenerated, new_ingested, hash_conflicts, non_album_deduped, cleaned_paths }`
+## 4. 主要页面与交互
 
-### 4.8 一级页面与搜索
-- 一级页面入口统一放在 `src/pages/` 下，当前共用的一级页头组件是 `TopLevelPageHeader.vue`，一级页导航与 400px 缩略图规范集中在 `topLevelPageConvention.js`
-- `SearchPage` 使用单输入框，默认同时匹配文件名与 Tag；输入 `tag:` / `#` 会切换到 Tag 搜索，输入 `path:` 或 `media/...` 路径会切换到按路径解析 quick hash 的检索模式
-- `FavoritesPage` 当前是占位页，保留收藏一级入口与后续扩展位
-- 一级页缩略图统一按 400px 方形卡片显示，避免和 BrowsePage 的浏览态布局混淆
+### 4.1 `GalleryPage.vue`
 
-## 5. 前端路由说明 (`router/index.js`)
-- `/` -> `HomePage`
-- `/search` -> `SearchPage`
-- `/tags` -> `EmptyPage`
-- `/gallery` -> `GalleryPage`（`meta.keepAlive = true`，保留导入页面实例）
-- `/calendar` -> `CalendarOverview`
-- `/calendar/:group` -> `BrowsePage`
-- `/calendar/:group/:albumPath+` -> `BrowsePage`
-- `/favorites` -> `FavoritesPage`
-- `/settings` -> `SettingsPage`
-- `/settings/categories` -> `CategorySettingsPage`
-- `/trash` -> `BrowsePage`（`meta.reuseKey = 'browse'`，`meta.browseContract = 'trash'`）
+- 使用 `FolderImportDialog.vue` 管理多行文件夹导入。
+- 每一行导入任务都可以单独指定主分类。
+- 当前按 `50` 张图片分块上传到 `POST /api/import`。
+- 导入过程中支持“停止导入”，通过 `AbortController` 中止当前请求并停止后续批次。
+- 页面激活时会检查月份缩略图缺失，并在需要时静默触发 `POST /api/admin/refresh`。
 
-* `App.vue` 会保持 `KeepAlive` 容器常驻，再单独渲染非保活路由；当前仅 `GalleryPage` 依赖该机制来保留导入状态，避免从 `/gallery` 切到普通页面时被意外卸载
+### 4.2 `TagOverviewPage.vue`
 
-* `/calendar/:group`、`/calendar/:group/:albumPath+` 和 `/trash` 都复用同一个 `BrowsePage` 组件实例；前两者使用 `browseContract = 'calendar'`，`/trash` 使用 `browseContract = 'trash'`
+- 当前不是占位页，而是完整的标签总览页。
+- 主要能力：
+  - 按 `tag.name` 首字母分组
+  - 侧栏展示使用次数 Top 10 和最近使用 Top 10
+  - 新建标签时先调用 `/api/tags/draft`
+  - 编辑模式下支持直接打开 Tag 表单与删除确认
+- 非编辑模式点击 Tag 会进入 `/tags/:tagId` 的二级浏览页。
 
-* 具体文件中有嵌套路由、组件复用与参数处理
+### 4.3 `FavoritesPage.vue`
 
-## 6. 构建与运行
-### 6.1 安装依赖
+- 当前不是占位页，而是收藏夹总览页。
+- 页面调用 `GET /api/collections` 获取可见收藏夹。
+- 如果封面图片还没有缓存缩略图，会主动启动 `/api/thumbnails/cache` 队列并轮询状态。
+
+### 4.4 `SettingsPage.vue`
+
+- 当前已接入的设置项：
+  - 浏览缓存缩略图尺寸
+  - 月份封面尺寸
+  - 页面浏览模式与滚动窗口范围
+  - Tag JSON 导入导出
+  - 图片查看器偏好
+  - 主分类管理入口
+  - 回收站入口
+- 当前仍是占位的入口：
+  - 夜间模式
+  - `Tag过滤` 二级页
+- 注意：后端已有 `/api/system/tag-match-setting`，但设置页目前没有实际 UI 去编辑它。
+
+### 4.5 `BrowsePage.vue`
+
+- 是当前最核心的共享浏览壳。
+- 通过 `browseContract` 切换四类数据源：
+  - `calendar`
+  - `collection`
+  - `tag`
+  - `trash`
+- 当前复用的能力包括：
+  - 面包屑页头
+  - 选择模式
+  - 详情浮层
+  - Tag 菜单与收藏菜单
+  - 滚动/分页浏览模式
+  - 预览修复与缓存缩略图生成
+
+更细的契约字段见 `commonBrowsePage.md`。
+
+## 5. 顶层导航与搜索约定
+
+`src/pages/topLevelPageConvention.js` 当前负责：
+
+- 顶层导航项 `TOP_LEVEL_NAV_ITEMS`
+- 顶层缩略图边长约定 `thumbEdgePx = 400`
+- 搜索模式识别：
+  - `tag:xxx` 或 `#xxx` -> Tag 搜索
+  - `path:...` 或看起来像 `media/...` 的路径 -> 路径搜索
+  - 其他情况 -> 文件名 / Tag 混合搜索
+- 搜索结果显示文案映射
+- 顶层页公用 CSS 变量
+
+## 6. 统一浏览页契约
+
+`src/utils/commonBrowsePage.js` 当前导出：
+
+- `getCommonBrowsePageContract(contractName)`
+- `normalizeBrowseItems(rawItems, contractName)`
+
+已实现契约：
+
+- `calendar`
+- `collection`
+- `tag`
+- `trash`
+
+各契约负责：
+
+- 默认排序
+- 面包屑
+- 页头扩展动作
+- 选择态按钮岛动作
+- 详情浮层按钮策略
+- 数据源请求
+- 数据归一化
+- 预览修复后的刷新策略
+
+页面布局、选择状态、详情浮层状态、Tag/收藏菜单状态仍由 `BrowsePage.vue` 自己维护，不在契约内部。
+
+## 7. 与后端的当前约定
+
+### 7.1 API 地址
+
+当前前端并没有通过代理访问后端，而是多处直接写死：
+
+```js
+const API_BASE = 'http://127.0.0.1:8000'
 ```
+
+这类常量目前出现在：
+
+- `src/pages/topLevelPageConvention.js`
+- `src/utils/commonBrowsePage.js`
+- `src/utils/pageConfig.js`
+- 多个页面文件内的本地常量
+
+如果后端端口变化，需要同步修改这些位置。
+
+### 7.2 页面配置
+
+`src/utils/pageConfig.js` 当前与后端约定：
+
+- `browse_mode`: `scroll | paged`
+- `scroll_window_size`: `40, 60, ..., 200`
+
+工具模块会：
+
+- 从 `GET /api/system/page-config` 拉取配置
+- 通过 `POST /api/system/page-config` 保存配置
+- 在浏览器 `localStorage` 中缓存配置
+- 保存后广播 `ptv:page-config-updated`
+
+### 7.3 预览与缓存
+
+- `FavoritesPage` 和 `BrowsePage` 都会使用 `POST /api/thumbnails/cache` 与 `GET /api/thumbnails/cache/status/{task_id}`。
+- 当前前端使用了后端支持的 `page_token + generation + cursor` 协议。
+- 浏览页检测到预览缺失时，会调用 `POST /api/admin/refresh` 做定向修复，而不是盲目全量刷新。
+
+## 8. 构建与运行
+
+### 8.1 安装依赖
+
+```powershell
 cd frontend
 npm install
-
-cd backend
-python -m venv .venv; .\.venv\Scripts\python -m pip install --upgrade pip; .\.venv\Scripts\pip install -r backend\requirements.txt
 ```
 
-### 6.2 开发模式
-```
+### 8.2 开发模式
+
+```powershell
 npm run serve
 ```
-默认访问：http://localhost:8080
 
-### 6.3 生产打包
-```
+默认访问地址为 `http://localhost:8080`。
+
+### 8.3 生产构建
+
+```powershell
 npm run build
 ```
-打包输出：`dist/`
 
-### 6.4 Lint
-```
+### 8.4 Lint
+
+```powershell
 npm run lint
 ```
 
-## 7. 关键配置
-- 当前页面组件与 `src/utils/pageConfig.js` 直接把 `API_BASE` 写为 `http://127.0.0.1:8000`
-- `vue.config.js` 当前仅开启 `transpileDependencies`，未配置 `devServer.proxy`
-- 前端当前是直连后端，不依赖本地代理；如果后端端口变化，需要同步更新 `API_BASE`
-- `tailwind.config.js`：Tailwind 主题/路径
+## 9. 当前注意事项
 
-## 8. 常见问题与排查
-1. 页面白屏或组件样式异常
-   - 检查 `npm install` 是否成功，依赖缺失（如 `vue`, `vue-router`, `tailwindcss`）
-   - 检查浏览器控制台 JS 错误
-2. API 请求失败（跨域/404）
-   - 确认后端 `uvicorn` 运行并端口正确
-   - 确认页面内的 `API_BASE` 仍指向 `http://127.0.0.1:8000`
-   - 如果你自行改为代理模式，再检查 `vue.config.js` 的 `devServer.proxy`
-3. 上传消耗时间过长、卡顿
-   - 可能是本地资源读取或后端处理较多，建议分批次上传
-   - 检查后端 `import_files` 进度与日志
-4. 缩略图不显示
-   - 确认后端 `POST /api/import` 成功返回
-   - 月份 / temp 缩略图 URL 形如 `/thumbnails/{hash}.webp`
-   - 浏览 cache 缩略图 URL 形如 `/cache/{hash}_cache.webp`
-   - 确保 `backend/temp` 或 `backend/data/cache` 中存在对应文件
-5. 404 在 /calendar/{date_group} 或更深层相册路径
-   - 确认日期组和相册路径在后端存在
-   - 检查浏览页是否能正确解析 `album_path`
-
-## 9. 补充说明
-- 前端对后端 API 的依赖关系：
-   - `/api/categories` 用于导入页主分类下拉、浏览页详情补充和主分类设置页
-   - `/api/dates` 用于年月树
-   - `/api/dates/{date_group}/items` 用于日历内容
-   - `/api/albums/by-path/{album_path:path}` 用于物理路径相册详情
-   - `/api/images/count` 可用于统计呈现
-   - `/api/images/meta` 用于详情浮层补齐文件元数据
-   - `/api/images/tags/filename-match` 用于文件名分析与 Tag 草稿预匹配
-   - `/api/images/tags/apply` 用于标签菜单手动批量添加、覆盖或移除标签
-   - `/api/search/images` 用于搜索页的文件名 / Tag / 路径 quick hash 检索
-   - `/api/tags/draft` 用于预占隐藏草稿 Tag
-   - `/api/tags?sort_by=last_used_desc&limit=5` 用于输入为空时加载最近使用标签
-   - `/api/tags/export/json` 与 `/api/tags/import/json` 用于设置页的 Tag JSON 导入导出
-   - `/api/trash/items`、`/api/trash/reconcile`、`/api/trash/restore`、`/api/trash/hard-delete`、`DELETE /api/trash` 用于回收站页面
-   - `/api/thumbnails/cache` 与 `/api/thumbnails/cache/status/{task_id}` 用于浏览缓存缩略图异步生成
-   - `DELETE /api/cache` 用于设置页清理 temp/cache 缩略图
-   - `/api/system/cache-thumb-setting` 与 `/api/system/month-cover-setting` 用于设置页尺寸配置
-   - `/api/system/page-config` 用于读取/保存滚动浏览与分页浏览模式，以及滚动模式窗口范围
-   - `/api/admin/refresh?mode=quick` 支持按 `image_ids` 或 `trash_entry_ids` 做目标 cache 修复
-   - `/api/system/tag-match-setting` 用于读取/保存文件名匹配过滤配置
-   - `/api/system/image-viewers` 与 `/api/system/viewer-preference` 用于设置页看图器偏好
-- `ThumbCard` 负责显示缩略图，统一尺寸对齐
-- `Sidebar` 负责导航历史分组与用户操作按钮
-
----
+- 前端依赖后端先启动，否则大部分页面会直接请求失败。
+- 当前 `vue.config.js` 没有启用代理配置。
+- `GalleryPage` 的保活依赖 `App.vue` 保持 `KeepAlive` 容器常驻；如果后续调整路由渲染结构，需要特别注意这一点。
+- 设置页只有 Tag JSON 导入导出，没有图形化的文件名自动打标设置入口。
