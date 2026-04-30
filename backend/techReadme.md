@@ -31,6 +31,7 @@
     - `app/api/routers/basic.py`
       - `GET /`
       - `POST /api/import`
+        - 导入批次内会按当前 `tag_match_setting` 自动执行文件名 Tag 匹配，并以追加去重方式写回图片 `tags`
       - `GET /api/images/count`
       - `POST /api/admin/refresh`
     - `app/api/routers/categories.py`
@@ -202,6 +203,10 @@
   - 子目录链 → 自动创建 Album 树（`_ensure_album_chain`），所有嵌套层级继承顶层 `date_group`
   - 主分类决策规则：`category_id` 只写入图片；新建图片直接使用请求值，已存在图片仅在当前仍为默认主分类时提升，避免 hash 去重场景下误改既有非默认分类图片
   - 去重策略：相同哈希在相册内 → 保留并添加 album 关系；直传重复 → 跳过
+  - 每个导入批次在单个数据库事务内完成该批图片的写入、相册关系更新，以及按文件名自动匹配 Tag
+  - 文件名 Tag 自动匹配复用系统设置 `tag_match_setting` 与 `/api/images/tags/filename-match` 的同一套规则：按空格分词、不拆下划线、支持噪声词 / 最小长度 / 纯数字过滤，并自动忽略草稿 Tag
+  - 导入期自动打标固定使用 `append_unique` 语义：只追加本次文件名命中的 Tag，不覆盖图片既有 Tag
+  - 受影响 Tag 的 `usage_count` 在批次事务内按增量更新，`last_used_at` 只刷新本批次新增关联的 Tag，避免为导入逐批全表重算图片标签计数
   - 导入结束后保存哈希索引并释放内存
   - 批次读取文件内容（`IMPORT_BATCH_SIZE=50`）
   - 线程池并行 `process_from_bytes` 只为"每月封面所需图片"生成 temp 缩略图
@@ -501,7 +506,7 @@
 
 ## 4. 核心业务流程
 1. 用户前端上传图像文件列表
-2. `/api/import` 解析 `last_modified_json` 与可选 `category_id`，并发处理图像哈希/缩略图
+2. `/api/import` 解析 `last_modified_json` 与可选 `category_id`，并发处理图像哈希/缩略图；每个批次在同一事务内完成图片写入并按文件名自动追加匹配到的 Tag
 3. 记录写入数据库并保存到 `MEDIA_DIR`（按 `date_group`/子目录组织）
 4. 前端调用 `/api/dates` 和 `/api/dates/{date_group}/items` 构建图库视图
 5. 管理端 `/api/admin/refresh` 保持一致性（支持 `quick/full`）
@@ -564,7 +569,7 @@
 3. 启动服务 `..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
 4. API 说明：
    - `GET /` 健康检查
-  - `POST /api/import` 多文件上传（`files` + 可选 `last_modified_json` + 可选 `created_time_json` + 可选 `category_id`）
+  - `POST /api/import` 多文件上传（`files` + 可选 `last_modified_json` + 可选 `created_time_json` + 可选 `category_id`）；若 `tag_match_setting.enabled=true`，导入批次会按文件名自动追加匹配到的 Tag
   - `POST /api/admin/refresh?mode=quick|full` 修复库状态（默认 `quick`）
    - `GET /api/images/count` 计数
   - `GET /api/images/meta?ids=...` 批量读取图片详情字段与 `media_paths`
@@ -572,7 +577,7 @@
   - `GET /api/dates/{date_group}/items` 列出直图/子相册（图片条目含 `media_index` 与 `media_rel_path`）
   - `GET /api/albums/by-path/{album_path:path}` / `GET /api/albums/open-by-path/{album_path:path}` 相册浏览与在资源管理器打开目录
   - `GET /api/images/{image_id}/open?path=...` 按指定 `media_path` 实例打开图片
-    - `POST /api/images/tags/filename-match` 按文件名自动匹配并批量回写标签（自动忽略草稿 Tag）
+    - `POST /api/images/tags/filename-match` 按文件名自动匹配并批量回写标签（自动忽略草稿 Tag）；导入流程会复用同一套匹配规则
     - `POST /api/images/tags/apply` 批量添加/覆盖/移除标签（`merge_mode=append_unique|replace|remove`，自动忽略草稿 Tag）
     - `GET /api/tags?sort_by=last_used_desc&limit=5` 获取最近使用标签
     - `POST /api/tags/draft` 预占真实 `id/public_id` 并创建隐藏草稿 Tag

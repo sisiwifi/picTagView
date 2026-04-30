@@ -29,9 +29,18 @@ from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
 from app.models.tag import Tag
 from app.services.category_service import DEFAULT_CATEGORY_ID, require_category
-from app.services.app_settings_service import get_tag_match_setting
 from app.services.imports.helpers import apply_file_times, to_project_relative
 from app.services.imports.maintenance import _ensure_album_chain, recalculate_album_counts
+from app.services.tag_match_service import (
+    DRAFT_CREATED_BY,
+    load_tag_match_context,
+    match_filename_tags,
+    merge_matched_tag_ids,
+    now_tag_timestamp,
+    sanitize_tag_ids,
+    sort_tag_ids_by_name,
+    touch_tag_last_used,
+)
 from app.services.viewer_service import (
     get_preferred_viewer_id,
     launch_with_preferred_viewer,
@@ -39,62 +48,6 @@ from app.services.viewer_service import (
 )
 
 router = APIRouter()
-_DRAFT_CREATED_BY = "system:draft-reserve"
-
-
-def _now_tag_timestamp() -> str:
-    return datetime.utcnow().strftime("%Y%m%d%H%M%S")
-
-
-def _filename_stem(filename: str) -> str:
-    name = (filename or "").strip()
-    if not name:
-        return ""
-    return Path(name).stem
-
-
-def _extract_tokens(
-    stem: str,
-    *,
-    noise_tokens: set[str],
-    min_token_length: int,
-    drop_numeric_only: bool,
-) -> list[str]:
-    if not stem:
-        return []
-
-    tokens: list[str] = []
-    seen: set[str] = set()
-    for segment in stem.split(" "):
-        token = segment.strip()
-        if not token:
-            continue
-        if len(token) < min_token_length:
-            continue
-        if drop_numeric_only and token.isdigit():
-            continue
-        if token in noise_tokens:
-            continue
-        if token in seen:
-            continue
-        seen.add(token)
-        tokens.append(token)
-    return tokens
-
-
-def _sanitize_tag_ids(raw_ids: object) -> list[int]:
-    if not isinstance(raw_ids, list):
-        return []
-    result: list[int] = []
-    seen: set[int] = set()
-    for tag_id in raw_ids:
-        if not isinstance(tag_id, int):
-            continue
-        if tag_id in seen:
-            continue
-        seen.add(tag_id)
-        result.append(tag_id)
-    return result
 
 
 def _parse_media_rel_path(media_rel_path: str) -> tuple[str, list[str], str] | None:
@@ -195,16 +148,6 @@ def _rollback_metadata_operations(plans: list[dict]) -> None:
                 pass
 
 
-def _sort_tag_ids_by_name(tag_ids: list[int], tags_by_id: dict[int, Tag]) -> list[int]:
-    def _sort_key(tag_id: int) -> tuple[str, int]:
-        tag = tags_by_id.get(tag_id)
-        if not tag:
-            return ("~", tag_id)
-        return (str(tag.name or "~"), tag_id)
-
-    return sorted(tag_ids, key=_sort_key)
-
-
 def _to_tag_brief(tag: Tag) -> TagBriefItem:
     metadata = tag.metadata_ if isinstance(tag.metadata_, dict) else {}
     color = metadata.get("color") if isinstance(metadata.get("color"), str) else ""
@@ -229,7 +172,7 @@ def _build_common_tag_payload(
         common_set = set(rows_after_tag_ids[0])
         for row in rows_after_tag_ids[1:]:
             common_set &= set(row)
-        common_tag_ids = _sort_tag_ids_by_name(list(common_set), tags_by_id)
+        common_tag_ids = sort_tag_ids_by_name(list(common_set), tags_by_id)
 
     if not rows_after_tag_ids:
         multi_display = "empty"
@@ -250,20 +193,6 @@ def _build_common_tag_payload(
     return common_tag_ids, common_tags, multi_display
 
 
-def _touch_tag_last_used(tags_by_id: dict[int, Tag], tag_ids: set[int], last_used_at: str) -> bool:
-    changed = False
-    for tag_id in tag_ids:
-        tag = tags_by_id.get(tag_id)
-        if not tag:
-            continue
-        if tag.last_used_at == last_used_at:
-            continue
-        tag.last_used_at = last_used_at
-        tag.updated_at = datetime.utcnow()
-        changed = True
-    return changed
-
-
 def _sync_tag_usage_count(session, tags_by_id: dict[int, Tag], affected_tag_ids: set[int]) -> bool:
     if not affected_tag_ids:
         return False
@@ -271,7 +200,7 @@ def _sync_tag_usage_count(session, tags_by_id: dict[int, Tag], affected_tag_ids:
     usage_map = {tag_id: 0 for tag_id in affected_tag_ids}
     assets = session.exec(select(ImageAsset)).all()
     for asset in assets:
-        tag_ids = _sanitize_tag_ids(asset.tags or [])
+        tag_ids = sanitize_tag_ids(asset.tags or [])
         for tag_id in tag_ids:
             if tag_id in usage_map:
                 usage_map[tag_id] += 1
@@ -609,31 +538,14 @@ def filename_match_tags(body: ImageTagMatchRequest) -> ImageTagMatchResponse:
     if not unique_image_ids:
         return ImageTagMatchResponse(items=[], common_tag_ids=[], common_tags=[], multi_display="empty", applied_count=0)
 
-    setting = get_tag_match_setting()
-    enabled = bool(setting.get("enabled", True))
-    noise_tokens = set(setting.get("noise_tokens", [])) if enabled else set()
-    min_token_length = int(setting.get("min_token_length", 2)) if enabled else 1
-    drop_numeric_only = bool(setting.get("drop_numeric_only", True)) if enabled else False
-
     with get_session() as session:
         assets = session.exec(
             select(ImageAsset).where(ImageAsset.id.in_(unique_image_ids))  # type: ignore[arg-type]
         ).all()
-        tags = session.exec(
-            select(Tag).where(Tag.created_by != _DRAFT_CREATED_BY)  # type: ignore[attr-defined]
-        ).all()
+        tag_match_context = load_tag_match_context(session)
 
         asset_by_id = {asset.id: asset for asset in assets if asset.id is not None}
-        tags_by_name = {
-            str(tag.name): tag
-            for tag in tags
-            if tag.id is not None and isinstance(tag.name, str) and tag.name
-        }
-        tags_by_id = {
-            int(tag.id): tag
-            for tag in tags
-            if tag.id is not None
-        }
+        tags_by_id = tag_match_context.tags_by_id
 
         applied_count = 0
         items: list[ImageTagMatchItem] = []
@@ -646,34 +558,14 @@ def filename_match_tags(body: ImageTagMatchRequest) -> ImageTagMatchResponse:
                 continue
 
             filename = asset.full_filename or ""
-            tokens = _extract_tokens(
-                _filename_stem(filename),
-                noise_tokens=noise_tokens,
-                min_token_length=min_token_length,
-                drop_numeric_only=drop_numeric_only,
+            tokens, matched_tag_ids, matched_tags_by_id = match_filename_tags(filename, tag_match_context)
+            before_tag_ids = sanitize_tag_ids(asset.tags or [])
+            after_tag_ids = merge_matched_tag_ids(
+                before_tag_ids,
+                matched_tag_ids,
+                merge_mode=body.merge_mode,
+                tags_by_id=tags_by_id,
             )
-
-            matched_tags_by_id: dict[int, Tag] = {}
-            for token in tokens:
-                tag = tags_by_name.get(token)
-                if not tag or tag.id is None:
-                    continue
-                matched_tags_by_id[int(tag.id)] = tag
-
-            matched_tag_ids = _sort_tag_ids_by_name(list(matched_tags_by_id.keys()), tags_by_id)
-            before_tag_ids = _sanitize_tag_ids(asset.tags or [])
-
-            if body.merge_mode == "replace":
-                after_tag_ids = matched_tag_ids
-            else:
-                merged_ids: list[int] = []
-                merged_seen: set[int] = set()
-                for candidate_id in before_tag_ids + matched_tag_ids:
-                    if candidate_id in merged_seen:
-                        continue
-                    merged_seen.add(candidate_id)
-                    merged_ids.append(candidate_id)
-                after_tag_ids = _sort_tag_ids_by_name(merged_ids, tags_by_id)
 
             changed = before_tag_ids != after_tag_ids
             if body.apply and changed:
@@ -698,8 +590,8 @@ def filename_match_tags(body: ImageTagMatchRequest) -> ImageTagMatchResponse:
             )
 
         if body.apply and applied_count:
-            now_tag_ts = _now_tag_timestamp()
-            _touch_tag_last_used(tags_by_id, touched_tag_ids, now_tag_ts)
+            now_tag_ts = now_tag_timestamp()
+            touch_tag_last_used(tags_by_id, touched_tag_ids, now_tag_ts)
             _sync_tag_usage_count(session, tags_by_id, affected_tag_ids)
             session.commit()
 
@@ -722,8 +614,8 @@ def apply_tags(body: ImageTagApplyRequest) -> ImageTagApplyResponse:
     if body.merge_mode not in {"append_unique", "replace", "remove"}:
         raise HTTPException(status_code=400, detail="merge_mode 必须为 append_unique / replace / remove")
 
-    unique_image_ids = _sanitize_tag_ids(body.image_ids)
-    unique_tag_ids = _sanitize_tag_ids(body.tag_ids)
+    unique_image_ids = sanitize_tag_ids(body.image_ids)
+    unique_tag_ids = sanitize_tag_ids(body.tag_ids)
 
     if not unique_image_ids:
         return ImageTagApplyResponse(items=[], common_tag_ids=[], common_tags=[], multi_display="empty", applied_count=0)
@@ -734,7 +626,7 @@ def apply_tags(body: ImageTagApplyRequest) -> ImageTagApplyResponse:
             select(ImageAsset).where(ImageAsset.id.in_(unique_image_ids))  # type: ignore[arg-type]
         ).all()
         tags = session.exec(
-            select(Tag).where(Tag.created_by != _DRAFT_CREATED_BY)  # type: ignore[attr-defined]
+            select(Tag).where(Tag.created_by != DRAFT_CREATED_BY)  # type: ignore[attr-defined]
         ).all()
         tags_by_id = {
             int(tag.id): tag
@@ -747,7 +639,7 @@ def apply_tags(body: ImageTagApplyRequest) -> ImageTagApplyResponse:
             for tag_id in unique_tag_ids
             if tag_id in tags_by_id
         ]
-        valid_tag_ids = _sort_tag_ids_by_name(valid_tag_ids, tags_by_id)
+        valid_tag_ids = sort_tag_ids_by_name(valid_tag_ids, tags_by_id)
 
         assets_by_id = {
             int(asset.id): asset
@@ -766,7 +658,7 @@ def apply_tags(body: ImageTagApplyRequest) -> ImageTagApplyResponse:
             if not asset:
                 continue
 
-            before_tag_ids = _sanitize_tag_ids(asset.tags or [])
+            before_tag_ids = sanitize_tag_ids(asset.tags or [])
             if body.merge_mode == "replace":
                 after_tag_ids = valid_tag_ids
             elif body.merge_mode == "remove":
@@ -783,7 +675,7 @@ def apply_tags(body: ImageTagApplyRequest) -> ImageTagApplyResponse:
                         continue
                     seen.add(candidate_id)
                     merged.append(candidate_id)
-                after_tag_ids = _sort_tag_ids_by_name(merged, tags_by_id)
+                after_tag_ids = sort_tag_ids_by_name(merged, tags_by_id)
 
             changed = before_tag_ids != after_tag_ids
             if changed:
@@ -808,8 +700,8 @@ def apply_tags(body: ImageTagApplyRequest) -> ImageTagApplyResponse:
 
         if applied_count:
             if touched_tag_ids:
-                now_tag_ts = _now_tag_timestamp()
-                _touch_tag_last_used(tags_by_id, touched_tag_ids, now_tag_ts)
+                now_tag_ts = now_tag_timestamp()
+                touch_tag_last_used(tags_by_id, touched_tag_ids, now_tag_ts)
             _sync_tag_usage_count(session, tags_by_id, affected_tag_ids)
             session.commit()
 

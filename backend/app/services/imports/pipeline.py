@@ -16,6 +16,17 @@ from app.services.parallel_processor import (
     process_from_bytes,
     process_hash_only_from_bytes,
 )
+from app.services.tag_match_service import (
+    TagMatchContext,
+    apply_usage_count_deltas,
+    collect_usage_count_deltas,
+    load_tag_match_context,
+    match_filename_tags,
+    merge_matched_tag_ids,
+    now_tag_timestamp,
+    sanitize_tag_ids,
+    touch_tag_last_used,
+)
 
 from .hash_index import (
     add_to_hash_index,
@@ -57,6 +68,41 @@ def apply_import_category_to_image_asset(asset: ImageAsset, category_id: Optiona
     if current_category_id == target_category_id:
         return False
     asset.category_id = target_category_id
+    return True
+
+
+def apply_import_filename_tags(
+    asset: ImageAsset,
+    filename: str,
+    tag_match_context: TagMatchContext,
+    *,
+    usage_deltas: dict[int, int],
+    touched_tag_ids: set[int],
+) -> bool:
+    before_tag_ids = sanitize_tag_ids(asset.tags or [])
+    normalized_only = asset.tags != before_tag_ids
+    if normalized_only:
+        asset.tags = before_tag_ids
+
+    if not tag_match_context.enabled or not tag_match_context.tags_by_name:
+        if asset.tags is None:
+            asset.tags = []
+            return True
+        return normalized_only
+
+    _tokens, matched_tag_ids, _matched_tags_by_id = match_filename_tags(filename, tag_match_context)
+    after_tag_ids = merge_matched_tag_ids(
+        before_tag_ids,
+        matched_tag_ids,
+        merge_mode="append_unique",
+        tags_by_id=tag_match_context.tags_by_id,
+    )
+    if before_tag_ids == after_tag_ids:
+        return normalized_only
+
+    asset.tags = after_tag_ids
+    collect_usage_count_deltas(before_tag_ids, after_tag_ids, usage_deltas)
+    touched_tag_ids.update(set(after_tag_ids) - set(before_tag_ids))
     return True
 
 
@@ -293,6 +339,9 @@ async def import_files(
             proc[str(index)] = value
 
         with get_session() as session:
+            tag_match_context = load_tag_match_context(session, skip_tag_query_when_disabled=True)
+            tag_usage_deltas: dict[int, int] = {}
+            touched_tag_ids: set[int] = set()
             for index, (meta, content) in enumerate(batch_ready):
                 result = proc.get(str(index), (None, None, "no result", None, None, None))
                 file_hash, thumb_path_str, _error = result[0], result[1], result[2]
@@ -365,6 +414,13 @@ async def import_files(
                             existing.thumbs = upsert_thumb(existing.thumbs, new_thumb)
 
                         apply_import_category_to_image_asset(existing, requested_category_id)
+                        apply_import_filename_tags(
+                            existing,
+                            meta["filename"],
+                            tag_match_context,
+                            usage_deltas=tag_usage_deltas,
+                            touched_tag_ids=touched_tag_ids,
+                        )
 
                         session.add(existing)
                         # Write album_image mapping for the leaf album
@@ -430,6 +486,14 @@ async def import_files(
                         if existing.tags is None:
                             existing.tags = []
                             needs_update = True
+                        if apply_import_filename_tags(
+                            existing,
+                            meta["filename"],
+                            tag_match_context,
+                            usage_deltas=tag_usage_deltas,
+                            touched_tag_ids=touched_tag_ids,
+                        ):
+                            needs_update = True
                         if apply_import_category_to_image_asset(existing, requested_category_id):
                             needs_update = True
                         if existing.imported_at is None:
@@ -480,6 +544,13 @@ async def import_files(
                     album=[album_public_ids] if album_public_ids else [],
                     collection=[],
                 )
+                apply_import_filename_tags(
+                    asset,
+                    meta["filename"],
+                    tag_match_context,
+                    usage_deltas=tag_usage_deltas,
+                    touched_tag_ids=touched_tag_ids,
+                )
                 session.add(asset)
                 session.flush()
 
@@ -497,6 +568,10 @@ async def import_files(
                     add_to_hash_index(file_hash, asset.id, quick_hash)
                 imported.append(original)
 
+            if touched_tag_ids:
+                touch_tag_last_used(tag_match_context.tags_by_id, touched_tag_ids, now_tag_timestamp())
+            if tag_usage_deltas:
+                apply_usage_count_deltas(tag_match_context.tags_by_id, tag_usage_deltas)
             session.commit()
 
         del batch_ready
