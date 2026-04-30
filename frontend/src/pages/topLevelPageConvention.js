@@ -9,7 +9,7 @@ export const TOP_LEVEL_PAGE_STANDARD = Object.freeze({
 export const TOP_LEVEL_NAV_ITEMS = Object.freeze([
   { path: '/', label: '主页', icon: '🏠' },
   { path: '/search', label: '搜索', icon: '🔎' },
-  { path: '/tags', label: '标签总览', icon: '🏷️' },
+  { path: '/tags', label: '标签总览', icon: '🏷️', matchPrefixes: ['/tags/'] },
   { path: '/gallery', label: '图库管理', icon: '🖼️' },
   { path: '/calendar', label: '日期视图', icon: '📅', matchPrefixes: ['/calendar/'] },
   { path: '/favorites', label: '收藏', icon: '⭐', matchPrefixes: ['/favorites/'] },

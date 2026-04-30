@@ -17,6 +17,23 @@
           <div class="confirm-dialog__content">
             <h3 :id="titleId" class="confirm-dialog__title">{{ title }}</h3>
             <p :id="messageId" class="confirm-dialog__message">{{ message }}</p>
+
+            <label v-if="inputVisible" class="confirm-dialog__input-block" :for="inputId">
+              <span v-if="inputLabel" class="confirm-dialog__input-label">{{ inputLabel }}</span>
+              <input
+                :id="inputId"
+                ref="input"
+                :value="modelValue"
+                class="confirm-dialog__input"
+                type="text"
+                :placeholder="inputPlaceholder"
+                :disabled="busy"
+                autocomplete="off"
+                spellcheck="false"
+                @input="$emit('update:modelValue', $event.target.value)"
+              >
+              <span v-if="inputHint" class="confirm-dialog__input-hint">{{ inputHint }}</span>
+            </label>
           </div>
 
           <div class="confirm-dialog__actions">
@@ -62,8 +79,13 @@ export default {
     showCancel: { type: Boolean, default: true },
     busy: { type: Boolean, default: false },
     busyLabel: { type: String, default: '处理中…' },
+    modelValue: { type: String, default: '' },
+    inputVisible: { type: Boolean, default: false },
+    inputLabel: { type: String, default: '' },
+    inputPlaceholder: { type: String, default: '' },
+    inputHint: { type: String, default: '' },
   },
-  emits: ['confirm', 'cancel'],
+  emits: ['confirm', 'cancel', 'update:modelValue'],
   data() {
     return {
       dialogIdBase: `confirm-dialog-${Math.random().toString(36).slice(2, 10)}`,
@@ -75,6 +97,17 @@ export default {
     },
     messageId() {
       return `${this.dialogIdBase}-message`
+    },
+    inputId() {
+      return `${this.dialogIdBase}-input`
+    },
+  },
+  watch: {
+    visible(nextValue) {
+      if (!nextValue || !this.inputVisible) return
+      this.$nextTick(() => {
+        this.$refs.input?.focus?.()
+      })
     },
   },
   methods: {
@@ -153,6 +186,46 @@ export default {
   font-size: 0.9rem;
   line-height: 1.65;
   white-space: pre-line;
+}
+
+.confirm-dialog__input-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+  margin-top: 0.9rem;
+}
+
+.confirm-dialog__input-label {
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.confirm-dialog__input {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 14px;
+  padding: 0.75rem 0.9rem;
+  background: rgba(255, 255, 255, 0.94);
+  color: #0f172a;
+  font-size: 0.88rem;
+  outline: none;
+}
+
+.confirm-dialog__input:focus {
+  border-color: rgba(37, 99, 235, 0.45);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.confirm-dialog__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.confirm-dialog__input-hint {
+  color: #64748b;
+  font-size: 0.76rem;
+  line-height: 1.5;
 }
 
 .confirm-dialog__actions {

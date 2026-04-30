@@ -176,6 +176,49 @@ function buildCollectionCrumbs(vm) {
   ]
 }
 
+function buildTagCrumbs(vm) {
+  return [
+    { label: '标签总览', title: '标签总览', to: '/tags' },
+    {
+      label: vm.bcLabel(vm.albumInfo?.title || '标签'),
+      title: vm.albumInfo?.title || '标签',
+      current: true,
+    },
+  ]
+}
+
+function buildTagHeaderActions(vm) {
+  return [
+    {
+      key: 'edit-tag',
+      label: '编辑标签',
+      handler: 'editCurrentBrowseTag',
+      disabled: !Number.isInteger(vm.currentBrowseTagId) || vm.tagMenuBusy || vm.tagFormSaving || vm.actionBusy,
+    },
+  ]
+}
+
+function buildTagBrowseInfo(tag, itemCount = 0) {
+  if (!tag || !Number.isInteger(tag?.id)) {
+    return null
+  }
+
+  const title = String(tag?.display_name || tag?.name || `#${tag.id}`)
+  return {
+    id: tag.id,
+    public_id: String(tag?.public_id || ''),
+    title,
+    description: String(tag?.description || ''),
+    name: String(tag?.name || ''),
+    display_name: title,
+    type: String(tag?.type || 'normal'),
+    usage_count: Number(tag?.usage_count || 0),
+    last_used_at: String(tag?.last_used_at || ''),
+    metadata: tag?.metadata && typeof tag.metadata === 'object' ? tag.metadata : {},
+    photo_count: Number(itemCount || 0),
+  }
+}
+
 const calendarContract = {
   name: 'calendar',
   emptyState: {
@@ -363,6 +406,74 @@ const collectionContract = {
   },
 }
 
+const tagContract = {
+  name: 'tag',
+  emptyState: {
+    icon: '🏷',
+    text: '当前标签下暂无可见图片。',
+  },
+  defaultSort() {
+    return {
+      sortBy: 'date',
+      sortDir: 'desc',
+    }
+  },
+  buildCrumbs(vm) {
+    return buildTagCrumbs(vm)
+  },
+  buildHeaderActions(vm) {
+    return buildTagHeaderActions(vm)
+  },
+  buildSelectionActions(vm) {
+    return buildCalendarLikeSelectionActions(vm)
+  },
+  buildDetailPolicy(vm) {
+    return buildCalendarLikeDetailPolicy(vm)
+  },
+  async loadItems(vm) {
+    if (!Number.isInteger(vm.currentBrowseTagId)) {
+      return { items: [], album: null }
+    }
+
+    const res = await fetch(`${API_BASE}/api/tags/${encodeURIComponent(vm.currentBrowseTagId)}/images`)
+    if (!res.ok) {
+      return { items: [], album: null }
+    }
+
+    const data = await res.json()
+    const items = Array.isArray(data?.items) ? data.items : []
+    return {
+      items,
+      album: buildTagBrowseInfo(data?.tag, items.length),
+    }
+  },
+  normalizeItems(rawItems) {
+    return (rawItems || []).map(item => normalizeCollectionItem(item))
+  },
+  afterLoad(vm) {
+    vm.ensureCategoryLabelsLoaded()
+    if (vm.selectionInfoMode === 'tags') {
+      vm.ensureTagLabelsLoaded()
+    }
+  },
+  back(vm) {
+    vm.$router.push('/tags')
+  },
+  openItem(_vm, item) {
+    openImageItem(item)
+  },
+  openPrimary(_vm, item) {
+    openImageItem(item)
+  },
+  runSecondaryAction(vm) {
+    vm.moveSelectedToTrash()
+  },
+  previewRepairPayloadKey: 'image_ids',
+  async afterPreviewRepair(vm, repairIds) {
+    await vm.refreshPreviewMetadata(repairIds)
+  },
+}
+
 const trashContract = {
   name: 'trash',
   emptyState: {
@@ -471,6 +582,7 @@ const trashContract = {
 export function getCommonBrowsePageContract(contractName = 'calendar') {
   if (contractName === 'trash') return trashContract
   if (contractName === 'collection') return collectionContract
+  if (contractName === 'tag') return tagContract
   return calendarContract
 }
 

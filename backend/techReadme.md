@@ -64,6 +64,7 @@
     - `app/api/routers/tags.py`
       - `GET /api/tags`
       - `GET /api/tags/{tag_id}`
+      - `GET /api/tags/{tag_id}/images`
       - `POST /api/tags/draft`
       - `POST /api/tags`
       - `PATCH /api/tags/{tag_id}`
@@ -147,6 +148,7 @@
 - 照片墙布局补充：BrowsePage 的“大缩略图”模式会优先使用浏览接口返回的 `width` / `height` 初始化 `justifiedRows` 布局，避免依赖图片逐张加载后再回填宽高，从而降低首轮重排频率；`onImgLoad` 现在只在 `width` / `height` 缺失时做异常兜底回填，不再作为常规排布来源。
 - 缓存队列补充：BrowsePage 与 CalendarOverview 发起的缓存缩略图请求已改为 `page_token + generation` 协议。前端会先按“缓存锚点、当前首排、前后 N 张”构造优先级列表，其中 `N` 由设置页 `scroll_window_size` 决定，可选 `40-200`、默认 `100`（即锚点前后各约 `50` 项），再交给后端共享 worker 池；同页新 generation 到来时，未启动的旧 job 会被丢弃，状态轮询通过 `cursor` 增量返回新增完成项。
 - Tag 请求策略补充：前端仅在信息区切换到 Tag 模式时，才会从当前页面条目中去重收集 `tags` ID，并分批调用 `GET /api/tags?ids=...` 批量换取 `display_name/name`；普通浏览与默认文件名模式不触发该请求，以减少 DB 压力与事务占用。
+- 标签总览页补充：一级页 `/tags` 现在采用“左大右小”布局。左侧按 Tag `name` 首字母分组渲染彩色 chip，单组默认最多展示 3 排并可展开；页头右上角提供“增加标签”和“编辑标签”两个按钮，前者直接打开 `TagFormDialog.vue` 新建 Tag，后者切换到页面级编辑模式。编辑模式下，左侧分组与右侧排行中的所有 Tag 都会在右侧显示删除 `x`，点击 chip 也不再进入二级页，而是直接打开现有 Tag 编辑表单；删除走 `ConfirmationDialog.vue` 居中弹窗，并要求精确输入 `tag.name` 做二次确认。横屏下右侧排行不再保留独立滚动条，而是随左侧内容一起自然展开并跟随主内容区统一滚动；应用级滚动则收敛在主内容区内，避免左侧导航栏被页面内容带动。chip 悬停显示 `Tag.description`，hover 不再向上位移裁剪，编辑模式也不再额外加下划线强调，非编辑模式点击后进入二级 BrowsePage。
 - 收藏请求策略补充：BrowsePage 打开收藏菜单时会调用 `POST /api/collections/search`，并携带当前选中图片 ID 列表，让后端直接返回候选收藏及其对当前选择的命中统计；提交时统一调用 `POST /api/collections/apply`，单选与多选都复用同一套“逐图片动作列表”协议。
 - 收藏页补充：一级页 `/favorites` 现在直接调用 `GET /api/collections` 返回可见收藏夹概览；点击卡片进入 `/favorites/:collectionId` 后，BrowsePage 通过 `browseContract = 'collection'` 调用 `GET /api/collections/{collection_id}` 获取图片列表。
 - 封面策略补充：`Album.cover` 与 `Collection.cover` 都支持人工指定封面；浏览接口会优先返回当前可见范围内的已选封面，否则退回各自默认候选。相册默认候选仍是可见子树中按文件名字母序最早图片，收藏默认候选则是最早加入收藏的图片。
@@ -161,10 +163,13 @@
       - `/calendar/:group/:albumPath+` — 相册浏览，支持任意层级嵌套（BrowsePage）
     - 二级页面（收藏域浏览）：
       - `/favorites/:collectionId` — 收藏夹图片列表（BrowsePage）
+    - 二级页面（标签域浏览）：
+      - `/tags/:tagId` — 标签图片列表（BrowsePage），页头通过 `browseContract = 'tag'` 注入“编辑标签”按钮并复用现有 `TagFormDialog.vue`
     - 旧路由 `/album/:id` 已废弃，相册通过物理路径映射到 URL：`/calendar/2024-07/vacation/day1`
   - 面包屑结构：日期视图 › YYYY-MM › 相册1 › 相册2（当前），完全由 URL 路径段驱动，无需异步补标题。
   - BrowsePage 同时承载月份列表和相册浏览，通过 `$route.params` 判断模式：无 `albumPath` 为月份模式，有则为相册模式，调用 `GET /api/albums/by-path/{path}` 获取数据。
   - 收藏页同样复用 BrowsePage：通过 `route.meta.browseContract = 'collection'` 与 `collectionId` 参数切换到收藏契约，返回按钮统一回到 `/favorites`。
+  - 标签二级页同样复用 BrowsePage：通过 `route.meta.browseContract = 'tag'` 与 `tagId` 参数切换到标签契约，数据源为 `GET /api/tags/{tag_id}/images`，返回按钮统一回到 `/tags`。
   - 组件复用策略：两个 browse 路由共享 `meta.reuseKey = 'browse'`，App.vue 使用 `:key="route.meta?.reuseKey || route.name"` 避免组件销毁重建，消除跨层级导航闪动。
   - 后续若要以 BrowsePage 为基底构建新的浏览页，统一通过 `browseContract` 注入页面差异，避免复制整套页面壳；更完整的契约字段、生命周期钩子与适配器规范见 [frontend/commonBrowsePage.md](../frontend/commonBrowsePage.md)。
   - 一级页的公共页头与导航约定已收敛到 `frontend/src/pages/TopLevelPageHeader.vue` 与 `frontend/src/pages/topLevelPageConvention.js`，一级页入口统一放在 `frontend/src/pages/` 下，不再使用 `src/temp/`。
@@ -635,6 +640,7 @@
     - `POST /api/images/tags/filename-match` 按文件名自动匹配并批量回写标签（自动忽略草稿 Tag）；导入流程会复用同一套匹配规则
     - `POST /api/images/tags/apply` 批量添加/覆盖/移除标签（`merge_mode=append_unique|replace|remove`，自动忽略草稿 Tag）
     - `GET /api/tags?sort_by=last_used_desc&limit=5` 获取最近使用标签
+    - `GET /api/tags/{id}/images` 获取某个标签下的可见图片列表，供 `/tags/:tagId` 的二级 BrowsePage 使用
     - `POST /api/tags/draft` 预占真实 `id/public_id` 并创建隐藏草稿 Tag
     - `PATCH /api/tags/{id}` 支持更新 `name / display_name / type / description / metadata`
   - `GET /api/trash/items`、`POST /api/trash/move`、`POST /api/trash/restore`、`POST /api/trash/hard-delete`、`DELETE /api/trash` 回收站相关操作

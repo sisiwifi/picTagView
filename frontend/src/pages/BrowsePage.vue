@@ -652,11 +652,19 @@ export default {
     isCollectionMode() {
       return this.pageContractName === 'collection'
     },
+    isTagMode() {
+      return this.pageContractName === 'tag'
+    },
     dateGroup() {
       return this.$route.params.group || ''
     },
     collectionPublicId() {
       return this.$route.params.collectionId || ''
+    },
+    currentBrowseTagId() {
+      const raw = this.$route.params.tagId
+      const value = Number.parseInt(Array.isArray(raw) ? raw[0] : raw, 10)
+      return Number.isInteger(value) ? value : null
     },
     albumPath() {
       const raw = this.$route.params.albumPath
@@ -688,6 +696,9 @@ export default {
     cachePageToken() {
       if (this.isCollectionMode) {
         return `browse:collection:${this.collectionPublicId}`
+      }
+      if (this.isTagMode) {
+        return `browse:tag:${this.currentBrowseTagId || 'unknown'}`
       }
       if (this.isAlbumMode) {
         return `browse:${this.fullAlbumPath}`
@@ -4264,6 +4275,23 @@ export default {
         }
       }
 
+      if (this.isTagMode && normalizedTag && this.albumInfo?.id === normalizedTag.id) {
+        this.albumInfo = {
+          ...this.albumInfo,
+          id: normalizedTag.id,
+          public_id: normalizedTag.publicId || this.albumInfo.public_id || '',
+          title: normalizedTag.displayName || normalizedTag.name || this.albumInfo.title,
+          description: normalizedTag.description || '',
+          name: normalizedTag.name || '',
+          display_name: normalizedTag.displayName || normalizedTag.name || this.albumInfo.display_name || '',
+          type: normalizedTag.type || this.albumInfo.type || 'normal',
+          usage_count: Number(savedTag?.usage_count ?? this.albumInfo.usage_count ?? 0),
+          last_used_at: String(savedTag?.last_used_at || this.albumInfo.last_used_at || ''),
+          metadata: normalizedTag.metadata || {},
+          photo_count: this.items.length,
+        }
+      }
+
       if (attachToSelection) {
         await this.addTagFromMenu(savedTag)
       } else {
@@ -4272,6 +4300,29 @@ export default {
 
       if (this.tagMenuVisible) {
         await this.fetchTagMenuSuggestions(this.tagMenuQuery)
+      }
+    },
+
+    async editCurrentBrowseTag() {
+      const tagId = this.currentBrowseTagId
+      if (!Number.isInteger(tagId) || this.tagMenuBusy || this.tagFormSaving) return
+
+      this.tagMenuBusy = true
+      this.tagFormError = ''
+      this.tagMenuError = ''
+      try {
+        const [detail, existingNames] = await Promise.all([
+          this.fetchTagDetail(tagId),
+          this.fetchTagFormExistingNames(),
+        ])
+        this.tagFormMode = 'edit'
+        this.tagFormTag = detail
+        this.tagFormExistingNames = existingNames
+        this.tagFormVisible = true
+      } catch (err) {
+        this.showMessage('error', `标签详情读取失败：${err?.message || '未知错误'}`)
+      } finally {
+        this.tagMenuBusy = false
       }
     },
 

@@ -26,7 +26,7 @@
 
 - `route.meta.browseContract`：决定当前页面使用哪种页面契约
 - `route.meta.reuseKey`：决定是否复用 `BrowsePage` 实例
-- `route.params`：负责位置参数，例如 `group`、`albumPath`、`collectionId`
+- `route.params`：负责位置参数，例如 `group`、`albumPath`、`collectionId`、`tagId`
 
 示例：
 
@@ -72,6 +72,8 @@
   - `GET /api/albums/by-path/:path`
 - collection 模式：
   - `GET /api/collections/:collectionId`
+- tag 模式：
+  - `GET /api/tags/:tagId/images`
 - trash 模式：
   - `GET /api/trash/items`
 
@@ -207,6 +209,7 @@ metadataPermissions: {
 - 额外功能按钮通过默认 slot 注入
 - 页头不再为某个页面维护单独组件
 - 如果页面支持容器级动作，例如相册/收藏夹“选择封面”，统一由页面契约在 `buildHeaderActions(vm)` 中注入按钮，具体模式状态仍由 `BrowsePage.vue` 管理
+- tag 二级页的“编辑标签”同样通过 `buildHeaderActions(vm)` 注入，按钮点击后直接复用 `BrowsePage.vue` 内已有的 `TagFormDialog.vue` 打开与保存流程
 
 例如回收站的“清空回收站”按钮，就是通过 header slot 注入，而不是再建一个独立的回收站页头组件。
 
@@ -544,16 +547,18 @@ function normalizeTrashItem(rawItem) {
 
 ## 11. 当前已落地的契约
 
-当前已实现三个模式：
+当前已实现四个模式：
 
 - `calendar`
 - `collection`
+- `tag`
 - `trash`
 
 其中：
 
 - `calendar` 负责 live browse
 - `collection` 负责收藏夹二级 browse，并复用 BrowsePage 的选择、详情、Tag/收藏菜单与封面选择模式
+- `tag` 负责标签二级 browse，页头额外提供“编辑标签”动作，数据源为 `GET /api/tags/:tagId/images`
 - `trash` 负责回收站 browse
 
 二者共用同一 `BrowsePage.vue` 壳，只通过页面契约和 adapter 分流。

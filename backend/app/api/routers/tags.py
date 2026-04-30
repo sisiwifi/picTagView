@@ -14,8 +14,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import case, func
 from sqlmodel import select
 
+from app.api.common import AssetPreviewResolver, build_preview_availability_index, pick_asset_media_path
+from app.api.schemas import AlbumItem
 from app.db.session import get_session
+from app.models.image_asset import ImageAsset
 from app.models.tag import Tag
+from app.services.category_service import DEFAULT_CATEGORY_ID, get_active_category_ids
+from app.services.visible_album_service import list_visible_assets
 
 router = APIRouter(prefix="/api/tags", tags=["tags"])
 
@@ -170,6 +175,40 @@ def _write_public_id(tag: Tag) -> None:
     tag.public_id = f"tag_{tag.id}"
 
 
+def _to_unix_ts(dt: datetime | None) -> int | None:
+    if dt is None:
+        return None
+    return int(dt.timestamp())
+
+
+def _build_tag_image_item(asset: ImageAsset, preview_resolver: AssetPreviewResolver) -> AlbumItem | None:
+    if asset.id is None:
+        return None
+
+    media_index, media_rel_path = pick_asset_media_path(asset)
+    if media_index is None or not media_rel_path:
+        return None
+
+    preview = preview_resolver.resolve(asset)
+    return AlbumItem(
+        type="image",
+        name=asset.full_filename or "",
+        thumb_url=preview.thumb_url,
+        id=int(asset.id),
+        category_id=asset.category_id or DEFAULT_CATEGORY_ID,
+        cache_thumb_url=preview.cache_thumb_url,
+        width=asset.width,
+        height=asset.height,
+        sort_ts=_to_unix_ts(asset.file_created_at or asset.imported_at or asset.created_at),
+        tags=[tag_id for tag_id in (asset.tags or []) if isinstance(tag_id, int)],
+        file_size=asset.file_size,
+        imported_at=asset.imported_at,
+        file_created_at=asset.file_created_at,
+        media_index=media_index,
+        media_rel_path=media_rel_path,
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Request/Response schemas
 # ─────────────────────────────────────────────────────────────────────────────
@@ -210,6 +249,31 @@ class TagDraftReserveBody(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 # CRUD endpoints
 # ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/{tag_id}/images")
+def list_tag_images(tag_id: int) -> dict:
+    with get_session() as session:
+        tag = session.get(Tag, tag_id)
+        if not tag or _is_draft_tag(tag):
+            raise HTTPException(status_code=404, detail=f"Tag {tag_id} 不存在")
+
+        active_category_ids = get_active_category_ids(session)
+        preview_resolver = AssetPreviewResolver(build_preview_availability_index())
+        visible_assets = list_visible_assets(session, active_category_ids)
+
+        items: list[AlbumItem] = []
+        for asset in visible_assets:
+            asset_tag_ids = [candidate for candidate in (asset.tags or []) if isinstance(candidate, int)]
+            if tag_id not in asset_tag_ids:
+                continue
+            item = _build_tag_image_item(asset, preview_resolver)
+            if item is not None:
+                items.append(item)
+
+        return {
+            "tag": _tag_to_dict(tag),
+            "items": items,
+        }
 
 @router.get("")
 def list_tags(

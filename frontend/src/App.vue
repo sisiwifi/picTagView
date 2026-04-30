@@ -1,8 +1,8 @@
 <template>
-  <div class="min-h-screen bg-slate-50 text-slate-900 [overflow-x:clip]">
-    <div class="flex min-h-screen">
+  <div class="h-screen overflow-x-clip overflow-y-hidden bg-slate-50 text-slate-900">
+    <div class="flex h-screen">
       <AppSidebar />
-      <main class="flex-1 min-w-0 p-10">
+      <main class="flex-1 min-w-0 overflow-y-auto p-10">
         <router-view v-slot="{ Component, route }">
           <KeepAlive>
             <component

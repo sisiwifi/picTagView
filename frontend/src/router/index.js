@@ -1,13 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import HomePage from '../pages/HomePage.vue'
 import GalleryPage from '../pages/GalleryPage.vue'
-import EmptyPage from '../pages/EmptyPage.vue'
 import CalendarOverview from '../pages/CalendarOverview.vue'
 import BrowsePage from '../pages/BrowsePage.vue'
 import CategorySettingsPage from '../pages/CategorySettingsPage.vue'
 import SettingsPage from '../pages/SettingsPage.vue'
 import SearchPage from '../pages/SearchPage.vue'
 import FavoritesPage from '../pages/FavoritesPage.vue'
+import TagOverviewPage from '../pages/TagOverviewPage.vue'
 
 const routes = [
   {
@@ -23,7 +23,14 @@ const routes = [
   {
     path: '/tags',
     name: 'tags',
-    component: EmptyPage
+    component: TagOverviewPage
+  },
+  {
+    path: '/tags/:tagId',
+    name: 'browse-tag',
+    component: BrowsePage,
+    props: true,
+    meta: { reuseKey: 'browse', browseContract: 'tag' }
   },
   {
     path: '/gallery',
