@@ -1,11 +1,11 @@
 <template>
-  <header class="page-header">
-    <div class="page-header__main">
-      <h2 class="page-title">{{ title }}</h2>
-      <p v-if="subtitle" class="page-subtitle">{{ subtitle }}</p>
+  <header class="top-level-header">
+    <div class="top-level-header__main">
+      <h2 class="top-level-header__title">{{ title }}</h2>
+      <p v-if="subtitle" class="top-level-header__subtitle">{{ subtitle }}</p>
     </div>
 
-    <div v-if="$slots.default" class="page-header__extra">
+    <div v-if="$slots.default" class="top-level-header__extra">
       <slot />
     </div>
   </header>
@@ -28,23 +28,33 @@ export default {
 </script>
 
 <style scoped lang="css">
-.page-header {
+.top-level-header {
   @apply flex flex-wrap items-end justify-between gap-3;
 }
 
-.page-header__main {
+.top-level-header__main {
   @apply flex min-w-0 flex-col gap-1;
 }
 
-.page-header__extra {
+.top-level-header__extra {
   @apply flex flex-wrap items-center gap-3;
 }
 
-.page-title {
+.top-level-header__title {
   @apply m-0 text-2xl font-semibold text-slate-900;
 }
 
-.page-subtitle {
+.top-level-header__subtitle {
   @apply m-0 text-sm text-slate-500;
+}
+
+@media (max-width: 640px) {
+  .top-level-header {
+    @apply flex-col items-stretch;
+  }
+
+  .top-level-header__extra {
+    @apply justify-start;
+  }
 }
 </style>
