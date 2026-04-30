@@ -13,6 +13,7 @@ from app.models.image_asset import ImageAsset
 from app.models.trash_entry import TrashEntry
 from app.services.cache_thumb_service import generate_cache_thumb_entry
 from app.services.category_service import DEFAULT_CATEGORY_ID
+from app.services.cover_service import build_asset_cover_payload, cover_is_manual, extract_cover_photo_id
 from app.services.file_scanner import list_image_files
 from app.services.parallel_processor import process_from_paths, process_hash_only_from_paths
 
@@ -104,6 +105,11 @@ def recalculate_album_counts() -> None:
         album_id_by_pid: dict[str, int] = {
             album.public_id: album.id for album in albums if album.id is not None
         }
+        manual_cover_photo_ids = {
+            album.public_id: extract_cover_photo_id(album.cover)
+            for album in albums
+            if album.public_id and cover_is_manual(album.cover)
+        }
 
         for album in albums:
             album.photo_count = 0
@@ -115,6 +121,11 @@ def recalculate_album_counts() -> None:
         cover_candidates: dict[str, ImageAsset] = {}
 
         all_assets = session.exec(select(ImageAsset)).all()
+        asset_by_id = {
+            int(asset.id): asset
+            for asset in all_assets
+            if isinstance(asset.id, int)
+        }
         for asset in all_assets:
             for path in (asset.album or []):
                 if not isinstance(path, list) or not path:
@@ -138,23 +149,22 @@ def recalculate_album_counts() -> None:
                 if leaf_album_id is not None and asset.id is not None:
                     session.add(AlbumImage(album_id=leaf_album_id, image_id=asset.id))
 
-        for public_id, candidate in cover_candidates.items():
-            if public_id not in album_map:
+        def asset_belongs_to_album(asset: ImageAsset | None, public_id: str) -> bool:
+            if asset is None:
+                return False
+            for chain in asset.album or []:
+                if isinstance(chain, list) and public_id in chain:
+                    return True
+            return False
+
+        for album in albums:
+            public_id = album.public_id or ""
+            manual_photo_id = manual_cover_photo_ids.get(public_id)
+            manual_asset = asset_by_id.get(manual_photo_id) if manual_photo_id is not None else None
+            if public_id and asset_belongs_to_album(manual_asset, public_id):
+                album.cover = build_asset_cover_payload(manual_asset, manual=True)
                 continue
-            album = album_map[public_id]
-            thumb_path = ""
-            for thumb in (candidate.thumbs or []):
-                if isinstance(thumb, dict) and thumb.get("path"):
-                    resolved = resolve_stored_path(thumb["path"])
-                    if resolved and resolved.exists():
-                        thumb_path = thumb["path"]
-                        break
-            album.cover = {
-                "photo_id": candidate.id,
-                "thumb_path": thumb_path,
-                "filename": candidate.full_filename or "",
-                "updated_at": datetime.datetime.now().isoformat(),
-            }
+            album.cover = build_asset_cover_payload(cover_candidates.get(public_id))
 
         for album in albums:
             session.add(album)

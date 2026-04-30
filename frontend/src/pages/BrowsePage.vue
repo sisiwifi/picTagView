@@ -98,6 +98,7 @@
             :item-type="entry.item.type"
             :selected="isItemSelected(entry.item, entry.index)"
             :disabled="isItemDisabled(entry.item)"
+            :cover-marked="Boolean(entry.item?.is_cover)"
             @toggle-select="onItemSelectionButtonClick(entry.item, entry.index)"
             @toggle-info="toggleInfoDisplayMode"
             @details="onReservedDetailsClick(entry.item, entry.index)"
@@ -129,7 +130,12 @@
               <span class="skeleton-label">...</span>
             </div>
 
-            <div v-else class="photo-card" @click="openItem(item)">
+            <div
+              v-else
+              class="photo-card"
+              :class="{ 'photo-card--cover-picking': coverPickerMode && canPickContainerCoverItem(item) }"
+              @click="openItem(item)"
+            >
               <img
                 :src="resolvedUrl(item)"
                 class="photo-img"
@@ -138,6 +144,7 @@
                 @load="onImgLoad(item, $event)"
                 @error="onPrimaryPreviewError(item)"
               />
+              <span v-if="item.is_cover" class="item-cover-badge">封面</span>
               <div v-if="item.type === 'album'" class="album-badge">
                 <span class="badge-icon">📁</span>
                 <span class="badge-name">{{ item.name }}</span>
@@ -183,7 +190,11 @@
           <div v-if="!resolvedUrl(item)" class="photo-skeleton">
             <span class="skeleton-label">...</span>
           </div>
-          <div v-else class="photo-card">
+          <div
+            v-else
+            class="photo-card"
+            :class="{ 'photo-card--cover-picking': coverPickerMode && canPickContainerCoverItem(item) }"
+          >
             <img
               :src="resolvedUrl(item)"
               class="photo-img"
@@ -192,6 +203,7 @@
               @load="onImgLoad(item, $event)"
               @error="onPrimaryPreviewError(item)"
             />
+            <span v-if="item.is_cover" class="item-cover-badge">封面</span>
             <div v-if="item.type === 'album'" class="album-badge">
               <span class="badge-icon">📁</span>
               <span class="badge-name">{{ item.name }}</span>
@@ -228,7 +240,7 @@
           >
             <span v-if="isItemSelected(entry.item, entry.index)" class="list-pick__mark">✓</span>
           </button>
-          <div class="list-thumb-wrap">
+          <div class="list-thumb-wrap" :class="{ 'list-thumb-wrap--cover-picking': coverPickerMode && canPickContainerCoverItem(entry.item) }">
             <div v-if="!resolvedUrl(entry.item)" class="list-thumb-skeleton" />
             <img
               v-else
@@ -238,6 +250,7 @@
               @load="onImgLoad(entry.item, $event)"
               @error="onPrimaryPreviewError(entry.item)"
             />
+            <span v-if="entry.item.is_cover" class="list-cover-badge">封面</span>
           </div>
           <div class="list-main">
             <div class="list-title-row">
@@ -326,6 +339,8 @@
       :secondary-action-tone="selectionDetailPolicy.secondaryActionTone"
       :secondary-action-disabled="selectionDetailPolicy.secondaryActionDisabled"
       :metadata-permissions="selectionDetailPolicy.metadataPermissions"
+      :can-open-collection-menu="canOpenCollectionMenu"
+      :collection-menu-disabled="collectionMenuBusy || actionBusy"
       :can-edit-tags="canOpenTagMenu"
       :tag-menu-disabled="tagMenuBusy || actionBusy"
       :can-edit-name="canEditSelectionName"
@@ -335,6 +350,7 @@
       :current-date-group="dateGroup"
       :category-options="selectionDetailCategoryOptions"
       @close="closeSelectionDetails"
+      @open-collection-menu="openCollectionMenu"
       @open-tag-menu="openTagMenu"
       @open-primary="openPrimaryFromDetails"
       @secondary-action="onSelectionDetailSecondaryAction"
@@ -363,6 +379,26 @@
       @edit-tag="editTagMetadataFromMenu"
       @add-new-tag="addNewTagFromMenu"
       @auto-tag="applyAutoTagFromMenu"
+    />
+
+    <CollectionMenuDialog
+      :visible="collectionMenuVisible"
+      :busy="collectionMenuBusy"
+      :search-busy="collectionMenuSearchBusy"
+      :error-message="collectionMenuError"
+      :query="collectionMenuQuery"
+      :selection-items="collectionMenuSelectionItems"
+      :suggestions="collectionMenuSuggestions"
+      :selected-collection="collectionMenuSelectedCollection"
+      :item-actions="collectionMenuActionItems"
+      :confirm-disabled="collectionMenuConfirmDisabled"
+      :confirm-label="collectionMenuConfirmLabel"
+      @close="closeCollectionMenu"
+      @cancel="closeCollectionMenu"
+      @confirm="confirmCollectionMenuChanges"
+      @query-change="onCollectionMenuQueryChange"
+      @select-collection="handleCollectionMenuSelect"
+      @item-action-change="setCollectionMenuImageAction"
     />
 
     <TagFormDialog
@@ -407,6 +443,7 @@ import ActionProgressOverlay from '../components/ActionProgressOverlay.vue'
 import PagePaginationBar from '../components/PagePaginationBar.vue'
 import SelectionIsland from '../components/SelectionIsland.vue'
 import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
+import CollectionMenuDialog from '../components/CollectionMenuDialog.vue'
 import TagMenuDialog from '../components/TagMenuDialog.vue'
 import TagFormDialog from '../components/TagFormDialog.vue'
 import { normalizeTagColors } from '../utils/tagColors'
@@ -485,7 +522,7 @@ function createDialogState() {
 
 export default {
   name: 'BrowsePage',
-  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, ConfirmationDialog, ActionProgressOverlay, PagePaginationBar, SelectionIsland, SelectionDetailOverlay, TagMenuDialog, TagFormDialog },
+  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, ConfirmationDialog, ActionProgressOverlay, PagePaginationBar, SelectionIsland, SelectionDetailOverlay, CollectionMenuDialog, TagMenuDialog, TagFormDialog },
 
   data() {
     const cachedPageConfig = getCachedPageConfig()
@@ -523,6 +560,7 @@ export default {
       sortBy: 'alpha',
       sortDir: 'asc',
       albumInfo: null,
+      coverPickerMode: false,
       photoPageIndex: 0,
       selectionGridPageIndex: 0,
       listPageIndex: 0,
@@ -561,6 +599,15 @@ export default {
       selectionDetailsHostHeight: 0,
       scrollLockState: null,
       selectionDetailFetchSerial: 0,
+      collectionMenuVisible: false,
+      collectionMenuBusy: false,
+      collectionMenuSearchBusy: false,
+      collectionMenuError: '',
+      collectionMenuQuery: '',
+      collectionMenuSuggestions: [],
+      collectionMenuSelectedCollection: null,
+      collectionMenuActionByImageId: {},
+      collectionMenuSearchTimer: null,
       tagMenuVisible: false,
       tagMenuBusy: false,
       tagMenuSearchBusy: false,
@@ -602,8 +649,14 @@ export default {
     isTrashMode() {
       return this.pageContractName === 'trash'
     },
+    isCollectionMode() {
+      return this.pageContractName === 'collection'
+    },
     dateGroup() {
       return this.$route.params.group || ''
+    },
+    collectionPublicId() {
+      return this.$route.params.collectionId || ''
     },
     albumPath() {
       const raw = this.$route.params.albumPath
@@ -633,6 +686,9 @@ export default {
       return this.items.length
     },
     cachePageToken() {
+      if (this.isCollectionMode) {
+        return `browse:collection:${this.collectionPublicId}`
+      }
       if (this.isAlbumMode) {
         return `browse:${this.fullAlbumPath}`
       }
@@ -1321,8 +1377,64 @@ export default {
       if (this.actionBusy || this.metadataEditBusy) return false
       return this.selectedImageIds.length > 0
     },
+    canOpenCollectionMenu() {
+      if (this.isTrashMode || this.actionBusy) return false
+      return this.selectedImageIds.length > 0
+    },
+    containerImageItems() {
+      return this.items.filter(item => item?.type === 'image' && Number.isInteger(item?.id))
+    },
+    canPickContainerCover() {
+      if (this.actionBusy || !this.containerImageItems.length) return false
+      if (this.isCollectionMode) return true
+      return this.pageContractName === 'calendar' && this.isAlbumMode
+    },
     canOpenTagMenu() {
       return this.selectedImageIds.length > 0
+    },
+    collectionMenuSelectionItems() {
+      return this.selectedEntries
+        .map(({ item, index }) => ({ item, index }))
+        .filter(({ item }) => item?.type === 'image' && Number.isInteger(item?.id))
+        .map(({ item, index }) => ({
+          key: this.itemKey(item, index),
+          imageId: item.id,
+          name: this.detailNameText(item),
+          previewUrl: this.detailPreviewUrl(item),
+          aspectRatio: this.detailAspectRatio(item),
+        }))
+    },
+    collectionMenuActionItems() {
+      const selectedCollection = this.collectionMenuSelectedCollection
+      const matchedSet = new Set(selectedCollection?.matched_image_ids || [])
+      const isMulti = this.collectionMenuSelectionItems.length > 1
+      return this.collectionMenuSelectionItems.map((item) => {
+        const existsInCollection = matchedSet.has(item.imageId)
+        const defaultAction = existsInCollection
+          ? (isMulti ? 'keep' : 'remove')
+          : 'add'
+        return {
+          ...item,
+          existsInCollection,
+          action: this.collectionMenuActionByImageId[item.imageId] || defaultAction,
+          canChangeAction: Boolean(isMulti && existsInCollection && !selectedCollection?.isNew),
+        }
+      })
+    },
+    collectionMenuConfirmDisabled() {
+      if (this.collectionMenuBusy || !this.canOpenCollectionMenu) return true
+      return !this.collectionMenuSelectedCollection
+    },
+    collectionMenuConfirmLabel() {
+      const selectedCollection = this.collectionMenuSelectedCollection
+      if (!selectedCollection) return '确定'
+      if (selectedCollection.isNew) return '创建并加入'
+      if (this.collectionMenuSelectionItems.length === 1) {
+        const imageId = this.collectionMenuSelectionItems[0]?.imageId
+        const action = imageId != null ? this.collectionMenuActionByImageId[imageId] : ''
+        return action === 'remove' ? '移除' : '加入'
+      }
+      return '应用'
     },
     pageSelectionActions() {
       return this.pageContract.buildSelectionActions(this)
@@ -1352,19 +1464,25 @@ export default {
       this.refreshObservedGrid()
     },
     selectionMode(nextValue) {
+      if (nextValue) {
+        this.coverPickerMode = false
+      }
       if (!nextValue) {
         this.closeSelectionDetails()
+        this.closeCollectionMenu()
         this.closeSelectAllMenu()
       }
     },
     selectedCount(nextValue) {
       if (!nextValue) {
         this.closeSelectionDetails()
+        this.closeCollectionMenu()
         this.closeSelectAllMenu()
       }
     },
     selectionDetailsOpen(nextValue) {
       if (!nextValue) {
+        this.closeCollectionMenu()
         this.closeTagMenu()
       }
     },
@@ -1600,7 +1718,7 @@ export default {
         const item = items[index]
         const key = item?.id || item?.public_id || index
         const dims = dimensions[key] || {}
-        updateHash(`${key}:${dims.w || 0}x${dims.h || 0};`)
+        updateHash(`${key}:${dims.w || 0}x${dims.h || 0}:${item?.is_cover ? 1 : 0};`)
       }
       return (hash >>> 0).toString(36)
     },
@@ -1633,6 +1751,7 @@ export default {
       this.lastPreviewRepairSignature = ''
       this.selectionRowHeight = 0
       this.albumInfo = null
+      this.coverPickerMode = false
       this.pendingViewAnchor = null
       this.pendingDimensionCorrections = {}
       if (this.dimensionFlushTimer) {
@@ -1947,8 +2066,81 @@ export default {
     },
 
     openItem(item) {
+      if (this.coverPickerMode) {
+        if (this.canPickContainerCoverItem(item)) {
+          void this.pickContainerCover(item)
+        }
+        return
+      }
       if (this.selectionMode) return
       this.pageContract.openItem(this, item)
+    },
+
+    canPickContainerCoverItem(item) {
+      return this.coverPickerMode && item?.type === 'image' && Number.isInteger(item?.id)
+    },
+
+    applyContainerCoverLocally(coverPhotoId) {
+      const normalizedCoverId = Number(coverPhotoId)
+      const nextCoverId = Number.isInteger(normalizedCoverId) && normalizedCoverId > 0
+        ? normalizedCoverId
+        : null
+      const nextItems = this.items.map(item => {
+        if (item?.type !== 'image') return item
+        return {
+          ...item,
+          is_cover: Boolean(nextCoverId && item.id === nextCoverId),
+        }
+      })
+
+      if (this.albumInfo) {
+        this.albumInfo = {
+          ...this.albumInfo,
+          cover_photo_id: nextCoverId,
+        }
+      }
+
+      this.items = nextItems
+      this.layoutFingerprint = this.computeLayoutFingerprint(nextItems, this.imgDimensions)
+      this.lastCacheRequestSignature = ''
+    },
+
+    toggleCoverPicker() {
+      if (!this.canPickContainerCover) return
+
+      const nextValue = !this.coverPickerMode
+      if (nextValue) {
+        this.closeSelectionDetails()
+        this.closeCollectionMenu()
+        this.closeTagMenu()
+        this.closeSelectAllMenu()
+        this.showMessage('success', '点击图片将其设为封面。')
+      }
+
+      this.coverPickerMode = nextValue
+    },
+
+    async pickContainerCover(item) {
+      if (!this.canPickContainerCoverItem(item) || this.actionBusy || typeof this.pageContract.updateCover !== 'function') {
+        return
+      }
+
+      this.actionBusy = true
+      this.actionBusyTitle = '设置封面中'
+      this.actionBusyText = '正在更新当前页面封面，请稍候…'
+
+      try {
+        const payload = await this.pageContract.updateCover(this, item)
+        this.applyContainerCoverLocally(payload?.cover_photo_id ?? item.id)
+        this.coverPickerMode = false
+        this.showMessage('success', '封面已更新。')
+      } catch (err) {
+        this.showMessage('error', err?.message || '设置封面失败')
+      } finally {
+        this.actionBusy = false
+        this.actionBusyTitle = ''
+        this.actionBusyText = ''
+      }
     },
 
     openPrimaryFromDetails() {
@@ -3066,6 +3258,11 @@ export default {
         this.closeTagForm()
         return
       }
+      if (this.collectionMenuVisible && event.key === 'Escape') {
+        event.preventDefault()
+        this.closeCollectionMenu()
+        return
+      }
       if (this.tagMenuVisible && event.key === 'Escape') {
         event.preventDefault()
         this.closeTagMenu()
@@ -3074,6 +3271,11 @@ export default {
       if (this.selectionDetailsOpen && event.key === 'Escape') {
         event.preventDefault()
         this.closeSelectionDetails()
+        return
+      }
+      if (this.coverPickerMode && event.key === 'Escape') {
+        event.preventDefault()
+        this.coverPickerMode = false
         return
       }
       if (!this.selectionMode) return
@@ -3392,6 +3594,14 @@ export default {
       if (event.pointerType === 'mouse' && event.button !== 0) return
       if (this.isItemDisabled(item)) return
 
+      if (this.coverPickerMode) {
+        event.preventDefault()
+        if (this.canPickContainerCoverItem(item)) {
+          void this.pickContainerCover(item)
+        }
+        return
+      }
+
       event.preventDefault()
 
       if (event.shiftKey) {
@@ -3491,7 +3701,12 @@ export default {
         this.suppressNextListClick = false
         return
       }
-      if (this.selectionMode) return
+      if (this.selectionMode) {
+        if (this.coverPickerMode && this.canPickContainerCoverItem(item)) {
+          void this.pickContainerCover(item)
+        }
+        return
+      }
       this.openItem(item)
     },
 
@@ -3696,6 +3911,198 @@ export default {
       }, [...(tagIdLists[0] || [])])
 
       return this.sortTagIdsByName([...new Set(commonTagIds)])
+    },
+
+    normalizeCollectionMenuItems(rawItems) {
+      return (rawItems || [])
+        .filter(item => Number.isInteger(item?.id))
+        .map(item => ({
+          id: item.id,
+          public_id: item.public_id || '',
+          title: item.title || '',
+          description: item.description || '',
+          collection_path: item.collection_path || '',
+          photo_count: Number(item.photo_count || 0) || 0,
+          matched_image_ids: Array.isArray(item.matched_image_ids) ? item.matched_image_ids.filter(id => Number.isInteger(id)) : [],
+          selected_match_count: Number(item.selected_match_count || 0) || 0,
+          contains_all_selected: Boolean(item.contains_all_selected),
+        }))
+    },
+
+    initializeCollectionMenuActions(selectedCollection) {
+      const matchedSet = new Set(selectedCollection?.matched_image_ids || [])
+      const isMulti = this.collectionMenuSelectionItems.length > 1
+      const nextActions = {}
+      for (const item of this.collectionMenuSelectionItems) {
+        if (matchedSet.has(item.imageId)) {
+          nextActions[item.imageId] = isMulti ? 'keep' : 'remove'
+        } else {
+          nextActions[item.imageId] = 'add'
+        }
+      }
+      this.collectionMenuActionByImageId = nextActions
+    },
+
+    async openCollectionMenu() {
+      if (!this.canOpenCollectionMenu || this.collectionMenuBusy) return
+      if (this.tagMenuVisible) {
+        this.closeTagMenu()
+      }
+      this.collectionMenuVisible = true
+      this.collectionMenuBusy = false
+      this.collectionMenuSearchBusy = false
+      this.collectionMenuError = ''
+      this.collectionMenuQuery = ''
+      this.collectionMenuSuggestions = []
+      this.collectionMenuSelectedCollection = null
+      this.collectionMenuActionByImageId = {}
+      await this.fetchCollectionMenuSuggestions('')
+    },
+
+    closeCollectionMenu() {
+      this.collectionMenuVisible = false
+      this.collectionMenuBusy = false
+      this.collectionMenuSearchBusy = false
+      this.collectionMenuError = ''
+      this.collectionMenuQuery = ''
+      this.collectionMenuSuggestions = []
+      this.collectionMenuSelectedCollection = null
+      this.collectionMenuActionByImageId = {}
+      if (this.collectionMenuSearchTimer) {
+        clearTimeout(this.collectionMenuSearchTimer)
+        this.collectionMenuSearchTimer = null
+      }
+    },
+
+    onCollectionMenuQueryChange(nextQuery) {
+      this.collectionMenuError = ''
+      this.collectionMenuQuery = String(nextQuery || '')
+      this.collectionMenuSelectedCollection = null
+      this.collectionMenuActionByImageId = {}
+      if (this.collectionMenuSearchTimer) {
+        clearTimeout(this.collectionMenuSearchTimer)
+      }
+      this.collectionMenuSearchTimer = setTimeout(() => {
+        this.collectionMenuSearchTimer = null
+        this.fetchCollectionMenuSuggestions(this.collectionMenuQuery)
+      }, 180)
+    },
+
+    async fetchCollectionMenuSuggestions(rawQuery) {
+      if (!this.collectionMenuVisible) return
+      this.collectionMenuSearchBusy = true
+      this.collectionMenuError = ''
+
+      try {
+        const res = await fetch(`${API_BASE}/api/collections/search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            q: String(rawQuery || '').trim(),
+            image_ids: this.selectedImageIds,
+            limit: 12,
+          }),
+        })
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}))
+          throw new Error(payload.detail || `HTTP ${res.status}`)
+        }
+
+        const data = await res.json()
+        this.collectionMenuSuggestions = this.normalizeCollectionMenuItems(data.items || [])
+      } catch (err) {
+        this.collectionMenuSuggestions = []
+        this.collectionMenuError = `收藏搜索失败：${err?.message || '未知错误'}`
+      } finally {
+        this.collectionMenuSearchBusy = false
+      }
+    },
+
+    handleCollectionMenuSelect(collectionItem) {
+      if (!collectionItem) return
+      const normalizedItem = collectionItem.isNew
+        ? {
+            id: null,
+            isNew: true,
+            title: String(collectionItem.title || '').trim(),
+            description: '',
+            collection_path: '',
+            photo_count: 0,
+            matched_image_ids: [],
+            selected_match_count: 0,
+            contains_all_selected: false,
+          }
+        : {
+            ...collectionItem,
+            isNew: false,
+            title: String(collectionItem.title || '').trim(),
+          }
+      if (!normalizedItem.title) return
+      this.collectionMenuSelectedCollection = normalizedItem
+      this.initializeCollectionMenuActions(normalizedItem)
+    },
+
+    setCollectionMenuImageAction(payload) {
+      const imageId = Number(payload?.imageId)
+      const action = String(payload?.action || '').trim().toLowerCase()
+      if (!Number.isInteger(imageId) || !['keep', 'remove', 'add'].includes(action)) return
+      this.collectionMenuActionByImageId = {
+        ...this.collectionMenuActionByImageId,
+        [imageId]: action,
+      }
+    },
+
+    async confirmCollectionMenuChanges() {
+      if (!this.collectionMenuSelectedCollection || this.collectionMenuBusy) return
+      this.collectionMenuBusy = true
+      this.collectionMenuError = ''
+
+      try {
+        const imageActions = this.collectionMenuSelectionItems.map((item) => ({
+          image_id: item.imageId,
+          action: this.collectionMenuActionByImageId[item.imageId] || 'add',
+        }))
+
+        const selectedCollection = this.collectionMenuSelectedCollection
+        const res = await fetch(`${API_BASE}/api/collections/apply`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            collection_id: Number.isInteger(selectedCollection.id) ? selectedCollection.id : null,
+            title: selectedCollection.isNew ? selectedCollection.title : '',
+            image_actions: imageActions,
+          }),
+        })
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}))
+          throw new Error(payload.detail || `HTTP ${res.status}`)
+        }
+
+        const payload = await res.json()
+        const label = payload.title || selectedCollection.title || '收藏'
+        if (this.collectionMenuSelectionItems.length === 1) {
+          const action = imageActions[0]?.action
+          this.showMessage('success', action === 'remove' ? `已从“${label}”移除。` : `已加入“${label}”。`)
+        } else {
+          const addedCount = Number(payload.added_count || 0) || 0
+          const removedCount = Number(payload.removed_count || 0) || 0
+          this.showMessage('success', `收藏已更新：新增 ${addedCount} 张，移除 ${removedCount} 张。`)
+        }
+
+        if (this.isCollectionMode && selectedCollection.public_id === this.collectionPublicId) {
+          await this.reloadContractItemsPreservingAnchor({
+            preserveSelection: false,
+            reopenDetails: false,
+            runAfterLoad: true,
+          })
+        }
+
+        this.closeCollectionMenu()
+      } catch (err) {
+        this.collectionMenuError = `收藏更新失败：${err?.message || '未知错误'}`
+      } finally {
+        this.collectionMenuBusy = false
+      }
     },
 
     updateTagMenuDirty() {
@@ -4861,6 +5268,19 @@ export default {
   color: #0f172a;
 }
 
+.browse-header__action--active {
+  border-color: rgba(15, 23, 42, 0.9);
+  background: #0f172a;
+  color: #ffffff;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.16);
+}
+
+.browse-header__action--active:hover:not(:disabled) {
+  border-color: rgba(15, 23, 42, 0.9);
+  background: #0f172a;
+  color: #ffffff;
+}
+
 .browse-header__action:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -5002,6 +5422,10 @@ export default {
   transition: box-shadow 200ms ease, transform 200ms ease;
 }
 
+.photo-card--cover-picking {
+  box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.28), 0 16px 30px rgba(15, 23, 42, 0.12);
+}
+
 .photo-card:hover { @apply shadow-xl -translate-y-0.5; }
 
 .photo-img {
@@ -5013,6 +5437,30 @@ export default {
 }
 
 .photo-card:hover .photo-img { transform: scale(1.03); }
+
+.item-cover-badge,
+.list-cover-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  min-width: 44px;
+  height: 24px;
+  padding: 0 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #ffffff;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  white-space: nowrap;
+  word-break: keep-all;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.22);
+  pointer-events: none;
+}
 
 .album-badge {
   @apply absolute top-2 right-2 flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg;
@@ -5100,12 +5548,26 @@ export default {
 }
 
 .list-thumb-wrap {
+  position: relative;
   width: 50px;
   height: 50px;
   flex-shrink: 0;
   border-radius: 6px;
   overflow: hidden;
   background: #e2e8f0;
+}
+
+.list-thumb-wrap--cover-picking {
+  box-shadow: inset 0 0 0 2px rgba(15, 23, 42, 0.26);
+}
+
+.list-cover-badge {
+  top: 6px;
+  right: 6px;
+  min-width: 34px;
+  height: 18px;
+  padding: 0 0.35rem;
+  font-size: 0.54rem;
 }
 
 .list-thumb-skeleton {

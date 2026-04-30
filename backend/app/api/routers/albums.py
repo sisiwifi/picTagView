@@ -12,14 +12,15 @@ from app.api.common import (
     build_preview_availability_index,
     pick_asset_media_path,
 )
-from app.api.schemas import AlbumDetailResponse, AlbumInfo, AlbumItem, BreadcrumbItem
+from app.api.schemas import AlbumDetailResponse, AlbumInfo, AlbumItem, BreadcrumbItem, CoverSelectionRequest, CoverSelectionResponse
 from app.core.config import MEDIA_DIR
 from app.db.session import get_session
 from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
 from app.services.category_service import DEFAULT_CATEGORY_ID, get_active_category_ids, is_category_visible
-from app.services.visible_album_service import album_has_visible_images, build_visible_album_stats, list_visible_assets
+from app.services.cover_service import extract_cover_photo_id
+from app.services.visible_album_service import album_has_visible_images, build_visible_album_stats, list_visible_assets, set_album_cover
 
 router = APIRouter()
 
@@ -112,6 +113,7 @@ def _build_album_response(album: Album, session, active_category_ids: set[int]) 
     album_stats = stats_by_public_id.get(album.public_id or "")
     if not album_stats or album_stats.subtree_photo_count <= 0:
         raise HTTPException(status_code=404, detail="Album not found")
+    current_cover_photo_id = album_stats.cover_asset.id if album_stats.cover_asset else None
 
     image_items: list[AlbumItem] = []
     for asset in album_assets:
@@ -135,6 +137,7 @@ def _build_album_response(album: Album, session, active_category_ids: set[int]) 
             file_created_at=asset.file_created_at,
             media_index=media_index,
             media_rel_path=media_rel_path,
+            is_cover=bool(current_cover_photo_id is not None and asset.id == current_cover_photo_id),
         ))
     image_items.sort(key=lambda item: _item_sort_key(item.name))
 
@@ -146,6 +149,7 @@ def _build_album_response(album: Album, session, active_category_ids: set[int]) 
             date_group=album.date_group,
             photo_count=album_stats.direct_photo_count,
             subtree_photo_count=album_stats.subtree_photo_count,
+            cover_photo_id=current_cover_photo_id,
             parent_public_id=parent_public_id,
             ancestors=ancestors,
         ),
@@ -199,3 +203,26 @@ def album_detail(album_id: str) -> AlbumDetailResponse:
         if not album:
             raise HTTPException(status_code=404, detail="Album not found")
         return _build_album_response(album, session, active_category_ids)
+
+
+@router.post("/api/albums/{album_id}/cover", response_model=CoverSelectionResponse)
+def update_album_cover(album_id: str, body: CoverSelectionRequest) -> CoverSelectionResponse:
+    with get_session() as session:
+        album = session.exec(
+            select(Album).where(Album.public_id == album_id)
+        ).first()
+        if not album:
+            raise HTTPException(status_code=404, detail="Album not found")
+
+        try:
+            album = set_album_cover(session, album=album, image_id=body.image_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        session.commit()
+        session.refresh(album)
+        return CoverSelectionResponse(
+            public_id=album.public_id or "",
+            cover_photo_id=extract_cover_photo_id(album.cover),
+            updated_at=album.updated_at or album.created_at,
+        )

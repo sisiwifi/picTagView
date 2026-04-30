@@ -15,6 +15,8 @@ def init_db() -> None:
     if _db_initialized:
         return
     # Import all models so SQLModel.metadata knows every table before create_all.
+    from app.models.collection import Collection  # noqa: F401
+    from app.models.collection_image import CollectionImage  # noqa: F401
     from app.models.album import Album          # noqa: F401
     from app.models.album_image import AlbumImage  # noqa: F401
     from app.models.category import Category    # noqa: F401
@@ -174,6 +176,24 @@ def _migrate_db() -> None:
         except Exception:
             pass
 
+        # ── collection_image table indexes & constraints ────────────────
+        try:
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_collection_image_collection_image "
+                "ON collection_image(collection_id, image_id)"
+            ))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_collection_image_image_id "
+                "ON collection_image(image_id)"
+            ))
+            conn.commit()
+        except Exception:
+            pass
+
         # ── album columns ─────────────────────────────────────────────────
         for column, col_type in [
             ("public_id",            "TEXT"),
@@ -195,6 +215,31 @@ def _migrate_db() -> None:
             try:
                 conn.execute(
                     text(f"ALTER TABLE album ADD COLUMN {column} {col_type}")
+                )
+                conn.commit()
+            except Exception:
+                pass
+
+        # ── collection columns ───────────────────────────────────────────
+        for column, col_type in [
+            ("public_id",           "TEXT"),
+            ("title",               "TEXT"),
+            ("description",         "TEXT"),
+            ("collection_path",     "TEXT"),
+            ("is_leaf",             "INTEGER"),
+            ("parent_id",           "INTEGER"),
+            ("cover",               "TEXT"),
+            ("photo_count",         "INTEGER"),
+            ("subtree_photo_count", "INTEGER"),
+            ("sort_mode",           "TEXT"),
+            ("settings",            "TEXT"),
+            ("stats",               "TEXT"),
+            ("created_at",          "DATETIME"),
+            ("updated_at",          "DATETIME"),
+        ]:
+            try:
+                conn.execute(
+                    text(f"ALTER TABLE collection ADD COLUMN {column} {col_type}")
                 )
                 conn.commit()
             except Exception:

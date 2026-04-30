@@ -116,6 +116,66 @@ function buildSelectionAction(key, label, handler, options = {}) {
   }
 }
 
+function buildCoverHeaderAction(vm) {
+  return {
+    key: 'pick-cover',
+    label: vm.coverPickerMode ? '取消选择封面' : '选择封面',
+    handler: 'toggleCoverPicker',
+    className: vm.coverPickerMode ? 'browse-header__action--active' : '',
+    disabled: !vm.canPickContainerCover || vm.actionBusy,
+  }
+}
+
+function buildCalendarLikeSelectionActions(vm) {
+  return [
+    buildSelectionAction('details', '详情', 'openSelectionDetailsFromIsland', {
+      disabled: !vm.selectedCount || vm.actionBusy,
+    }),
+    buildSelectionAction('collect', '收藏', 'openCollectionMenu', {
+      disabled: !vm.canOpenCollectionMenu || vm.actionBusy,
+    }),
+  ]
+}
+
+function buildCalendarLikeDetailPolicy(vm) {
+  return {
+    metadataPermissions: {
+      name: vm.canEditSelectionName,
+      category: vm.canEditSelectionCategory,
+      tags: vm.canOpenTagMenu,
+      createdAt: vm.canEditSelectionCreatedAt,
+    },
+    primaryActionLabel: vm.selectionDetailType === 'album' ? '查看相册' : '查看原图',
+    primaryActionTone: 'accent',
+    canOpenPrimaryAction: vm.canOpenPrimaryActionFromDetails && !vm.actionBusy,
+    primaryActionDisabled: vm.actionBusy,
+    secondaryActionLabel: '移入回收站',
+    secondaryActionTone: 'danger',
+    secondaryActionDisabled: vm.actionBusy,
+  }
+}
+
+function openImageItem(item) {
+  if (!Number.isInteger(item?.id)) return
+  const pathSuffix = item.media_rel_path ? `?path=${encodeURIComponent(item.media_rel_path)}` : ''
+  fetch(`${API_BASE}/api/images/${item.id}/open${pathSuffix}`).catch(() => {})
+}
+
+function normalizeCollectionItem(rawItem) {
+  return normalizeCalendarItem(rawItem)
+}
+
+function buildCollectionCrumbs(vm) {
+  return [
+    { label: '收藏', title: '收藏', to: '/favorites' },
+    {
+      label: vm.bcLabel(vm.albumInfo?.title || '收藏夹'),
+      title: vm.albumInfo?.title || '收藏夹',
+      current: true,
+    },
+  ]
+}
+
 const calendarContract = {
   name: 'calendar',
   emptyState: {
@@ -131,32 +191,14 @@ const calendarContract = {
   buildCrumbs(vm) {
     return buildCalendarCrumbs(vm)
   },
-  buildHeaderActions() {
-    return []
+  buildHeaderActions(vm) {
+    return vm.canPickContainerCover ? [buildCoverHeaderAction(vm)] : []
   },
   buildSelectionActions(vm) {
-    return [
-      buildSelectionAction('details', '详情', 'openSelectionDetailsFromIsland', {
-        disabled: !vm.selectedCount || vm.actionBusy,
-      }),
-    ]
+    return buildCalendarLikeSelectionActions(vm)
   },
   buildDetailPolicy(vm) {
-    return {
-      metadataPermissions: {
-        name: vm.canEditSelectionName,
-        category: vm.canEditSelectionCategory,
-        tags: vm.canOpenTagMenu,
-        createdAt: vm.canEditSelectionCreatedAt,
-      },
-      primaryActionLabel: vm.selectionDetailType === 'album' ? '查看相册' : '查看原图',
-      primaryActionTone: 'accent',
-      canOpenPrimaryAction: vm.canOpenPrimaryActionFromDetails && !vm.actionBusy,
-      primaryActionDisabled: vm.actionBusy,
-      secondaryActionLabel: '移入回收站',
-      secondaryActionTone: 'danger',
-      secondaryActionDisabled: vm.actionBusy,
-    }
+    return buildCalendarLikeDetailPolicy(vm)
   },
   async loadItems(vm) {
     const url = vm.isAlbumMode
@@ -207,9 +249,7 @@ const calendarContract = {
       }
       return
     }
-    if (!Number.isInteger(item?.id)) return
-    const pathSuffix = item.media_rel_path ? `?path=${encodeURIComponent(item.media_rel_path)}` : ''
-    fetch(`${API_BASE}/api/images/${item.id}/open${pathSuffix}`).catch(() => {})
+    openImageItem(item)
   },
   openPrimary(vm, item) {
     if (!item) return
@@ -219,6 +259,100 @@ const calendarContract = {
       return
     }
     this.openItem(vm, item)
+  },
+  async updateCover(vm, item) {
+    if (!vm.isAlbumMode || !vm.albumInfo?.public_id || !Number.isInteger(item?.id)) {
+      throw new Error('当前页面不支持设置封面')
+    }
+
+    const res = await fetch(`${API_BASE}/api/albums/${encodeURIComponent(vm.albumInfo.public_id)}/cover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_id: item.id }),
+    })
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}))
+      throw new Error(payload.detail || `HTTP ${res.status}`)
+    }
+    return res.json()
+  },
+  runSecondaryAction(vm) {
+    vm.moveSelectedToTrash()
+  },
+  previewRepairPayloadKey: 'image_ids',
+  async afterPreviewRepair(vm, repairIds) {
+    await vm.refreshPreviewMetadata(repairIds)
+  },
+}
+
+const collectionContract = {
+  name: 'collection',
+  emptyState: {
+    icon: '☆',
+    text: '当前收藏夹暂无可见图片。',
+  },
+  defaultSort() {
+    return {
+      sortBy: 'date',
+      sortDir: 'asc',
+    }
+  },
+  buildCrumbs(vm) {
+    return buildCollectionCrumbs(vm)
+  },
+  buildHeaderActions(vm) {
+    return vm.canPickContainerCover ? [buildCoverHeaderAction(vm)] : []
+  },
+  buildSelectionActions(vm) {
+    return buildCalendarLikeSelectionActions(vm)
+  },
+  buildDetailPolicy(vm) {
+    return buildCalendarLikeDetailPolicy(vm)
+  },
+  async loadItems(vm) {
+    const res = await fetch(`${API_BASE}/api/collections/${encodeURIComponent(vm.collectionPublicId)}`)
+    if (!res.ok) {
+      return { items: [], album: null }
+    }
+    const data = await res.json()
+    return {
+      items: Array.isArray(data?.items) ? data.items : [],
+      album: data?.collection || null,
+    }
+  },
+  normalizeItems(rawItems) {
+    return (rawItems || []).map(item => normalizeCollectionItem(item))
+  },
+  afterLoad(vm) {
+    vm.ensureCategoryLabelsLoaded()
+    if (vm.selectionInfoMode === 'tags') {
+      vm.ensureTagLabelsLoaded()
+    }
+  },
+  back(vm) {
+    vm.$router.push('/favorites')
+  },
+  openItem(_vm, item) {
+    openImageItem(item)
+  },
+  openPrimary(_vm, item) {
+    openImageItem(item)
+  },
+  async updateCover(vm, item) {
+    if (!vm.collectionPublicId || !Number.isInteger(item?.id)) {
+      throw new Error('当前页面不支持设置封面')
+    }
+
+    const res = await fetch(`${API_BASE}/api/collections/${encodeURIComponent(vm.collectionPublicId)}/cover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_id: item.id }),
+    })
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}))
+      throw new Error(payload.detail || `HTTP ${res.status}`)
+    }
+    return res.json()
   },
   runSecondaryAction(vm) {
     vm.moveSelectedToTrash()
@@ -335,7 +469,9 @@ const trashContract = {
 }
 
 export function getCommonBrowsePageContract(contractName = 'calendar') {
-  return contractName === 'trash' ? trashContract : calendarContract
+  if (contractName === 'trash') return trashContract
+  if (contractName === 'collection') return collectionContract
+  return calendarContract
 }
 
 export function normalizeBrowseItems(rawItems, contractName = 'calendar') {

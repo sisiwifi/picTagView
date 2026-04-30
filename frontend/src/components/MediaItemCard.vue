@@ -26,6 +26,7 @@
         <span v-if="selected" class="media-card__pick-mark">✓</span>
       </button>
 
+      <span v-if="coverMarked" class="media-card__cover-flag">封面</span>
       <span v-if="itemType === 'album'" class="media-card__type-flag">ALB</span>
     </div>
 
@@ -80,6 +81,7 @@ export default {
     itemType: { type: String, default: 'image' },
     selected: { type: Boolean, default: false },
     disabled: { type: Boolean, default: false },
+    coverMarked: { type: Boolean, default: false },
   },
   emits: ['toggle-info', 'details', 'toggle-select', 'img-error'],
   computed: {
@@ -224,6 +226,28 @@ export default {
   font-size: 0.62rem;
   font-weight: 700;
   letter-spacing: 0.12em;
+}
+
+.media-card__cover-flag {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  min-width: 44px;
+  height: 24px;
+  padding: 0 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #ffffff;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  white-space: nowrap;
+  word-break: keep-all;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.22);
 }
 
 .media-card__info {

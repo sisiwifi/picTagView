@@ -61,6 +61,13 @@ const routes = [
     component: FavoritesPage
   },
   {
+    path: '/favorites/:collectionId',
+    name: 'browse-collection',
+    component: BrowsePage,
+    props: true,
+    meta: { reuseKey: 'browse', browseContract: 'collection' }
+  },
+  {
     path: '/settings/categories',
     name: 'settings-categories',
     component: CategorySettingsPage

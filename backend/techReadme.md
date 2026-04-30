@@ -47,6 +47,13 @@
       - `GET /api/albums/by-path/{album_path:path}`
       - `GET /api/albums/open-by-path/{album_path:path}`
       - `GET /api/albums/{album_id}`
+      - `POST /api/albums/{album_id}/cover`
+    - `app/api/routers/collections.py`
+      - `GET /api/collections`
+      - `GET /api/collections/{collection_id}`
+      - `POST /api/collections/search`
+      - `POST /api/collections/apply`
+      - `POST /api/collections/{collection_id}/cover`
     - `app/api/routers/images.py`
       - `GET /api/images/meta`
       - `GET /api/images/{image_id}/open`
@@ -121,10 +128,11 @@
   - 支持鼠标长按后拖选，以及触屏长按滑选。
   - 卡片左上角的圆形选择符号已缩小并改为可点击控件；点击已选项的该符号会直接取消该项选择。
   - 右上角 grid/list/select 三个模式按钮可直接互切；在选择态下点击 grid 或 list 会退出当前选择态并进入对应浏览模式。
-  - 页面右下角显示半透明操作岛，提供已选计数、“详情”“全选”“取消选择”；若当前视图同时存在相册与图片，点击“全选”会向上展开“相册 / 图片”两个快捷入口，再次点击空白处收起。操作岛左侧提供收拢按钮，点击后会向页面右侧边缘收起；窄屏下保持单行紧凑布局，不再拆成多行块状按钮面板。
+  - 页面右下角显示半透明操作岛，提供已选计数、“详情”“收藏”“全选”“取消选择”；若当前视图同时存在相册与图片，点击“全选”会向上展开“相册 / 图片”两个快捷入口，再次点击空白处收起。操作岛左侧提供收拢按钮，点击后会向页面右侧边缘收起；窄屏下保持单行紧凑布局，不再拆成多行块状按钮面板。
   - 卡片右下角的 `...` 按钮与操作岛“详情”按钮都会打开主内容区内的二级详情浮层；浮层遮罩不覆盖左侧 Sidebar，可通过右上角文字关闭按钮或点击空白处关闭。
   - 详情浮层尺寸由主内容区当前可视宽度与可视高度共同约束，不再受整页内容高度或单张图片视觉尺寸反推；左侧图片区内部按原图比例自适应展示缩略图，多选时左侧改为隐藏滚动条且可滚动的比例缩略图列表。
-  - 详情浮层单选时展示 cache/temp 缩略图与文件元数据，多选时同值字段直接显示，异值字段统一渲染为斜体 `various`；动作区底部保持“删除”占位按钮可见。若当前选中的是相册，则“尺寸”栏切换为“图片数量”并展示 `photo_count`，创建时间改读相册 `created_at`，主按钮文案改为“查看相册”。
+  - 详情浮层单选时展示 cache/temp 缩略图与文件元数据，多选时同值字段直接显示，异值字段统一渲染为斜体 `various`；动作区底部保持“删除”占位按钮可见。若当前选中的是相册，则“尺寸”栏切换为“图片数量”并展示 `photo_count`，创建时间改读相册 `created_at`，主按钮文案改为“查看相册”。图片详情在右下角额外显示一个镂空五角星按钮，点击后打开独立的三级 `CollectionMenuDialog.vue` 收藏菜单。
+  - 收藏菜单左侧显示当前选中图片的小缩略图，右侧提供可输入候选列表；单选时若目标收藏已包含当前图片，确认按钮直接变为“移除”，多选时则按图片逐项展示“保留 / 移除 / 添加”动作列表。
   - 打开详情浮层时会锁定页面滚动，并拦截中键自动滚动对底层页面的影响；关闭后恢复原有滚动位置。
   - 若条目是在旧响应下加载、缺失 `file_size/imported_at/file_created_at`，前端会额外调用 `/api/images/meta?ids=...` 补齐当前选中图片的详情字段。
   - 详情浮层调用 `PATCH /api/images/metadata` 修改文件名 / 主分类 / 创建时间后，前端不再整页执行 `loadData()`；名称与主分类直接局部回写当前 `items`，创建时间修改则按新 `media_rel_path` 判断是否仍属于当前日期页或相册页，只做局部重排或移除。
@@ -139,6 +147,10 @@
 - 照片墙布局补充：BrowsePage 的“大缩略图”模式会优先使用浏览接口返回的 `width` / `height` 初始化 `justifiedRows` 布局，避免依赖图片逐张加载后再回填宽高，从而降低首轮重排频率；`onImgLoad` 现在只在 `width` / `height` 缺失时做异常兜底回填，不再作为常规排布来源。
 - 缓存队列补充：BrowsePage 与 CalendarOverview 发起的缓存缩略图请求已改为 `page_token + generation` 协议。前端会先按“缓存锚点、当前首排、前后 N 张”构造优先级列表，其中 `N` 由设置页 `scroll_window_size` 决定，可选 `40-200`、默认 `100`（即锚点前后各约 `50` 项），再交给后端共享 worker 池；同页新 generation 到来时，未启动的旧 job 会被丢弃，状态轮询通过 `cursor` 增量返回新增完成项。
 - Tag 请求策略补充：前端仅在信息区切换到 Tag 模式时，才会从当前页面条目中去重收集 `tags` ID，并分批调用 `GET /api/tags?ids=...` 批量换取 `display_name/name`；普通浏览与默认文件名模式不触发该请求，以减少 DB 压力与事务占用。
+- 收藏请求策略补充：BrowsePage 打开收藏菜单时会调用 `POST /api/collections/search`，并携带当前选中图片 ID 列表，让后端直接返回候选收藏及其对当前选择的命中统计；提交时统一调用 `POST /api/collections/apply`，单选与多选都复用同一套“逐图片动作列表”协议。
+- 收藏页补充：一级页 `/favorites` 现在直接调用 `GET /api/collections` 返回可见收藏夹概览；点击卡片进入 `/favorites/:collectionId` 后，BrowsePage 通过 `browseContract = 'collection'` 调用 `GET /api/collections/{collection_id}` 获取图片列表。
+- 封面策略补充：`Album.cover` 与 `Collection.cover` 都支持人工指定封面；浏览接口会优先返回当前可见范围内的已选封面，否则退回各自默认候选。相册默认候选仍是可见子树中按文件名字母序最早图片，收藏默认候选则是最早加入收藏的图片。
+- 封面更新补充：二级相册页和收藏页分别通过 `POST /api/albums/{album_id}/cover` 与 `POST /api/collections/{collection_id}/cover` 提交 `image_id`；对应详情接口会在 `album.cover_photo_id` / `collection.cover_photo_id` 与 item 的 `is_cover` 字段中返回当前封面标记。
 - 返回与面包屑导航行为：
   - 前端路由已重构为层级结构（2026-04）：
     - 一级页面（并列）：主页 `/`、搜索 `/search`、标签总览 `/tags`、图库管理 `/gallery`、日期视图 `/calendar`、收藏 `/favorites`、系统设置 `/settings`、回收站 `/trash`
@@ -147,9 +159,12 @@
     - 二级页面（日期域浏览）：
       - `/calendar/:group` — 月份图片列表（BrowsePage）
       - `/calendar/:group/:albumPath+` — 相册浏览，支持任意层级嵌套（BrowsePage）
+    - 二级页面（收藏域浏览）：
+      - `/favorites/:collectionId` — 收藏夹图片列表（BrowsePage）
     - 旧路由 `/album/:id` 已废弃，相册通过物理路径映射到 URL：`/calendar/2024-07/vacation/day1`
   - 面包屑结构：日期视图 › YYYY-MM › 相册1 › 相册2（当前），完全由 URL 路径段驱动，无需异步补标题。
   - BrowsePage 同时承载月份列表和相册浏览，通过 `$route.params` 判断模式：无 `albumPath` 为月份模式，有则为相册模式，调用 `GET /api/albums/by-path/{path}` 获取数据。
+  - 收藏页同样复用 BrowsePage：通过 `route.meta.browseContract = 'collection'` 与 `collectionId` 参数切换到收藏契约，返回按钮统一回到 `/favorites`。
   - 组件复用策略：两个 browse 路由共享 `meta.reuseKey = 'browse'`，App.vue 使用 `:key="route.meta?.reuseKey || route.name"` 避免组件销毁重建，消除跨层级导航闪动。
   - 后续若要以 BrowsePage 为基底构建新的浏览页，统一通过 `browseContract` 注入页面差异，避免复制整套页面壳；更完整的契约字段、生命周期钩子与适配器规范见 [frontend/commonBrowsePage.md](../frontend/commonBrowsePage.md)。
   - 一级页的公共页头与导航约定已收敛到 `frontend/src/pages/TopLevelPageHeader.vue` 与 `frontend/src/pages/topLevelPageConvention.js`，一级页入口统一放在 `frontend/src/pages/` 下，不再使用 `src/temp/`。
@@ -166,6 +181,7 @@
 - 默认策略：
   - 日期视图详情（非相册视图）默认 `Date` 升序。
   - 相册视图默认 `Alpha` 升序。
+  - 收藏夹视图默认 `Date` 升序。
 - 回收站交互补充：
   - 设置页右上角新增更显眼的“回收站”入口，但路由直接复用 `BrowsePage`，通过 `browseContract = 'trash'` 注入回收站策略，不再维护独立的回收站页面。
   - `BreadcrumbHeader.vue` 通过 slot 注入回收站页头右侧操作按钮；选择态右下角操作岛由页面契约提供“详情 / 还原 / 删除 / 全选 / 取消选择”，并与日历浏览共用同一套窄屏单行紧凑布局与向页面边缘收拢的交互。
@@ -316,7 +332,7 @@
   - `category_id` (int): 主分类 ID，默认回退到 1
   - `tags` (JSON array of int): 关联的 Tag ID 整数列表，如 `[23, 45, 91]`；前端查询标签详情时通过 `/api/tags?ids=23,45,91` 批量获取
   - `album` (JSON array of arrays): 所属相册路径，每个内层数组是从根相册到叶相册的 `public_id` 完整路径，如 `[["album_1", "album_3"], ["album_5"]]`（保留用于兼容；实际查询已通过 `album_image` 关联表完成）
-  - `collection` (JSON array): 所属收藏集信息，数据结构待定，默认空数组
+  - `collection` (JSON array): 兼容保留字段；正式的收藏归属关系已改由 `collection_image` 关联表承载
   - `created_at` (datetime): 记录创建时间
 
 ### 3.5b `app/models/album.py`
@@ -328,7 +344,7 @@
   - `path` (str): 媒体目录下的完整路径，格式 `{date_group}/{subdir1}/{subdir2}`，用于唯一定位
   - `is_leaf` (bool): 是否为叶节点相册（无子相册）
   - `parent_id` (int | null): 父相册 ID（顶层相册为 null）
-  - `cover` (JSON dict | null): 封面信息 `{photo_id, thumb_path, filename, updated_at}`，按文件名字母序选取最早文件
+  - `cover` (JSON dict | null): 封面信息 `{photo_id, thumb_path, filename, manual, updated_at}`；默认按文件名字母序选取最早文件，也可由用户手动指定
   - `photo_count` (int): 直属照片数
   - `subtree_photo_count` (int): 含所有子相册的总照片数
   - `sort_mode` (str): 排序模式 `alpha`（默认）/ `date` / `manual`
@@ -336,6 +352,22 @@
   - `date_group` (str | null): 所有嵌套层级继承顶层的 `date_group`
   - `created_at` / `updated_at`: 时间戳
   - 可见性、封面与计数由当前活跃主分类下的图片实时派生，而不是由相册字段直接决定
+
+### 3.5b2 `app/models/collection.py`
+- 数据模型 `Collection`（虚拟收藏集）：
+  - `id` (int): 主键自增
+  - `public_id` (str): 对外暴露标识，格式 `collection_{id}`，唯一索引
+  - `title` (str): 收藏名称；第一期前端只让用户输入标题，后端负责复用或创建收藏
+  - `description` (str | null): 描述
+  - `collection_path` (str): 逻辑路径键，用于后续收藏页路由与唯一定位；语义上不是磁盘目录
+  - `is_leaf` (bool): 预留层级扩展字段；当前收藏菜单创建的收藏都为顶层叶子节点
+  - `parent_id` (int | null): 预留父收藏 ID；当前为 `null`
+  - `cover` (JSON dict | null): 封面信息 `{photo_id, thumb_path, filename, manual, updated_at}`；默认取最早加入收藏的图片，也可由用户手动指定
+  - `photo_count` / `subtree_photo_count` (int): 当前收藏图片数；第一期未启用嵌套时两者相同
+  - `sort_mode` / `settings` / `stats`: 收藏视图扩展设置与统计预留
+  - `created_at` / `updated_at`: 时间戳
+
+说明：`Collection` 与 `Album` 刻意分离。`Album.path` 表示真实媒体目录，`Collection.collection_path` 表示纯逻辑路由路径，不参与文件系统扫描、导入和回收站对账。
 
 ### 3.5c `app/models/category.py`
 - 数据模型 `Category`：
@@ -438,6 +470,16 @@
   - `refresh_library(mode=full)` 收编新文件时同步写入
   - 首次部署可通过 `scripts/backfill_album_image.py` 从现有数据回填
 
+### 3.5e2 `app/models/collection_image.py`
+- 数据模型 `CollectionImage`（收藏-图片显式关联表）：
+  - `id` (int): 主键自增
+  - `collection_id` (int): 关联 `Collection.id`，建有索引
+  - `image_id` (int): 关联 `ImageAsset.id`，建有索引
+  - `sort_order` (int): 收藏集内部排序权重，默认 0
+  - `created_at` (datetime): 记录加入收藏的时间
+- 唯一约束：`(collection_id, image_id)` 联合唯一，防止同一图片被重复加入同一收藏
+- 用途：支撑 BrowsePage 详情浮层与选择态按钮岛中的收藏菜单；后端根据该表计算候选收藏对当前选择的命中数，并在 `POST /api/collections/apply` 中执行逐图片的 `add / remove / keep` 动作
+
 ### 3.5f `app/models/tag.py`
 - 数据模型 `Tag`（标签库）：
   - `id` (int): 主键自增
@@ -500,8 +542,10 @@
 |---|---|---|
 | `imageasset` | `ImageAsset` (`app/models/image_asset.py`) | 图片媒体资产主表；存储哈希、路径、尺寸、日期分组、缩略图条目、关联 Tag ID 数组等全量元数据 |
 | `album` | `Album` (`app/models/album.py`) | 树形相册结构；存储相册名称、层级路径、封面、照片计数、日期分组 |
+| `collection` | `Collection` (`app/models/collection.py`) | 虚拟收藏主表；存储收藏标题、逻辑路径、封面与图片计数 |
 | `trashentry` | `TrashEntry` (`app/models/trash_entry.py`) | 回收站条目表；记录回收站内图片/相册的原路径、trash payload、预览信息与恢复所需元数据 |
 | `album_image` | `AlbumImage` (`app/models/album_image.py`) | 相册-图片显式多对多关联表；通过索引 JOIN 替代全表扫描，加速相册与日期视图查询 |
+| `collection_image` | `CollectionImage` (`app/models/collection_image.py`) | 收藏-图片显式多对多关联表；支撑收藏菜单的命中统计、批量加入与移除 |
 | `tag` | `Tag` (`app/models/tag.py`) | 标签库；存储标准化名称、展示名称、使用次数、来源、元信息等，`ImageAsset.tags` 存储该表的 `id` 外键 |
 
 附加文件：
@@ -513,9 +557,11 @@
 3. 记录写入数据库并保存到 `MEDIA_DIR`（按 `date_group`/子目录组织）
 4. 前端调用 `/api/dates` 和 `/api/dates/{date_group}/items` 构建图库视图
 5. 管理端 `/api/admin/refresh` 保持一致性（支持 `quick/full`）
-6. 用户从 BrowsePage 删除图片或相册时，请求 `/api/trash/move`，目标会从 `media/` 移入 `trash/` 并生成 `TrashEntry`
-7. 回收站 contract 通过 `/api/trash/items` 先展示当前可显示的回收站条目；轻量对账改由 `/api/trash/reconcile` 提供，前端在首屏绘制后静默异步调用，对账结果若改变列表则再按当前锚点刷新页面
-8. 回收站 contract 批量“还原”调用 `/api/trash/restore`，“删除”调用 `/api/trash/hard-delete`，“清空回收站”调用 `DELETE /api/trash`；其中图片恢复保留正常缩略图链路，相册恢复优先走轻量哈希收编再按需补预览，以降低等待时间
+6. 用户在 BrowsePage 的详情浮层星标或选择态按钮岛点击“收藏”时，前端先调用 `POST /api/collections/search` 查询收藏候选，并让后端直接返回“当前选择命中了哪些收藏”的统计结果
+7. 用户确认收藏操作后，前端统一调用 `POST /api/collections/apply`；单选时后端会把目标收藏中的当前图片切换为“加入”或“移除”，多选时按请求中的逐图 `add / remove / keep` 动作列表应用
+8. 用户从 BrowsePage 删除图片或相册时，请求 `/api/trash/move`，目标会从 `media/` 移入 `trash/` 并生成 `TrashEntry`
+9. 回收站 contract 通过 `/api/trash/items` 先展示当前可显示的回收站条目；轻量对账改由 `/api/trash/reconcile` 提供，前端在首屏绘制后静默异步调用，对账结果若改变列表则再按当前锚点刷新页面
+10. 回收站 contract 批量“还原”调用 `/api/trash/restore`，“删除”调用 `/api/trash/hard-delete`，“清空回收站”调用 `DELETE /api/trash`；其中图片恢复保留正常缩略图链路，相册恢复优先走轻量哈希收编再按需补预览，以降低等待时间
 
 补充：
 - 设置页可通过 `GET/POST /api/system/cache-thumb-setting` 管理缓存缩略图短边尺寸。
@@ -563,8 +609,8 @@
 
 ### 5.2 数据库设计与迁移
 - 表结构升级逻辑：`app/db/session.py` 的 `_migrate_db` 支持无痛增列，防止旧 schema 掉链
-- 唯一约束：`file_hash` 唯一，作为去重核心；`original_path` 保留原始输入路径；`album_image(album_id, image_id)` 联合唯一
-- 索引：`original_path`, `file_hash`, `date_group`, `album_image.album_id`, `album_image.image_id` 用于高效查询
+- 唯一约束：`file_hash` 唯一，作为去重核心；`original_path` 保留原始输入路径；`album_image(album_id, image_id)` 与 `collection_image(collection_id, image_id)` 均为联合唯一
+- 索引：`original_path`, `file_hash`, `date_group`, `album_image.album_id`, `album_image.image_id`, `collection_image.collection_id`, `collection_image.image_id` 用于高效查询
 
 ## 6. 运行与调试
 1. 进入 `backend` 目录
@@ -579,6 +625,12 @@
    - `GET /api/dates` 列出年月分组
   - `GET /api/dates/{date_group}/items` 列出直图/子相册（图片条目含 `media_index` 与 `media_rel_path`）
   - `GET /api/albums/by-path/{album_path:path}` / `GET /api/albums/open-by-path/{album_path:path}` 相册浏览与在资源管理器打开目录
+  - `POST /api/albums/{album_id}/cover` 更新当前相册封面
+  - `GET /api/collections` 列出收藏一级页卡片数据
+  - `GET /api/collections/{collection_id}` 列出收藏夹图片数据与当前封面标记
+  - `POST /api/collections/search` 搜索收藏候选，并附带当前选中图片对每个收藏的命中统计
+  - `POST /api/collections/apply` 创建收藏或对现有收藏执行逐图 `add / remove / keep` 操作
+  - `POST /api/collections/{collection_id}/cover` 更新当前收藏夹封面
   - `GET /api/images/{image_id}/open?path=...` 按指定 `media_path` 实例打开图片
     - `POST /api/images/tags/filename-match` 按文件名自动匹配并批量回写标签（自动忽略草稿 Tag）；导入流程会复用同一套匹配规则
     - `POST /api/images/tags/apply` 批量添加/覆盖/移除标签（`merge_mode=append_unique|replace|remove`，自动忽略草稿 Tag）

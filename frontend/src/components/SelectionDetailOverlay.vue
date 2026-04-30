@@ -232,6 +232,19 @@
             >
               {{ secondaryActionLabelResolved }}
             </button>
+            <button
+              v-if="canOpenCollectionMenu"
+              class="detail-panel__icon-action"
+              type="button"
+              title="收藏"
+              aria-label="收藏"
+              :disabled="collectionMenuDisabled"
+              @click="$emit('open-collection-menu')"
+            >
+              <svg class="detail-panel__icon-action-svg" width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 3.5L14.74 9.05L20.87 9.95L16.44 14.27L17.49 20.38L12 17.49L6.51 20.38L7.56 14.27L3.13 9.95L9.26 9.05L12 3.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+              </svg>
+            </button>
           </div>
         </div>
       </div>
@@ -372,6 +385,8 @@ export default {
     secondaryActionTone: { type: String, default: '' },
     secondaryActionDisabled: { type: Boolean, default: null },
     canEditTags: { type: Boolean, default: false },
+    canOpenCollectionMenu: { type: Boolean, default: false },
+    collectionMenuDisabled: { type: Boolean, default: false },
     tagMenuDisabled: { type: Boolean, default: false },
     canEditName: { type: Boolean, default: false },
     canEditCategory: { type: Boolean, default: false },
@@ -388,6 +403,7 @@ export default {
     'close',
     'delete',
     'open-primary',
+    'open-collection-menu',
     'open-tag-menu',
     'preview-error',
     'secondary-action',
@@ -1201,6 +1217,38 @@ export default {
   color: #334155;
 }
 
+.detail-panel__icon-action {
+  width: 3.35rem;
+  min-width: 3.35rem;
+  height: 3.35rem;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #475569;
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease, opacity 140ms ease, color 140ms ease;
+}
+
+.detail-panel__icon-action:hover:not(:disabled) {
+  transform: translateY(-1px);
+  color: #0f172a;
+  border-color: rgba(100, 116, 139, 0.36);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+}
+
+.detail-panel__icon-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.detail-panel__icon-action-svg {
+  display: block;
+}
+
 .detail-subdialog {
   position: fixed;
   inset: 0;
@@ -1424,7 +1472,8 @@ export default {
 
   .detail-inline-editor__btn,
   .detail-subdialog__btn,
-  .detail-panel__action {
+  .detail-panel__action,
+  .detail-panel__icon-action {
     width: 100%;
   }
 }

@@ -11,6 +11,7 @@ from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
 from app.services.category_service import DEFAULT_CATEGORY_ID
+from app.services.cover_service import build_asset_cover_payload, cover_is_manual, extract_cover_photo_id
 from app.services.parallel_processor import (
     IMPORT_BATCH_SIZE,
     process_from_bytes,
@@ -189,19 +190,11 @@ def _set_album_cover_if_needed(session, public_ids: list[str], asset: ImageAsset
         if not album:
             continue
         current_cover = album.cover or {}
+        if cover_is_manual(current_cover) and extract_cover_photo_id(current_cover):
+            continue
         current_filename = current_cover.get("filename", "")
         if not current_filename or new_filename < current_filename:
-            thumb_path = ""
-            for thumb in (asset.thumbs or []):
-                if isinstance(thumb, dict) and thumb.get("path"):
-                    thumb_path = thumb["path"]
-                    break
-            album.cover = {
-                "photo_id": asset.id,
-                "thumb_path": thumb_path,
-                "filename": new_filename,
-                "updated_at": datetime.datetime.now().isoformat(),
-            }
+            album.cover = build_asset_cover_payload(asset)
             session.add(album)
 
 

@@ -12,7 +12,7 @@ export const TOP_LEVEL_NAV_ITEMS = Object.freeze([
   { path: '/tags', label: '标签总览', icon: '🏷️' },
   { path: '/gallery', label: '图库管理', icon: '🖼️' },
   { path: '/calendar', label: '日期视图', icon: '📅', matchPrefixes: ['/calendar/'] },
-  { path: '/favorites', label: '收藏', icon: '⭐' },
+  { path: '/favorites', label: '收藏', icon: '⭐', matchPrefixes: ['/favorites/'] },
   { path: '/settings', label: '设置', icon: '⚙️', matchPrefixes: ['/settings/'] },
 ])
 

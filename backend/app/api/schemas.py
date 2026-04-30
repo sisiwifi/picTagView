@@ -49,6 +49,7 @@ class DateItem(BaseModel):
     created_at: Optional[datetime] = None
     media_index: Optional[int] = None
     media_rel_path: Optional[str] = None
+    is_cover: bool = False
 
 
 class DateItemsResponse(BaseModel):
@@ -307,6 +308,7 @@ class AlbumItem(BaseModel):
     created_at: Optional[datetime] = None
     media_index: Optional[int] = None
     media_rel_path: Optional[str] = None
+    is_cover: bool = False
 
 
 class AlbumInfo(BaseModel):
@@ -316,6 +318,7 @@ class AlbumInfo(BaseModel):
     date_group: Optional[str] = None
     photo_count: int = 0
     subtree_photo_count: int = 0
+    cover_photo_id: Optional[int] = None
     parent_public_id: Optional[str] = None
     ancestors: List[BreadcrumbItem] = []
 
@@ -323,6 +326,95 @@ class AlbumInfo(BaseModel):
 class AlbumDetailResponse(BaseModel):
     album: AlbumInfo
     items: List[AlbumItem]
+
+
+class CoverSelectionRequest(BaseModel):
+    image_id: int
+
+
+class CoverSelectionResponse(BaseModel):
+    public_id: str
+    cover_photo_id: Optional[int] = None
+    updated_at: Optional[datetime] = None
+
+
+class CollectionOverviewItem(BaseModel):
+    id: int
+    public_id: str = ""
+    title: str
+    description: str = ""
+    photo_count: int = 0
+    thumb_url: str = ""
+    cache_thumb_url: Optional[str] = None
+    cover_photo_id: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    updated_at: Optional[datetime] = None
+
+
+class CollectionOverviewResponse(BaseModel):
+    items: List[CollectionOverviewItem] = Field(default_factory=list)
+
+
+class CollectionInfo(BaseModel):
+    public_id: str
+    title: str
+    description: Optional[str] = None
+    photo_count: int = 0
+    subtree_photo_count: int = 0
+    cover_photo_id: Optional[int] = None
+
+
+class CollectionDetailResponse(BaseModel):
+    collection: CollectionInfo
+    items: List[AlbumItem] = Field(default_factory=list)
+
+
+# ── Collection actions ──────────────────────────────────────────────────────
+
+class CollectionCandidateItem(BaseModel):
+    id: int
+    public_id: str = ""
+    title: str
+    description: str = ""
+    collection_path: str = ""
+    photo_count: int = 0
+    matched_image_ids: List[int] = Field(default_factory=list)
+    selected_match_count: int = 0
+    contains_all_selected: bool = False
+
+
+class CollectionSearchRequest(BaseModel):
+    q: str = ""
+    image_ids: List[int] = Field(default_factory=list)
+    limit: int = 12
+
+
+class CollectionSearchResponse(BaseModel):
+    items: List[CollectionCandidateItem] = Field(default_factory=list)
+
+
+class CollectionApplyAction(BaseModel):
+    image_id: int
+    action: str = "add"
+
+
+class CollectionApplyRequest(BaseModel):
+    collection_id: Optional[int] = None
+    title: str = ""
+    description: str = ""
+    image_actions: List[CollectionApplyAction] = Field(default_factory=list)
+
+
+class CollectionApplyResponse(BaseModel):
+    id: int
+    public_id: str = ""
+    title: str
+    collection_path: str = ""
+    photo_count: int = 0
+    added_count: int = 0
+    removed_count: int = 0
+    kept_count: int = 0
 
 
 # ── Trash views ───────────────────────────────────────────────────────────────
