@@ -52,6 +52,8 @@
       - `GET /api/images/{image_id}/open`
       - `POST /api/images/tags/filename-match`
       - `POST /api/images/tags/apply`
+    - `app/api/routers/search.py`
+      - `GET /api/search/images`
     - `app/api/routers/tags.py`
       - `GET /api/tags`
       - `GET /api/tags/{tag_id}`
@@ -139,7 +141,7 @@
 - Tag 请求策略补充：前端仅在信息区切换到 Tag 模式时，才会从当前页面条目中去重收集 `tags` ID，并分批调用 `GET /api/tags?ids=...` 批量换取 `display_name/name`；普通浏览与默认文件名模式不触发该请求，以减少 DB 压力与事务占用。
 - 返回与面包屑导航行为：
   - 前端路由已重构为层级结构（2026-04）：
-    - 一级页面（并列）：主页 `/`、标签总览 `/tags`、图库管理 `/gallery`、日期视图 `/calendar`、系统设置 `/settings`、回收站 `/trash`
+    - 一级页面（并列）：主页 `/`、搜索 `/search`、标签总览 `/tags`、图库管理 `/gallery`、日期视图 `/calendar`、收藏 `/favorites`、系统设置 `/settings`、回收站 `/trash`
     - 二级页面（设置域）：
       - `/settings/categories` — 主分类配置页
     - 二级页面（日期域浏览）：
@@ -150,6 +152,7 @@
   - BrowsePage 同时承载月份列表和相册浏览，通过 `$route.params` 判断模式：无 `albumPath` 为月份模式，有则为相册模式，调用 `GET /api/albums/by-path/{path}` 获取数据。
   - 组件复用策略：两个 browse 路由共享 `meta.reuseKey = 'browse'`，App.vue 使用 `:key="route.meta?.reuseKey || route.name"` 避免组件销毁重建，消除跨层级导航闪动。
   - 后续若要以 BrowsePage 为基底构建新的浏览页，统一通过 `browseContract` 注入页面差异，避免复制整套页面壳；更完整的契约字段、生命周期钩子与适配器规范见 [frontend/commonBrowsePage.md](../frontend/commonBrowsePage.md)。
+  - 一级页的公共页头与导航约定已收敛到 `frontend/src/pages/TopLevelPageHeader.vue` 与 `frontend/src/pages/topLevelPageConvention.js`，一级页入口统一放在 `frontend/src/pages/` 下，不再使用 `src/temp/`。
   - Gallery 路由额外声明 `meta.keepAlive = true`；`App.vue` 需要保持 `<KeepAlive>` 容器本身常驻，只把普通路由放在独立分支渲染，这样 Gallery 导入队列与进度状态在切换页面时才会进入 deactivated 而不是被卸载。
   - 返回按钮语义统一为"目录上一级"：在相册内返回上一级相册或月份列表，月份列表返回日期总览。
   - CalendarOverview 为纯月份网格页面，不再内含详情子视图。

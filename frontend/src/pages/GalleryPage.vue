@@ -1,9 +1,9 @@
 <template>
   <section class="page">
-    <header class="page-header">
-      <h2 class="page-title">图库管理</h2>
-      <p class="page-subtitle">选择并导入图片到系统。</p>
-    </header>
+    <TopLevelPageHeader
+      title="图库管理"
+      subtitle="选择并导入图片到系统。"
+    />
 
     <div class="card">
       <h3 class="card-title">导入新图片</h3>
@@ -96,6 +96,7 @@
 
 <script>
 import FolderImportDialog from '../components/FolderImportDialog.vue'
+import TopLevelPageHeader from './TopLevelPageHeader.vue'
 
 const API_BASE = 'http://127.0.0.1:8000'
 const DEFAULT_CATEGORY_ID = 1
@@ -129,6 +130,7 @@ export default {
   name: 'GalleryPage',
   components: {
     FolderImportDialog,
+    TopLevelPageHeader,
   },
 
   data() {

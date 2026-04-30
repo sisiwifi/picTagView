@@ -1,9 +1,9 @@
 <template>
   <section class="page">
-    <header class="page-header">
-      <h2 class="page-title">主页</h2>
-      <p class="page-subtitle">欢迎使用 picTagView 图片管理系统。</p>
-    </header>
+    <TopLevelPageHeader
+      title="主页"
+      subtitle="欢迎使用 picTagView 图片管理系统。"
+    />
 
     <!-- Stats row -->
     <div class="stats-row">
@@ -19,9 +19,14 @@
 </template>
 
 <script>
+import TopLevelPageHeader from './TopLevelPageHeader.vue'
+
 const API_BASE = 'http://127.0.0.1:8000'
 
 export default {
+  components: {
+    TopLevelPageHeader,
+  },
   data() {
     return { fileCount: 0 }
   },
@@ -60,9 +65,6 @@ export default {
 
 <style scoped lang="css">
 .page { @apply flex flex-col gap-8; }
-.page-header { @apply flex flex-col gap-1; }
-.page-title  { @apply text-2xl font-semibold text-slate-900 m-0; }
-.page-subtitle { @apply text-sm text-slate-500 m-0; }
 
 .stats-row { @apply flex flex-wrap gap-4; }
 .stat-card {

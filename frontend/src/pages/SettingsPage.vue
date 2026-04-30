@@ -47,11 +47,10 @@
     </template>
 
     <template v-else>
-      <header class="page-header">
-        <div class="page-header__main">
-          <h2 class="page-title">设置</h2>
-          <p class="page-subtitle">系统管理与常用配置入口</p>
-        </div>
+      <TopLevelPageHeader
+        title="设置"
+        subtitle="系统管理与常用配置入口"
+      >
         <button class="page-header__action trash-launch" type="button" @click="$router.push('/trash')">
           <span class="trash-launch__icon" aria-hidden="true">
             <svg viewBox="0 0 48 48" fill="none">
@@ -76,7 +75,7 @@
           </span>
           <span class="trash-launch__arrow" aria-hidden="true">→</span>
         </button>
-      </header>
+      </TopLevelPageHeader>
 
       <div class="settings-card">
         <h3 class="card-title">缓存管理</h3>
@@ -385,6 +384,7 @@
 
 <script>
 import BreadcrumbHeader from '../components/BreadcrumbHeader.vue'
+import TopLevelPageHeader from './TopLevelPageHeader.vue'
 import TagImportDialog from '../components/TagImportDialog.vue'
 import {
   PAGE_BROWSE_MODE_PAGED,
@@ -411,6 +411,7 @@ export default {
   name: 'SettingsPage',
   components: {
     BreadcrumbHeader,
+    TopLevelPageHeader,
     TagImportDialog,
   },
 

@@ -1,10 +1,9 @@
 <template>
   <section class="page">
-    <BreadcrumbHeader :crumbs="[{ label: '日期视图', current: true }]" />
-
-    <div class="header-sub">
-      <span class="page-subtitle">按年份与月份浏览已导入的图片。</span>
-    </div>
+    <TopLevelPageHeader
+      title="日期视图"
+      subtitle="按年份与月份浏览已导入的图片。"
+    />
 
     <LoadingSpinner v-if="loadingDates" />
 
@@ -43,13 +42,13 @@
 <script>
 import ThumbCard from '../components/ThumbCard.vue'
 import LoadingSpinner from '../components/LoadingSpinner.vue'
-import BreadcrumbHeader from '../components/BreadcrumbHeader.vue'
+import TopLevelPageHeader from './TopLevelPageHeader.vue'
 
 const API_BASE = 'http://127.0.0.1:8000'
 
 export default {
   name: 'CalendarOverview',
-  components: { ThumbCard, LoadingSpinner, BreadcrumbHeader },
+  components: { ThumbCard, LoadingSpinner, TopLevelPageHeader },
 
   data() {
     return {
@@ -172,8 +171,6 @@ export default {
 
 <style scoped lang="css">
 .page { @apply flex flex-col gap-6; }
-.header-sub { @apply -mt-4; }
-.page-subtitle { @apply text-sm text-slate-400 m-0; }
 
 .grid-wrapper { @apply flex flex-col gap-10; }
 

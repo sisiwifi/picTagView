@@ -49,7 +49,7 @@
               <li v-for="item in displayItems" :key="`suggest-${item.id}`" class="tag-menu__suggestion">
                 <div class="tag-menu__suggestion-main">
                   <span class="tag-menu__suggestion-name">{{ item.display_name || item.name || `#${item.id}` }}</span>
-                  <span class="tag-menu__suggestion-meta">{{ item.name }}</span>
+                  <span class="tag-menu__suggestion-meta">{{ item.description || '' }}</span>
                 </div>
                 <div class="tag-menu__suggestion-actions">
                   <button

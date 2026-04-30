@@ -48,7 +48,11 @@ frontend/
 │       ├── BrowsePage.vue
 │       ├── CategorySettingsPage.vue
 │       ├── EmptyPage.vue
+│       ├── SearchPage.vue
+│       ├── FavoritesPage.vue
 │       ├── SettingsPage.vue
+│       ├── TopLevelPageHeader.vue
+│       └── topLevelPageConvention.js
 └── vue.config.js
 ```
 
@@ -110,13 +114,21 @@ frontend/
 - 交互按钮触发 `POST /api/admin/refresh`
 - 后端当前返回 `{ mode, pruned, total_images, cache_deleted, regenerated, new_ingested, hash_conflicts, non_album_deduped, cleaned_paths }`
 
+### 4.8 一级页面与搜索
+- 一级页面入口统一放在 `src/pages/` 下，当前共用的一级页头组件是 `TopLevelPageHeader.vue`，一级页导航与 400px 缩略图规范集中在 `topLevelPageConvention.js`
+- `SearchPage` 使用单输入框，默认同时匹配文件名与 Tag；输入 `tag:` / `#` 会切换到 Tag 搜索，输入 `path:` 或 `media/...` 路径会切换到按路径解析 quick hash 的检索模式
+- `FavoritesPage` 当前是占位页，保留收藏一级入口与后续扩展位
+- 一级页缩略图统一按 400px 方形卡片显示，避免和 BrowsePage 的浏览态布局混淆
+
 ## 5. 前端路由说明 (`router/index.js`)
 - `/` -> `HomePage`
+- `/search` -> `SearchPage`
 - `/tags` -> `EmptyPage`
 - `/gallery` -> `GalleryPage`（`meta.keepAlive = true`，保留导入页面实例）
 - `/calendar` -> `CalendarOverview`
 - `/calendar/:group` -> `BrowsePage`
 - `/calendar/:group/:albumPath+` -> `BrowsePage`
+- `/favorites` -> `FavoritesPage`
 - `/settings` -> `SettingsPage`
 - `/settings/categories` -> `CategorySettingsPage`
 - `/trash` -> `BrowsePage`（`meta.reuseKey = 'browse'`，`meta.browseContract = 'trash'`）
@@ -190,6 +202,7 @@ npm run lint
    - `/api/images/meta` 用于详情浮层补齐文件元数据
    - `/api/images/tags/filename-match` 用于文件名分析与 Tag 草稿预匹配
    - `/api/images/tags/apply` 用于标签菜单手动批量添加、覆盖或移除标签
+   - `/api/search/images` 用于搜索页的文件名 / Tag / 路径 quick hash 检索
    - `/api/tags/draft` 用于预占隐藏草稿 Tag
    - `/api/tags?sort_by=last_used_desc&limit=5` 用于输入为空时加载最近使用标签
    - `/api/tags/export/json` 与 `/api/tags/import/json` 用于设置页的 Tag JSON 导入导出

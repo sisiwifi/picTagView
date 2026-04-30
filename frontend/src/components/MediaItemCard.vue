@@ -45,7 +45,7 @@
               :key="tag.id || tag.name"
               class="tag-chip tag-chip--card"
               :style="chipStyle(tag)"
-              :title="tag.name || ''"
+              :title="tag.description || ''"
             >
               {{ tag.display_name || tag.name || '' }}
             </span>

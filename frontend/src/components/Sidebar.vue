@@ -39,27 +39,20 @@
 </template>
 
 <script>
+import { TOP_LEVEL_NAV_ITEMS, isTopLevelRouteActive } from '../pages/topLevelPageConvention'
+
 export default {
   name: 'AppSidebar',
   data() {
     return {
       isSidebarCollapsed: false,
       isTextVisible: true,
-      navItems: [
-        { path: '/', label: '主页', icon: '🏠' },
-        { path: '/tags', label: '标签总览', icon: '🏷️' },
-        { path: '/gallery', label: '图库管理', icon: '🖼️' },
-        { path: '/calendar', label: '日期视图', icon: '📅' },
-        { path: '/settings', label: '设置', icon: '⚙️' }
-      ]
+      navItems: TOP_LEVEL_NAV_ITEMS,
     }
   },
   methods: {
     isActive(path) {
-      if (path === '/calendar') {
-        return this.$route.path === '/calendar' || this.$route.path.startsWith('/calendar/')
-      }
-      return this.$route.path === path
+      return isTopLevelRouteActive(this.$route.path, path)
     },
     toggleSidebar() {
       if (this.isSidebarCollapsed) {

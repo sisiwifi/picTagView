@@ -211,6 +211,34 @@ class TagBriefItem(BaseModel):
     background_color: str = ""
 
 
+class SearchImageItem(BaseModel):
+    id: int
+    name: str
+    category_id: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    tags: List[int] = Field(default_factory=list)
+    thumb_url: str = ""
+    cache_thumb_url: Optional[str] = None
+    media_rel_path: Optional[str] = None
+    date_group: Optional[str] = None
+    quick_hash: Optional[str] = None
+    matched_by: List[str] = Field(default_factory=list)
+    matched_tags: List[TagBriefItem] = Field(default_factory=list)
+
+
+class SearchImageResponse(BaseModel):
+    query: str
+    requested_mode: str = "auto"
+    resolved_mode: str = "auto"
+    limit: int = 120
+    total: int = 0
+    source_media_rel_path: Optional[str] = None
+    quick_hash: Optional[str] = None
+    included_tags: List[TagBriefItem] = Field(default_factory=list)
+    items: List[SearchImageItem] = Field(default_factory=list)
+
+
 class ImageTagMatchItem(BaseModel):
     image_id: int
     filename: str = ""

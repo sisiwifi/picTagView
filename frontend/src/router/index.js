@@ -6,12 +6,19 @@ import CalendarOverview from '../pages/CalendarOverview.vue'
 import BrowsePage from '../pages/BrowsePage.vue'
 import CategorySettingsPage from '../pages/CategorySettingsPage.vue'
 import SettingsPage from '../pages/SettingsPage.vue'
+import SearchPage from '../pages/SearchPage.vue'
+import FavoritesPage from '../pages/FavoritesPage.vue'
 
 const routes = [
   {
     path: '/',
     name: 'home',
     component: HomePage
+  },
+  {
+    path: '/search',
+    name: 'search',
+    component: SearchPage
   },
   {
     path: '/tags',
@@ -47,6 +54,11 @@ const routes = [
     path: '/settings',
     name: 'settings',
     component: SettingsPage
+  },
+  {
+    path: '/favorites',
+    name: 'favorites',
+    component: FavoritesPage
   },
   {
     path: '/settings/categories',

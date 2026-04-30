@@ -5,7 +5,7 @@
       :key="tag.id || tag.name"
       class="tag-chip"
       :style="chipStyle(tag)"
-      :title="tag.name || ''"
+      :title="tag.description || ''"
     >
       {{ tag.display_name || tag.name || '' }}
     </span>
