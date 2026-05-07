@@ -219,6 +219,94 @@ function buildTagBrowseInfo(tag, itemCount = 0) {
   }
 }
 
+function getGalleryScopeBasePath(contractName) {
+  return contractName === 'gallery-all' ? '/gallery/all' : '/gallery/recent'
+}
+
+function buildGalleryAlbumRoute(contractName, albumPath) {
+  const normalized = String(albumPath || '').replace(/\\/g, '/').trim()
+  if (!normalized) return getGalleryScopeBasePath(contractName)
+  const parts = normalized.split('/').filter(Boolean)
+  if (parts.length < 2) return getGalleryScopeBasePath(contractName)
+  const group = encodeURIComponent(parts[0])
+  const nestedAlbumPath = parts.slice(1).map(segment => encodeURIComponent(segment)).join('/')
+  return `${getGalleryScopeBasePath(contractName)}/${group}/${nestedAlbumPath}`
+}
+
+function buildGalleryCrumbs(vm, title) {
+  const rootPath = getGalleryScopeBasePath(vm.pageContractName)
+  const crumbs = [
+    { label: '图库管理', title: '图库管理', to: '/gallery' },
+  ]
+
+  if (!vm.isAlbumMode) {
+    crumbs.push({ label: title, title, current: true })
+    return crumbs
+  }
+
+  crumbs.push({ label: title, title, to: rootPath })
+
+  const segments = vm.albumPath.split('/').filter(Boolean)
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]
+    const isLast = index === segments.length - 1
+    const ancestorTitle = vm.getAncestorTitle(index, segment)
+    if (isLast) {
+      crumbs.push({
+        label: vm.bcLabel(vm.albumInfo?.title || segment),
+        title: vm.albumInfo?.title || segment,
+        current: true,
+      })
+      continue
+    }
+    crumbs.push({
+      label: vm.bcLabel(ancestorTitle),
+      title: ancestorTitle,
+      to: `${rootPath}/${encodeURIComponent(vm.dateGroup)}/${segments.slice(0, index + 1).map(part => encodeURIComponent(part)).join('/')}`,
+    })
+  }
+
+  return crumbs
+}
+
+function backFromGalleryScope(vm) {
+  const rootPath = getGalleryScopeBasePath(vm.pageContractName)
+  if (!vm.isAlbumMode) {
+    vm.$router.push('/gallery')
+    return
+  }
+
+  const segments = vm.albumPath.split('/').filter(Boolean)
+  if (segments.length > 1) {
+    const parentPath = segments.slice(0, -1).map(segment => encodeURIComponent(segment)).join('/')
+    vm.$router.push(`${rootPath}/${encodeURIComponent(vm.dateGroup)}/${parentPath}`)
+    return
+  }
+
+  vm.$router.push(rootPath)
+}
+
+function openGalleryScopedItem(vm, item) {
+  if (!item) return
+  if (item.type === 'album') {
+    if (item.album_path) {
+      vm.$router.push(buildGalleryAlbumRoute(vm.pageContractName, item.album_path))
+    }
+    return
+  }
+  openImageItem(item)
+}
+
+function openGalleryScopedPrimary(_vm, item) {
+  if (!item) return
+  if (item.type === 'album') {
+    if (!item.album_path) return
+    fetch(`${API_BASE}/api/albums/open-by-path/${encodeURI(item.album_path)}`).catch(() => {})
+    return
+  }
+  openImageItem(item)
+}
+
 const calendarContract = {
   name: 'calendar',
   emptyState: {
@@ -474,6 +562,136 @@ const tagContract = {
   },
 }
 
+const galleryRecentContract = {
+  name: 'gallery-recent',
+  emptyState: {
+    icon: '🕘',
+    text: '最近导入为空。',
+  },
+  defaultSort(vm) {
+    return {
+      sortBy: vm.isAlbumMode ? 'alpha' : 'date',
+      sortDir: 'asc',
+    }
+  },
+  buildCrumbs(vm) {
+    return buildGalleryCrumbs(vm, '最近导入')
+  },
+  buildHeaderActions() {
+    return []
+  },
+  buildSelectionActions(vm) {
+    return buildCalendarLikeSelectionActions(vm)
+  },
+  buildDetailPolicy(vm) {
+    return buildCalendarLikeDetailPolicy(vm)
+  },
+  async loadItems(vm) {
+    const url = vm.isAlbumMode
+      ? `${API_BASE}/api/albums/by-path/${encodeURI(vm.fullAlbumPath)}`
+      : `${API_BASE}/api/gallery/recent/items`
+    const res = await fetch(url)
+    if (!res.ok) {
+      return { items: [], album: null }
+    }
+    const data = await res.json()
+    return {
+      items: Array.isArray(data?.items) ? data.items : [],
+      album: data?.album || null,
+    }
+  },
+  normalizeItems(rawItems) {
+    return (rawItems || []).map(item => normalizeCalendarItem(item))
+  },
+  afterLoad(vm) {
+    vm.ensureCategoryLabelsLoaded()
+    if (vm.selectionInfoMode === 'tags') {
+      vm.ensureTagLabelsLoaded()
+    }
+  },
+  back(vm) {
+    backFromGalleryScope(vm)
+  },
+  openItem(vm, item) {
+    openGalleryScopedItem(vm, item)
+  },
+  openPrimary(vm, item) {
+    openGalleryScopedPrimary(vm, item)
+  },
+  runSecondaryAction(vm) {
+    vm.moveSelectedToTrash()
+  },
+  previewRepairPayloadKey: 'image_ids',
+  async afterPreviewRepair(vm, repairIds) {
+    await vm.refreshPreviewMetadata(repairIds)
+  },
+}
+
+const galleryAllContract = {
+  name: 'gallery-all',
+  emptyState: {
+    icon: '🖼',
+    text: '图库中暂无可见内容。',
+  },
+  defaultSort(vm) {
+    return {
+      sortBy: vm.isAlbumMode ? 'alpha' : 'date',
+      sortDir: 'asc',
+    }
+  },
+  buildCrumbs(vm) {
+    return buildGalleryCrumbs(vm, '图库总览')
+  },
+  buildHeaderActions() {
+    return []
+  },
+  buildSelectionActions(vm) {
+    return buildCalendarLikeSelectionActions(vm)
+  },
+  buildDetailPolicy(vm) {
+    return buildCalendarLikeDetailPolicy(vm)
+  },
+  async loadItems(vm) {
+    const url = vm.isAlbumMode
+      ? `${API_BASE}/api/albums/by-path/${encodeURI(vm.fullAlbumPath)}`
+      : `${API_BASE}/api/gallery/all/items`
+    const res = await fetch(url)
+    if (!res.ok) {
+      return { items: [], album: null }
+    }
+    const data = await res.json()
+    return {
+      items: Array.isArray(data?.items) ? data.items : [],
+      album: data?.album || null,
+    }
+  },
+  normalizeItems(rawItems) {
+    return (rawItems || []).map(item => normalizeCalendarItem(item))
+  },
+  afterLoad(vm) {
+    vm.ensureCategoryLabelsLoaded()
+    if (vm.selectionInfoMode === 'tags') {
+      vm.ensureTagLabelsLoaded()
+    }
+  },
+  back(vm) {
+    backFromGalleryScope(vm)
+  },
+  openItem(vm, item) {
+    openGalleryScopedItem(vm, item)
+  },
+  openPrimary(vm, item) {
+    openGalleryScopedPrimary(vm, item)
+  },
+  runSecondaryAction(vm) {
+    vm.moveSelectedToTrash()
+  },
+  previewRepairPayloadKey: 'image_ids',
+  async afterPreviewRepair(vm, repairIds) {
+    await vm.refreshPreviewMetadata(repairIds)
+  },
+}
+
 const trashContract = {
   name: 'trash',
   emptyState: {
@@ -580,6 +798,8 @@ const trashContract = {
 }
 
 export function getCommonBrowsePageContract(contractName = 'calendar') {
+  if (contractName === 'gallery-recent') return galleryRecentContract
+  if (contractName === 'gallery-all') return galleryAllContract
   if (contractName === 'trash') return trashContract
   if (contractName === 'collection') return collectionContract
   if (contractName === 'tag') return tagContract

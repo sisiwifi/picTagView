@@ -39,6 +39,32 @@ const routes = [
     meta: { keepAlive: true }
   },
   {
+    path: '/gallery/recent',
+    name: 'gallery-recent',
+    component: BrowsePage,
+    meta: { reuseKey: 'browse', browseContract: 'gallery-recent' }
+  },
+  {
+    path: '/gallery/recent/:group/:albumPath+',
+    name: 'gallery-recent-album',
+    component: BrowsePage,
+    props: true,
+    meta: { reuseKey: 'browse', browseContract: 'gallery-recent' }
+  },
+  {
+    path: '/gallery/all',
+    name: 'gallery-all',
+    component: BrowsePage,
+    meta: { reuseKey: 'browse', browseContract: 'gallery-all' }
+  },
+  {
+    path: '/gallery/all/:group/:albumPath+',
+    name: 'gallery-all-album',
+    component: BrowsePage,
+    props: true,
+    meta: { reuseKey: 'browse', browseContract: 'gallery-all' }
+  },
+  {
     path: '/calendar',
     name: 'calendar',
     component: CalendarOverview

@@ -57,6 +57,17 @@ class DateItemsResponse(BaseModel):
     items: List[DateItem]
 
 
+class GalleryOverviewResponse(BaseModel):
+    scope: str = "all"
+    total: int = 0
+    items: List[DateItem] = Field(default_factory=list)
+
+
+class GalleryItemsResponse(BaseModel):
+    scope: str = "all"
+    items: List[DateItem] = Field(default_factory=list)
+
+
 # ── Cache generation ──────────────────────────────────────────────────────────
 
 class CacheRequest(BaseModel):

@@ -21,6 +21,7 @@ def init_db() -> None:
     from app.models.album_image import AlbumImage  # noqa: F401
     from app.models.category import Category    # noqa: F401
     from app.models.image_asset import ImageAsset  # noqa: F401
+    from app.models.recent_import_operation import RecentImportOperation  # noqa: F401
     from app.models.tag import Tag              # noqa: F401
     from app.models.trash_entry import TrashEntry  # noqa: F401
     SQLModel.metadata.create_all(engine)
@@ -252,6 +253,18 @@ def _migrate_db() -> None:
             try:
                 conn.execute(
                     text(f"ALTER TABLE trash_entry ADD COLUMN {column} {col_type}")
+                )
+                conn.commit()
+            except Exception:
+                pass
+
+        # ── recent_import_operation columns ───────────────────────────────
+        for column, col_type in [
+            ("successful_image_ids", "TEXT"),
+        ]:
+            try:
+                conn.execute(
+                    text(f"ALTER TABLE recentimportoperation ADD COLUMN {column} {col_type}")
                 )
                 conn.commit()
             except Exception:

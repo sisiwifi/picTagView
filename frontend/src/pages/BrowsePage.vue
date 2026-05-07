@@ -703,7 +703,10 @@ export default {
       if (this.isAlbumMode) {
         return `browse:${this.fullAlbumPath}`
       }
-      return `browse:${this.dateGroup}`
+      if (this.dateGroup) {
+        return `browse:${this.dateGroup}`
+      }
+      return `browse:${this.pageContractName}`
     },
     cacheSortSignature() {
       return `${this.sortBy}:${this.sortDir}:${this.items.length}`

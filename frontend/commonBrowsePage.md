@@ -1,6 +1,6 @@
 # Common Browse Page 契约说明
 
-本文档对应 `frontend/src/utils/commonBrowsePage.js` 的当前实现，描述 `BrowsePage.vue` 如何通过页面契约切换 `calendar`、`collection`、`tag`、`trash` 四种浏览模式。
+本文档对应 `frontend/src/utils/commonBrowsePage.js` 的当前实现，描述 `BrowsePage.vue` 如何通过页面契约切换 `calendar`、`gallery-recent`、`gallery-all`、`collection`、`tag`、`trash` 六种浏览模式。
 
 ## 1. 目标
 
@@ -29,6 +29,8 @@
 支持的契约名：
 
 - `calendar`
+- `gallery-recent`
+- `gallery-all`
 - `collection`
 - `tag`
 - `trash`
@@ -85,11 +87,13 @@
 | `afterPreviewRepair(vm, repairIds)` | 预览修复后的收尾逻辑 |
 | `updateCover(vm, item)` | 可选，仅日历相册和收藏夹支持 |
 
-## 5. 当前四个契约
+## 5. 当前六个契约
 
 | 契约 | 数据源 | 默认排序 | 页头动作 | 主动作 / 次动作 | 预览修复 key |
 | --- | --- | --- | --- | --- | --- |
 | `calendar` | `/api/dates/{group}/items` 或 `/api/albums/by-path/{path}` | 月份页 `date asc`；相册页 `alpha asc` | 相册模式下可进入“选择封面” | `查看原图/查看相册` + `移入回收站` | `image_ids` |
+| `gallery-recent` | `/api/gallery/recent/items` | `date asc` | 无 | 图片 `查看原图`、相册 `打开目录` + `移入回收站` | `image_ids` |
+| `gallery-all` | `/api/gallery/all/items` | `date asc` | 无 | 图片 `查看原图`、相册 `打开目录` + `移入回收站` | `image_ids` |
 | `collection` | `/api/collections/{collectionPublicId}` | `date asc` | 可进入“选择封面” | `查看原图` + `移入回收站` | `image_ids` |
 | `tag` | `/api/tags/{tagId}/images` | `date desc` | `编辑标签` | `查看原图` + `移入回收站` | `image_ids` |
 | `trash` | `/api/trash/items` | `date desc` | `清空回收站` | `还原` + `删除` | `trash_entry_ids` |
@@ -104,20 +108,31 @@
 - 相册详情层的主动作不是打开图片，而是调用 `/api/albums/open-by-path/{album_path}` 打开磁盘目录。
 - 在相册模式下，页头会显示“选择封面”按钮，并通过 `/api/albums/{public_id}/cover` 保存封面。
 
-### 6.2 `collection`
+### 6.2 `gallery-recent` / `gallery-all`
+
+- 两个契约都从 `/gallery` 父页进入，面包屑固定为“图库管理 -> 当前子页”。
+- 当进入相册层级时，路由保持在 `/gallery/recent/:group/:albumPath+` 或 `/gallery/all/:group/:albumPath+`，不再跳回 `/calendar/...`。
+- 数据格式沿用 `DateItem`，因此二级页继续复用日期视图的选择态、详情浮层与预览修复链路。
+- 条目允许同时包含：
+  - 顶层相册节点
+  - 顶层直图节点
+- 排序约定与日期视图的二级页保持一致：相册在前，图片在后，两类节点各自按时间/名称规则排序。
+- 返回行为固定留在 gallery 体系内：相册页先回当前 gallery 子页上一级，相册根页再回 `/gallery`。
+
+### 6.3 `collection`
 
 - 面包屑固定为“收藏 -> 当前收藏夹”。
 - 条目只包含图片，没有相册节点。
 - 点击图片和详情主动作都走系统打开图片。
 - 收藏夹页同样支持手动封面，接口为 `/api/collections/{public_id}/cover`。
 
-### 6.3 `tag`
+### 6.4 `tag`
 
 - 面包屑固定为“标签总览 -> 当前标签”。
 - 页头额外动作只有“编辑标签”。
 - 浏览信息并不直接使用后端相册结构，而是把 `/api/tags/{id}/images` 返回的 `tag` 元数据包装成一个“浏览容器信息”。
 
-### 6.4 `trash`
+### 6.5 `trash`
 
 - 面包屑只有“回收站”。
 - 点击条目不会直接打开原图，而是打开回收站详情浮层。

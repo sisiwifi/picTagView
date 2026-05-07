@@ -10,6 +10,7 @@ from app.db.session import get_session, init_db
 from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
+from app.services.recent_import_service import record_recent_import_operation
 from app.services.category_service import DEFAULT_CATEGORY_ID
 from app.services.cover_service import build_asset_cover_payload, cover_is_manual, extract_cover_photo_id
 from app.services.parallel_processor import (
@@ -198,11 +199,27 @@ def _set_album_cover_if_needed(session, public_ids: list[str], asset: ImageAsset
             session.add(album)
 
 
+def _append_unique_int(target: list[int], value: int | None) -> None:
+    if not isinstance(value, int) or value <= 0 or value in target:
+        return
+    target.append(value)
+
+
+def _append_unique_str(target: list[str], value: str | None) -> None:
+    if not isinstance(value, str):
+        return
+    candidate = value.strip()
+    if not candidate or candidate in target:
+        return
+    target.append(candidate)
+
+
 async def import_files(
     files: list[UploadFile],
     last_modified_times: Optional[list[Optional[int]]] = None,
     created_times: Optional[list[Optional[int]]] = None,
     category_id: Optional[int] = None,
+    recent_import_mode: str = "replace",
 ) -> dict[str, list[str]]:
     init_db()
     load_hash_index()
@@ -211,6 +228,9 @@ async def import_files(
 
     imported: list[str] = []
     skipped: list[str] = []
+    request_preview_image_ids: list[int] = []
+    request_direct_image_ids: list[int] = []
+    request_top_album_public_ids: list[str] = []
 
     metadata = []
     for index, upload in enumerate(files):
@@ -432,6 +452,9 @@ async def import_files(
                         _set_album_cover_if_needed(session, album_public_ids, existing)
                         if existing.id is not None:
                             add_to_hash_index(file_hash, existing.id, quick_hash)
+                            _append_unique_int(request_preview_image_ids, existing.id)
+                        if album_public_ids:
+                            _append_unique_str(request_top_album_public_ids, album_public_ids[0])
                         imported.append(original)
                     else:
                         thumb_ok = has_required_thumb(existing.thumbs)
@@ -497,6 +520,8 @@ async def import_files(
                             session.add(existing)
                             if existing.id is not None:
                                 add_to_hash_index(file_hash, existing.id, quick_hash)
+                                _append_unique_int(request_preview_image_ids, existing.id)
+                                _append_unique_int(request_direct_image_ids, existing.id)
                             imported.append(original)
                         else:
                             skipped.append(original)
@@ -559,6 +584,11 @@ async def import_files(
 
                 if asset.id is not None:
                     add_to_hash_index(file_hash, asset.id, quick_hash)
+                    _append_unique_int(request_preview_image_ids, asset.id)
+                    if album_public_ids:
+                        _append_unique_str(request_top_album_public_ids, album_public_ids[0])
+                    else:
+                        _append_unique_int(request_direct_image_ids, asset.id)
                 imported.append(original)
 
             if touched_tag_ids:
@@ -570,4 +600,12 @@ async def import_files(
         del batch_ready
 
     save_hash_index()
+    if imported or recent_import_mode == "replace":
+        record_recent_import_operation(
+            successful_image_ids=request_preview_image_ids,
+            preview_image_ids=request_preview_image_ids,
+            direct_image_ids=request_direct_image_ids,
+            top_album_public_ids=request_top_album_public_ids,
+            mode=recent_import_mode,
+        )
     return {"imported": imported, "skipped": skipped}

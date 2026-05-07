@@ -7,6 +7,7 @@
 | 模块 | 当前实现 |
 | --- | --- |
 | 导入与去重 | Gallery 页按文件夹分批导入，后端按 `media/YYYY-MM/` 写入；同批次内完成哈希去重、相册链维护、图片主分类写入，以及可选的文件名自动打标 |
+| 图库管理 | `/gallery` 作为父页，同时展示“最近导入”和“图库总览”两条一级缩略图预览；recent 直接读取最近一批成功导入图片全集；普通缩略图直接打开只读详情，最后一格以图片承载“查看全部”跳转 |
 | 日期与相册浏览 | `CalendarOverview` 展示月份总览；`BrowsePage` 负责月份列表与相册层级浏览，数据来自 `/api/dates/*` 与 `/api/albums/*` |
 | 标签系统 | 标签总览页支持按首字母分组、Top10 排行、草稿预占、编辑、删除、JSON 导入导出；标签二级页复用 `BrowsePage`，数据来自 `/api/tags/{tag_id}/images` |
 | 收藏夹 | 收藏总览页展示全部可见收藏夹；收藏二级页复用 `BrowsePage`，支持批量添加/移除图片与手动选择封面 |
@@ -46,7 +47,11 @@
 | `/search` | `SearchPage.vue` | 单输入搜索 |
 | `/tags` | `TagOverviewPage.vue` | 标签总览 |
 | `/tags/:tagId` | `BrowsePage.vue` | 标签二级浏览 |
-| `/gallery` | `GalleryPage.vue` | 导入与全量刷新 |
+| `/gallery` | `GalleryPage.vue` | 图库管理父页：导入、刷新、最近导入预览、图库总览预览 |
+| `/gallery/recent` | `BrowsePage.vue` | 最近导入二级浏览 |
+| `/gallery/recent/:group/:albumPath+` | `BrowsePage.vue` | 最近导入中的相册层级浏览 |
+| `/gallery/all` | `BrowsePage.vue` | 图库总览二级浏览 |
+| `/gallery/all/:group/:albumPath+` | `BrowsePage.vue` | 图库总览中的相册层级浏览 |
 | `/calendar` | `CalendarOverview.vue` | 日期总览 |
 | `/calendar/:group` | `BrowsePage.vue` | 月份浏览 |
 | `/calendar/:group/:albumPath+` | `BrowsePage.vue` | 相册层级浏览 |
@@ -56,7 +61,7 @@
 | `/settings/categories` | `CategorySettingsPage.vue` | 主分类管理 |
 | `/trash` | `BrowsePage.vue` | 回收站浏览 |
 
-`BrowsePage.vue` 通过 `browseContract` 在 `calendar`、`collection`、`tag`、`trash` 四种模式之间切换，统一复用布局、分页/滚动配置、选择态、详情浮层和预览修复流程。更细的契约说明见 `frontend/commonBrowsePage.md`。
+`BrowsePage.vue` 通过 `browseContract` 在 `calendar`、`gallery-recent`、`gallery-all`、`collection`、`tag`、`trash` 六种模式之间切换，统一复用布局、分页/滚动配置、选择态、详情浮层和预览修复流程。更细的契约说明见 `frontend/commonBrowsePage.md`。
 
 ## 目录说明
 

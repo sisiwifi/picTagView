@@ -4,6 +4,7 @@ from app.api.routers.cache import router as cache_router
 from app.api.routers.collections import router as collections_router
 from app.api.routers.categories import router as categories_router
 from app.api.routers.dates import router as dates_router
+from app.api.routers.gallery import router as gallery_router
 from app.api.routers.images import router as images_router
 from app.api.routers.search import router as search_router
 from app.api.routers.system import router as system_router
@@ -17,6 +18,7 @@ __all__ = [
     "collections_router",
     "categories_router",
     "dates_router",
+    "gallery_router",
     "images_router",
     "search_router",
     "system_router",

@@ -7,6 +7,7 @@ from app.api.routers import (
     collections_router,
     categories_router,
     dates_router,
+    gallery_router,
     images_router,
     search_router,
     system_router,
@@ -18,6 +19,7 @@ router = APIRouter()
 router.include_router(basic_router)
 router.include_router(categories_router)
 router.include_router(dates_router)
+router.include_router(gallery_router)
 router.include_router(albums_router)
 router.include_router(images_router)
 router.include_router(collections_router)

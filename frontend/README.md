@@ -45,7 +45,11 @@ frontend/
 | `/search` | `SearchPage.vue` | 单输入搜索 |
 | `/tags` | `TagOverviewPage.vue` | 标签总览与编辑入口 |
 | `/tags/:tagId` | `BrowsePage.vue` | 标签二级浏览，`browseContract = 'tag'` |
-| `/gallery` | `GalleryPage.vue` | 导入与刷新，`meta.keepAlive = true` |
+| `/gallery` | `GalleryPage.vue` | 图库管理父页，包含导入、刷新、最近导入预览、图库总览预览，`meta.keepAlive = true` |
+| `/gallery/recent` | `BrowsePage.vue` | 最近导入二级浏览，`browseContract = 'gallery-recent'` |
+| `/gallery/recent/:group/:albumPath+` | `BrowsePage.vue` | 最近导入中的相册层级浏览，仍使用 `browseContract = 'gallery-recent'` |
+| `/gallery/all` | `BrowsePage.vue` | 图库总览二级浏览，`browseContract = 'gallery-all'` |
+| `/gallery/all/:group/:albumPath+` | `BrowsePage.vue` | 图库总览中的相册层级浏览，仍使用 `browseContract = 'gallery-all'` |
 | `/calendar` | `CalendarOverview.vue` | 日期总览 |
 | `/calendar/:group` | `BrowsePage.vue` | 月份浏览 |
 | `/calendar/:group/:albumPath+` | `BrowsePage.vue` | 相册层级浏览 |
@@ -66,8 +70,13 @@ frontend/
 
 - 使用 `FolderImportDialog.vue` 管理多行文件夹导入。
 - 每一行导入任务都可以单独指定主分类。
-- 当前按 `50` 张图片分块上传到 `POST /api/import`。
+- 当前按 `50` 张图片分块上传到 `POST /api/import`，并用 `recent_import_mode = replace/append` 把同一次前端导入重新聚合成 recent 快照；recent 一级页优先读取后端快照中的 `successful_image_ids`。
 - 导入过程中支持“停止导入”，通过 `AbortController` 中止当前请求并停止后续批次。
+- `/gallery` 父页会在导入卡片下方展示“最近导入”和“图库总览”两条一级预览带：
+  - 普通缩略图只显示图片本身，不叠加名称，也不额外加暗色遮罩
+  - 如果总数超过当前展示容量，最后一格会复用顺序中的下一张图片作为跳转卡，而不是空白占位块
+  - 点击普通缩略图打开只读详情浮层，点击最后一格或“查看全部”进入二级列表页
+- 导入状态、进度和结果提示恢复为按需展开的紧凑反馈区，不再在页面空闲时预留固定大块空白。
 - 页面激活时会检查月份缩略图缺失，并在需要时静默触发 `POST /api/admin/refresh`。
 
 ### 4.2 `TagOverviewPage.vue`
@@ -104,8 +113,10 @@ frontend/
 ### 4.5 `BrowsePage.vue`
 
 - 是当前最核心的共享浏览壳。
-- 通过 `browseContract` 切换四类数据源：
+- 通过 `browseContract` 切换六类数据源：
   - `calendar`
+  - `gallery-recent`
+  - `gallery-all`
   - `collection`
   - `tag`
   - `trash`
@@ -118,6 +129,8 @@ frontend/
   - 预览修复与缓存缩略图生成
 
 更细的契约字段见 `commonBrowsePage.md`。
+
+- `gallery-recent` 与 `gallery-all` 在相册模式下不再跳入 `/calendar/...`，而是保留在 `/gallery/...` 路由空间内，面包屑和返回行为也随之留在图库管理体系中。
 
 ## 5. 顶层导航与搜索约定
 
@@ -142,6 +155,8 @@ frontend/
 已实现契约：
 
 - `calendar`
+- `gallery-recent`
+- `gallery-all`
 - `collection`
 - `tag`
 - `trash`

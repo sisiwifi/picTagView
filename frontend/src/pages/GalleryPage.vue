@@ -1,8 +1,8 @@
 <template>
-  <section class="page">
+  <section class="page" :style="pageVars">
     <TopLevelPageHeader
       title="图库管理"
-      subtitle="选择并导入图片到系统。"
+      subtitle="选择并导入图片到系统，并从这里进入最近导入与图库总览。"
     />
 
     <div class="card">
@@ -13,7 +13,6 @@
         子文件夹将作为整体单元处理。
       </p>
 
-      <!-- Action buttons -->
       <div class="action-row">
         <button
           class="btn btn--primary"
@@ -51,31 +50,79 @@
         @change="handleFolderSelection"
       />
 
-      <!-- Status line -->
-      <p v-if="status" class="status-text">{{ status }}</p>
+      <div class="import-feedback">
+        <p v-if="status" class="status-text">{{ status }}</p>
 
-      <!-- Live import indicator -->
-      <div v-if="importing && currentItem" class="live-indicator">
-        <span class="live-indicator__spinner"></span>
-        <span class="live-indicator__name">{{ currentItem }}</span>
-      </div>
-
-      <!-- Per-file progress -->
-      <p v-if="importing && totalFiles > 0" class="progress-text">
-        {{ currentFolderLabel ? `${currentFolderLabel} · ` : '' }}{{ doneFiles }} / {{ totalFiles }} 张
-      </p>
-
-      <!-- Unified notice -->
-      <div v-if="noticeVisible" :class="['result-box', `result-box--${noticeType}`]">
-        <div class="result-box__header">
-          <p class="result-box__line result-box__line--heading">{{ noticeTitle }}</p>
-          <button class="result-box__close" type="button" @click="closeNotice">×</button>
+        <div v-if="importing && currentItem" class="live-indicator">
+          <span class="live-indicator__spinner"></span>
+          <span class="live-indicator__name">{{ currentItem }}</span>
         </div>
-        <p v-for="(line, idx) in noticeLines" :key="idx" class="result-box__line result-box__line--muted">
-          {{ line }}
+
+        <p v-if="importing && totalFiles > 0" class="progress-text">
+          {{ currentFolderLabel ? `${currentFolderLabel} · ` : '' }}{{ doneFiles }} / {{ totalFiles }} 张
         </p>
+
+        <div v-if="noticeVisible" :class="['result-box', `result-box--${noticeType}`]">
+          <div class="result-box__header">
+            <p class="result-box__line result-box__line--heading">{{ noticeTitle }}</p>
+            <button class="result-box__close" type="button" @click="closeNotice">×</button>
+          </div>
+          <p v-for="(line, idx) in noticeLines" :key="idx" class="result-box__line result-box__line--muted">
+            {{ line }}
+          </p>
+        </div>
       </div>
     </div>
+
+    <section
+      v-for="section in overviewSections"
+      :key="section.scope"
+      class="gallery-overview"
+    >
+      <div class="gallery-overview__head">
+        <div class="gallery-overview__head-main">
+          <h3 class="gallery-overview__title">{{ section.title }}</h3>
+          <p class="gallery-overview__hint">{{ section.hint }}</p>
+        </div>
+        <button
+          class="gallery-overview__open"
+          type="button"
+          :disabled="section.loading || !section.total"
+          @click="openOverviewList(section.scope)"
+        >
+          查看全部
+        </button>
+      </div>
+
+      <LoadingSpinner v-if="section.loading" />
+
+      <div v-else-if="section.error" class="gallery-overview__empty gallery-overview__empty--error">
+        <span class="gallery-overview__empty-icon">!</span>
+        <p>{{ section.error }}</p>
+      </div>
+
+      <div v-else-if="!section.total" class="gallery-overview__empty">
+        <span class="gallery-overview__empty-icon">□</span>
+        <p>{{ section.emptyText }}</p>
+      </div>
+
+      <div v-else class="gallery-overview__grid" :style="overviewGridStyle(section)">
+        <ThumbCard
+          v-for="slot in section.displaySlots"
+          :key="slot.key"
+          :src="resolvedOverviewUrl(slot.item)"
+          :class="['gallery-overview__card', { 'gallery-overview__card--summary': slot.isSummary }]"
+          :overlay-opacity="slot.isSummary ? 0.24 : 0"
+          :rounded="'1.25rem'"
+          @click="openOverviewSlot(section.scope, slot)"
+        >
+          <div v-if="slot.isSummary" class="gallery-overview__summary-overlay">
+            <span class="gallery-overview__summary-title">{{ section.summaryTitle }}</span>
+            <span class="gallery-overview__summary-count">{{ section.total }} 个</span>
+          </div>
+        </ThumbCard>
+      </div>
+    </section>
 
     <FolderImportDialog
       :visible="importDialogOpen"
@@ -91,14 +138,62 @@
       @toggle-row="toggleImportRowSelection"
       @update-category="updateImportRowCategory"
     />
+
+    <SelectionDetailOverlay
+      :visible="detailOverlayVisible"
+      :layer-style="detailLayerStyle"
+      :panel-style="detailPanelStyle"
+      :preview-items="detailPreviewItems"
+      :is-multi="false"
+      :name-field="detailNameField"
+      :category-field="detailCategoryField"
+      :tags-field="detailTagsField"
+      :size-field="detailSizeField"
+      :size-label="'尺寸'"
+      :imported-field="detailImportedField"
+      :created-field="detailCreatedField"
+      :raw-name="detailRawName"
+      :raw-category-id="detailRawCategoryId"
+      :raw-created-at="detailRawCreatedAt"
+      primary-action-label="查看原图"
+      primary-action-tone="accent"
+      :can-open-primary-action="canOpenDetailPrimaryAction"
+      :primary-action-disabled="!canOpenDetailPrimaryAction"
+      secondary-action-label="进入列表"
+      secondary-action-tone="neutral"
+      :secondary-action-disabled="!canOpenDetailSecondaryAction"
+      :metadata-permissions="detailMetadataPermissions"
+      :can-open-collection-menu="false"
+      :collection-menu-disabled="true"
+      :can-edit-tags="false"
+      :tag-menu-disabled="true"
+      :can-edit-name="false"
+      :can-edit-category="false"
+      :can-edit-created-at="false"
+      :edit-busy="false"
+      current-date-group=""
+      :category-options="[]"
+      @close="closeOverviewDetail"
+      @open-primary="openDetailPrimaryAction"
+      @secondary-action="openDetailSecondaryAction"
+      @preview-error="onDetailPreviewError"
+    />
   </section>
 </template>
 
 <script>
 import FolderImportDialog from '../components/FolderImportDialog.vue'
+import LoadingSpinner from '../components/LoadingSpinner.vue'
+import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
+import ThumbCard from '../components/ThumbCard.vue'
 import TopLevelPageHeader from './TopLevelPageHeader.vue'
+import {
+  API_BASE,
+  buildOriginalMediaUrl,
+  resolvePreviewUrl,
+  topLevelPageVars,
+} from './topLevelPageConvention'
 
-const API_BASE = 'http://127.0.0.1:8000'
 const DEFAULT_CATEGORY_ID = 1
 const AUTO_CATEGORY_KEY = 'auto'
 const IMPORT_CHUNK = 50
@@ -126,10 +221,21 @@ function isImportStopError(err) {
   return Boolean(err && (err.name === IMPORT_STOP_ERROR_NAME || err.name === 'AbortError'))
 }
 
+function createEmptyOverview(scope) {
+  return {
+    scope,
+    total: 0,
+    items: [],
+  }
+}
+
 export default {
   name: 'GalleryPage',
   components: {
     FolderImportDialog,
+    LoadingSpinner,
+    SelectionDetailOverlay,
+    ThumbCard,
     TopLevelPageHeader,
   },
 
@@ -154,23 +260,162 @@ export default {
       checkingThumbs: false,
       currentFolderLabel: '',
       stopRequested: false,
+      recentOverview: createEmptyOverview('recent'),
+      allOverview: createEmptyOverview('all'),
+      recentOverviewLoading: false,
+      allOverviewLoading: false,
+      recentOverviewError: '',
+      allOverviewError: '',
+      viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 0,
+      viewportHeight: typeof window !== 'undefined' ? window.innerHeight : 0,
+      detailOverlayVisible: false,
+      detailScope: 'recent',
+      detailItem: null,
     }
+  },
+
+  computed: {
+    pageVars() {
+      return topLevelPageVars()
+    },
+    categoryDisplayMap() {
+      return this.importCategories.reduce((map, category) => {
+        if (!Number.isInteger(category?.id)) return map
+        map[category.id] = category.display_name || category.name || `#${category.id}`
+        return map
+      }, {})
+    },
+    isPortrait() {
+      return this.viewportHeight > this.viewportWidth
+    },
+    overviewSlotCount() {
+      return this.isPortrait ? 3 : 5
+    },
+    overviewSections() {
+      return [
+        this.buildOverviewSection({
+          scope: 'recent',
+          title: '最近导入',
+          hint: '一级页点击图片直接查看详情，点击最后一格进入完整列表。',
+          emptyText: '最近暂无导入记录。',
+          overview: this.recentOverview,
+          loading: this.recentOverviewLoading,
+          error: this.recentOverviewError,
+        }),
+        this.buildOverviewSection({
+          scope: 'all',
+          title: '图库总览',
+          hint: '拉平全部可见图片做一级预览，完整列表与日期视图二级页保持一致。',
+          emptyText: '图库中暂无可见图片。',
+          overview: this.allOverview,
+          loading: this.allOverviewLoading,
+          error: this.allOverviewError,
+        }),
+      ]
+    },
+    detailLayerStyle() {
+      return {
+        top: '0px',
+        right: '0px',
+        bottom: '0px',
+        left: '0px',
+      }
+    },
+    detailPanelStyle() {
+      if (this.isPortrait) {
+        return {
+          width: 'min(100%, 540px)',
+          height: 'min(100%, 92vh)',
+        }
+      }
+      return {
+        width: 'min(1120px, 84vw)',
+        height: 'min(760px, 84vh)',
+      }
+    },
+    detailPreviewItems() {
+      if (!this.detailItem) return []
+      return [
+        {
+          key: this.detailItem.media_rel_path || this.detailItem.id || this.detailItem.name || 'detail',
+          name: this.detailNameText(this.detailItem),
+          type: 'image',
+          previewUrl: this.resolvedOverviewUrl(this.detailItem),
+          aspectRatio: this.detailAspectRatio(this.detailItem),
+        },
+      ]
+    },
+    detailNameField() {
+      return this.buildDetailField([this.detailNameText(this.detailItem)])
+    },
+    detailCategoryField() {
+      return this.buildDetailField([this.detailCategoryText(this.detailItem)])
+    },
+    detailTagsField() {
+      return this.buildTagsField(this.detailItem)
+    },
+    detailSizeField() {
+      return this.buildDetailField([this.detailSizeText(this.detailItem)])
+    },
+    detailImportedField() {
+      return this.buildDetailField([this.detailImportedText(this.detailItem)])
+    },
+    detailCreatedField() {
+      return this.buildDetailField([this.detailCreatedText(this.detailItem)])
+    },
+    detailRawName() {
+      return this.detailNameText(this.detailItem)
+    },
+    detailRawCategoryId() {
+      const categoryId = Number(this.detailItem?.category_id)
+      return Number.isInteger(categoryId) && categoryId > 0 ? categoryId : null
+    },
+    detailRawCreatedAt() {
+      return this.detailItem?.file_created_at || null
+    },
+    detailMetadataPermissions() {
+      return {
+        name: false,
+        category: false,
+        tags: false,
+        createdAt: false,
+      }
+    },
+    canOpenDetailPrimaryAction() {
+      return Boolean(buildOriginalMediaUrl(this.detailItem?.media_rel_path))
+    },
+    canOpenDetailSecondaryAction() {
+      return Boolean(this.detailItem && (this.detailScope === 'recent' || this.detailScope === 'all'))
+    },
   },
 
   created() {
     this._activeImportController = null
+    this.fetchGalleryOverviews()
+    this.loadCategoryDisplayLabels()
     this._checkMissingThumbs()
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', this.onResize)
+      window.addEventListener('library-refreshed', this.onLibraryRefreshed)
+    }
   },
 
   beforeUnmount() {
     this.abortActiveImportRequest()
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('resize', this.onResize)
+      window.removeEventListener('library-refreshed', this.onLibraryRefreshed)
+    }
   },
 
   activated() {
+    this.fetchGalleryOverviews()
+    this.loadCategoryDisplayLabels()
     this._checkMissingThumbs()
   },
 
   methods: {
+    resolvePreviewUrl,
     showNotice({ type = 'info', title = '', lines = [] }) {
       this.noticeType = type
       this.noticeTitle = title
@@ -200,6 +445,271 @@ export default {
       this.stopRequested = true
       this.status = '正在停止导入…'
       this.abortActiveImportRequest()
+    },
+
+    onResize() {
+      this.viewportWidth = typeof window !== 'undefined' ? window.innerWidth : this.viewportWidth
+      this.viewportHeight = typeof window !== 'undefined' ? window.innerHeight : this.viewportHeight
+    },
+
+    onLibraryRefreshed() {
+      this.fetchGalleryOverviews()
+    },
+
+    async loadCategoryDisplayLabels(force = false) {
+      if (!force && this.importCategories.length) return
+      try {
+        const res = await fetch(`${API_BASE}/api/categories`)
+        if (!res.ok) return
+        const data = await res.json()
+        this.importCategories = Array.isArray(data.items)
+          ? data.items.filter(category => category && category.is_active !== false)
+          : []
+      } catch {
+        // Keep category labels optional on the overview page.
+      }
+    },
+
+    async fetchGalleryOverviews() {
+      await Promise.all([
+        this.fetchGalleryOverview('recent'),
+        this.fetchGalleryOverview('all'),
+      ])
+    },
+
+    async fetchGalleryOverview(scope) {
+      const loadingKey = scope === 'recent' ? 'recentOverviewLoading' : 'allOverviewLoading'
+      const errorKey = scope === 'recent' ? 'recentOverviewError' : 'allOverviewError'
+      const overviewKey = scope === 'recent' ? 'recentOverview' : 'allOverview'
+
+      this[loadingKey] = true
+      this[errorKey] = ''
+      try {
+        const params = new URLSearchParams({ limit: '12' })
+        const response = await fetch(`${API_BASE}/api/gallery/${scope}/overview?${params.toString()}`)
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const payload = await response.json()
+        this[overviewKey] = {
+          ...createEmptyOverview(scope),
+          ...payload,
+        }
+      } catch {
+        this[overviewKey] = createEmptyOverview(scope)
+        this[errorKey] = '预览接口不可用，请确认前后端服务均已启动。'
+      } finally {
+        this[loadingKey] = false
+      }
+    },
+
+    buildOverviewSection({ scope, title, hint, emptyText, overview, loading, error }) {
+      const displaySlots = this.getOverviewDisplaySlots(scope, overview)
+      return {
+        scope,
+        title,
+        hint,
+        emptyText,
+        total: Number(overview?.total || 0),
+        loading,
+        error,
+        displaySlots,
+        summaryTitle: scope === 'recent' ? '最近导入' : '图库总览',
+      }
+    },
+
+    getOverviewDisplaySlots(scope, overview) {
+      const total = Number(overview?.total || 0)
+      if (!total) return []
+      const items = Array.isArray(overview?.items) ? overview.items : []
+      const visibleItems = items.slice(0, this.overviewSlotCount)
+      if (!visibleItems.length) return []
+
+      if (total > this.overviewSlotCount) {
+        return visibleItems.map((item, index) => ({
+          item,
+          isSummary: index === visibleItems.length - 1,
+          key: `${scope}:${item.media_rel_path || item.id || item.name || index}:${index === visibleItems.length - 1 ? 'summary' : 'detail'}`,
+        }))
+      }
+      return visibleItems.map((item, index) => ({
+        item,
+        isSummary: false,
+        key: `${scope}:${item.media_rel_path || item.id || item.name || index}:detail`,
+      }))
+    },
+
+    overviewGridStyle(section) {
+      const slotCount = section.displaySlots?.length || 0
+      const minimumColumns = this.isPortrait ? 2 : 3
+      const columnCount = Math.max(Math.min(this.overviewSlotCount, minimumColumns), slotCount)
+      return {
+        '--gallery-overview-columns': String(columnCount),
+      }
+    },
+
+    resolvedOverviewUrl(item) {
+      return this.resolvePreviewUrl(item) || buildOriginalMediaUrl(item?.media_rel_path)
+    },
+
+    openOverviewList(scope) {
+      const target = scope === 'recent' ? '/gallery/recent' : '/gallery/all'
+      this.$router.push(target).catch(() => {})
+    },
+
+    openOverviewSlot(scope, slot) {
+      if (!slot?.item) return
+      if (slot.isSummary) {
+        this.openOverviewList(scope)
+        return
+      }
+      this.openOverviewDetail(scope, slot.item)
+    },
+
+    openOverviewDetail(scope, item) {
+      if (!item) return
+      this.detailScope = scope
+      this.detailItem = item
+      this.detailOverlayVisible = true
+    },
+
+    closeOverviewDetail() {
+      this.detailOverlayVisible = false
+      this.detailItem = null
+    },
+
+    openDetailPrimaryAction() {
+      const originalUrl = buildOriginalMediaUrl(this.detailItem?.media_rel_path)
+      if (!originalUrl) return
+      if (typeof window !== 'undefined') {
+        window.open(originalUrl, '_blank', 'noopener')
+      }
+    },
+
+    openDetailSecondaryAction() {
+      if (!this.canOpenDetailSecondaryAction) return
+      this.openOverviewList(this.detailScope)
+      this.closeOverviewDetail()
+    },
+
+    onDetailPreviewError() {
+      // Keep the read-only overlay open and allow the built-in skeleton fallback.
+    },
+
+    detailNameText(item) {
+      return item?.name || item?.full_filename || '未命名'
+    },
+
+    detailCategoryText(item) {
+      const categoryId = Number(item?.category_id)
+      if (!Number.isInteger(categoryId) || categoryId <= 0) return ''
+      return this.categoryDisplayMap[categoryId] || `#${categoryId}`
+    },
+
+    detailAspectRatio(item) {
+      const width = Number(item?.width)
+      const height = Number(item?.height)
+      if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+        return '4 / 3'
+      }
+      return `${width} / ${height}`
+    },
+
+    buildTagsField(item) {
+      const tagIds = Array.isArray(item?.tags)
+        ? [...new Set(item.tags.filter(tagId => Number.isInteger(tagId) && tagId > 0))]
+        : []
+      if (!tagIds.length) {
+        return {
+          text: '',
+          isVarious: false,
+          isEmpty: true,
+          items: [],
+        }
+      }
+      return {
+        text: tagIds.map(tagId => `#${tagId}`).join(' · '),
+        isVarious: false,
+        isEmpty: false,
+        items: [],
+      }
+    },
+
+    buildDetailField(values, options = {}) {
+      const emptyText = Object.prototype.hasOwnProperty.call(options, 'emptyText')
+        ? options.emptyText
+        : '—'
+      const normalized = Array.isArray(values)
+        ? values.map(value => (value == null ? '' : String(value).trim()))
+        : []
+
+      if (!normalized.length) {
+        return {
+          text: emptyText,
+          isVarious: false,
+          isEmpty: !emptyText,
+        }
+      }
+
+      const first = normalized[0]
+      const allSame = normalized.every(value => value === first)
+      if (!allSame) {
+        return {
+          text: 'various',
+          isVarious: true,
+          isEmpty: false,
+        }
+      }
+
+      const isEmpty = first.length === 0
+      return {
+        text: isEmpty ? emptyText : first,
+        isVarious: false,
+        isEmpty,
+      }
+    },
+
+    formatDateTime(value) {
+      if (!value) return ''
+      const date = value instanceof Date ? value : new Date(value)
+      if (Number.isNaN(date.getTime())) return ''
+
+      const pad = segment => String(segment).padStart(2, '0')
+      return [
+        `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+        `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
+      ].join(' ')
+    },
+
+    formatFileSizeMb(bytesValue) {
+      const bytes = Number(bytesValue)
+      if (!Number.isFinite(bytes) || bytes < 0) return ''
+      const megaBytes = bytes / (1024 * 1024)
+      if (!Number.isFinite(megaBytes)) return ''
+      const formatted = megaBytes >= 100
+        ? megaBytes.toFixed(1)
+        : megaBytes.toFixed(2)
+      return formatted.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
+    },
+
+    detailSizeText(item) {
+      const width = Number(item?.width)
+      const height = Number(item?.height)
+      const parts = []
+      if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+        parts.push(`${width} × ${height} px`)
+      }
+      const fileSizeMb = this.formatFileSizeMb(item?.file_size)
+      if (fileSizeMb) {
+        parts.push(`${fileSizeMb} MB`)
+      }
+      return parts.join(' · ')
+    },
+
+    detailImportedText(item) {
+      return this.formatDateTime(item?.imported_at)
+    },
+
+    detailCreatedText(item) {
+      return this.formatDateTime(item?.file_created_at)
     },
 
     defaultImportCategoryValue() {
@@ -367,7 +877,7 @@ export default {
       return fallbackMessage || `HTTP ${response.status}`
     },
 
-    async importFolderRow(row) {
+    async importFolderRow(row, recentImportModeState) {
       const { batches } = this.buildImportBatches(row.files)
       let importedCount = 0
       let skippedCount = 0
@@ -391,6 +901,7 @@ export default {
         fd.append('last_modified_json', JSON.stringify(lastModifiedTimes))
         fd.append('created_time_json', JSON.stringify(createdTimes))
         fd.append('category_id', row.categoryValue)
+        fd.append('recent_import_mode', recentImportModeState?.nextMode || 'replace')
 
         const controller = new AbortController()
         this._activeImportController = controller
@@ -414,6 +925,9 @@ export default {
         }
 
         const data = await res.json()
+        if (recentImportModeState?.nextMode === 'replace') {
+          recentImportModeState.nextMode = 'append'
+        }
         importedCount += Array.isArray(data.imported) ? data.imported.length : 0
         skippedCount += Array.isArray(data.skipped) ? data.skipped.length : 0
         this.doneFiles = Math.min(this.doneFiles + batch.imageCount, this.totalFiles)
@@ -440,6 +954,8 @@ export default {
       let importedCount = 0
       let skippedCount = 0
       let stopIndex = -1
+      let shouldRefreshOverview = false
+      const recentImportModeState = { nextMode: 'replace' }
 
       this.importing = true
       this.stopRequested = false
@@ -460,7 +976,7 @@ export default {
           this.currentFolderLabel = row.label
           this.status = `正在导入（${index + 1}/${rowsToImport.length}）${row.label}…`
           try {
-            const result = await this.importFolderRow(row)
+            const result = await this.importFolderRow(row, recentImportModeState)
             importedCount += result.importedCount
             skippedCount += result.skippedCount
           } catch (err) {
@@ -500,6 +1016,7 @@ export default {
           this.resetImportDialog()
           this.status = `导入完成：${importedCount} 张，重复跳过 ${skippedCount} 张。`
         }
+        shouldRefreshOverview = importedCount > 0
       } finally {
         this.importing = false
         this.stopRequested = false
@@ -509,6 +1026,12 @@ export default {
         this.currentItem = ''
         this.totalFiles = 0
         this.doneFiles = 0
+        if (shouldRefreshOverview) {
+          await this.fetchGalleryOverviews()
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('library-refreshed'))
+          }
+        }
       }
     },
 
@@ -525,6 +1048,7 @@ export default {
           title: `刷新完成，当前共 ${data.total_images} 张图片`,
           lines: data.pruned ? [`🗑 已删除失效记录：${data.pruned} 条`] : [],
         })
+        await this.fetchGalleryOverviews()
         this.status = ''
       } catch (err) {
         this.showNotice({ type: 'error', title: '刷新失败', lines: [`${err.message}`] })
@@ -559,11 +1083,7 @@ export default {
 
 <style scoped lang="css">
 .page { @apply flex flex-col gap-6; }
-.page-header { @apply flex flex-col gap-1; }
-.page-title  { @apply text-2xl font-semibold text-slate-900 m-0; }
-.page-subtitle { @apply text-sm text-slate-500 m-0; }
 
-/* Card */
 .card {
   @apply bg-white border border-slate-200 rounded-xl p-5 shadow-sm
          flex flex-col gap-3;
@@ -595,6 +1115,10 @@ export default {
 .hidden-input { @apply hidden; }
 
 /* Status / progress */
+.import-feedback {
+  @apply flex flex-col gap-3;
+}
+
 .status-text   { @apply text-sm text-slate-500 m-0; }
 .progress-text { @apply text-xs text-slate-400 m-0; }
 
@@ -619,6 +1143,8 @@ export default {
 .result-box {
   @apply border border-slate-200 bg-slate-50 rounded-lg p-3
          flex flex-col gap-0.5;
+  max-height: 10rem;
+  overflow: auto;
 }
 .result-box__header {
   @apply flex items-center justify-between gap-2;
@@ -646,6 +1172,92 @@ export default {
 }
 .result-box--error .result-box__line--muted {
   @apply text-red-600;
+}
+
+.gallery-overview {
+  @apply flex flex-col gap-4 rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-sm;
+}
+
+.gallery-overview__head {
+  @apply flex items-start justify-between gap-4;
+}
+
+.gallery-overview__head-main {
+  @apply flex min-w-0 flex-col gap-1;
+}
+
+.gallery-overview__title {
+  @apply m-0 text-lg font-semibold text-slate-900;
+}
+
+.gallery-overview__hint {
+  @apply m-0 text-sm leading-relaxed text-slate-500;
+}
+
+.gallery-overview__open {
+  @apply rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 transition;
+}
+
+.gallery-overview__open:hover:not(:disabled) {
+  @apply bg-slate-100 text-slate-800;
+}
+
+.gallery-overview__open:disabled {
+  @apply cursor-not-allowed opacity-50;
+}
+
+.gallery-overview__grid {
+  display: grid;
+  grid-template-columns: repeat(var(--gallery-overview-columns), minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.gallery-overview__card {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+}
+
+.gallery-overview__card--summary {
+  @apply relative;
+}
+
+.gallery-overview__summary-overlay {
+  @apply absolute inset-0 flex flex-col items-center justify-center px-4 text-center text-white;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.06) 0%, rgba(15, 23, 42, 0.62) 100%);
+}
+
+.gallery-overview__summary-title {
+  @apply text-base font-semibold;
+  text-shadow: 0 2px 16px rgba(15, 23, 42, 0.45);
+}
+
+.gallery-overview__summary-count {
+  @apply mt-2 text-sm text-white/90;
+  text-shadow: 0 2px 14px rgba(15, 23, 42, 0.4);
+}
+
+.gallery-overview__empty {
+  @apply rounded-[1.25rem] border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center text-sm text-slate-500;
+}
+
+.gallery-overview__empty--error {
+  @apply border-rose-200 bg-rose-50 text-rose-600;
+}
+
+.gallery-overview__empty-icon {
+  @apply mb-2 block text-3xl leading-none;
+}
+
+@media (max-width: 820px) {
+  .gallery-overview__head {
+    @apply flex-col items-stretch;
+  }
+}
+
+@media (max-width: 640px) {
+  .gallery-overview__grid {
+    gap: 0.85rem;
+  }
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }

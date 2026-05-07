@@ -24,6 +24,7 @@ async def import_images(
     last_modified_json: Optional[str] = Form(None),
     created_time_json: Optional[str] = Form(None),
     category_id: Optional[int] = Form(None),
+    recent_import_mode: Optional[str] = Form(None),
 ) -> ImportResponse:
     last_modified_times: Optional[List[Optional[int]]] = None
     created_times: Optional[List[Optional[int]]] = None
@@ -49,7 +50,13 @@ async def import_images(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    result = await import_files(files, last_modified_times, created_times, resolved_category_id)
+    result = await import_files(
+        files,
+        last_modified_times,
+        created_times,
+        resolved_category_id,
+        recent_import_mode or "replace",
+    )
     return ImportResponse(**result)
 
 

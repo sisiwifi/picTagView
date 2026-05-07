@@ -59,14 +59,15 @@
 1. `basic_router`
 2. `categories_router`
 3. `dates_router`
-4. `albums_router`
-5. `images_router`
-6. `collections_router`
-7. `search_router`
-8. `system_router`
-9. `cache_router`
-10. `tags_router`
-11. `trash_router`
+4. `gallery_router`
+5. `albums_router`
+6. `images_router`
+7. `collections_router`
+8. `search_router`
+9. `system_router`
+10. `cache_router`
+11. `tags_router`
+12. `trash_router`
 
 这意味着当前后端已经包含：
 
@@ -98,6 +99,15 @@
 - 子目录会创建树形 `Album`
 - 图片只保留一个主分类，优先使用导入请求给出的 `category_id`
 - 同批次导入会在一个事务内完成写库、关联和自动打标
+- 前端一次导入会被拆成多个上传批次；后端通过 `RecentImportOperation` 快照与 `recent_import_mode = replace/append` 把这些批次重新聚合成一次“最近导入操作”，并在 `successful_image_ids` 中保存整批成功导入图片全集。
+
+### 5.1.1 图库管理聚合
+
+- `gallery.py` 为 `/gallery` 父页提供两类聚合数据：
+  - `recent/*`：最近一次导入操作的一级预览和二级混合列表
+  - `all/*`：图库总览的一级预览和二级混合列表
+- 一级 overview 只返回图片条目，供父页渲染方形缩略图带。
+- 二级 items 继续复用日期视图的“相册优先 + 直图随后”约定，避免单独维护一套浏览语义。
 
 ### 5.2 浏览与可见性
 
@@ -164,6 +174,7 @@
 | `ImageAsset` | 图片主表，保存哈希、宽高、`media_path`、`tags`、`category_id`、时间与缩略图信息 |
 | `Album` | 相册树节点，保存路径、标题、封面和统计 |
 | `AlbumImage` | 相册与图片关系表 |
+| `RecentImportOperation` | 最近一次导入操作快照，记录整批成功导入图片全集，以及 recent 二级页需要的图片 / 顶层相册集合 |
 | `Tag` | Tag 元数据、颜色、描述、`usage_count`、`last_used_at` |
 | `Category` | 图片主分类 |
 | `Collection` | 收藏夹 |

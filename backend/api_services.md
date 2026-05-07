@@ -6,7 +6,7 @@
 
 | 层级 | 位置 | 当前职责 |
 | --- | --- | --- |
-| 路由聚合 | `app/api/routes.py` | 注册 `basic`、`categories`、`dates`、`albums`、`images`、`collections`、`search`、`system`、`cache`、`tags`、`trash` |
+| 路由聚合 | `app/api/routes.py` | 注册 `basic`、`categories`、`dates`、`gallery`、`albums`、`images`、`collections`、`search`、`system`、`cache`、`tags`、`trash` |
 | 路由实现 | `app/api/routers/*.py` | 解析请求、校验参数、组织响应、调用服务 |
 | 通用 API 工具 | `app/api/common.py` | 预览 URL 解析、路径归一化、`media_path` 选择、请求级缩略图可用性索引 |
 | 数据模型与 schema | `app/models/*.py`、`app/api/schemas.py` | 定义实体结构、请求体和响应模型 |
@@ -19,11 +19,20 @@
 | 文件 | 端点 | 当前行为 |
 | --- | --- | --- |
 | `basic.py` | `GET /` | 健康检查，返回 `{"status": "ok"}` |
-| `basic.py` | `POST /api/import` | 接收 `files`、`last_modified_json`、`created_time_json`、`category_id`，调用导入流水线 |
+| `basic.py` | `POST /api/import` | 接收 `files`、`last_modified_json`、`created_time_json`、`category_id`、`recent_import_mode`，调用导入流水线 |
 | `basic.py` | `GET /api/images/count` | 返回库中 `ImageAsset` 总数 |
 | `basic.py` | `POST /api/admin/refresh` | 触发 `quick` 或 `full` 刷新；支持 `repair_cache + image_ids/trash_entry_ids` 的定向预览修复 |
 
-### 2.2 浏览与媒体操作
+### 2.2 图库管理聚合
+
+| 文件 | 端点 | 当前行为 |
+| --- | --- | --- |
+| `gallery.py` | `GET /api/gallery/recent/overview` | 返回 recent 快照中“最近一批成功导入图片全集”的一级预览列表与总数 |
+| `gallery.py` | `GET /api/gallery/all/overview` | 返回全部可见图片拉平后的一级预览列表与总数 |
+| `gallery.py` | `GET /api/gallery/recent/items` | 返回最近导入二级页所需的“相册在前 + 直图在后”混合列表 |
+| `gallery.py` | `GET /api/gallery/all/items` | 返回图库总览二级页所需的“相册在前 + 直图在后”混合列表 |
+
+### 2.3 浏览与媒体操作
 
 | 文件 | 端点 | 当前行为 |
 | --- | --- | --- |
@@ -37,7 +46,7 @@
 | `images.py` | `PATCH /api/images/metadata` | 修改文件名、主分类、创建时间；必要时移动文件到新的月份目录 |
 | `images.py` | `GET /api/images/{image_id}/open` | 打开图片；可用 `path` 精确指定某个 `media_path` 实例 |
 
-### 2.3 Tag、收藏与搜索
+### 2.4 Tag、收藏与搜索
 
 | 文件 | 端点 | 当前行为 |
 | --- | --- | --- |
@@ -59,7 +68,7 @@
 | `collections.py` | `POST /api/collections/{collection_id}/cover` | 设置手动收藏封面 |
 | `search.py` | `GET /api/search/images` | 单输入搜索，支持 `auto`、`filename`、`tag`、`path` |
 
-### 2.4 分类、缓存、系统与回收站
+### 2.5 分类、缓存、系统与回收站
 
 | 文件 | 端点 | 当前行为 |
 | --- | --- | --- |
@@ -94,6 +103,7 @@
 | `services/imports/maintenance.py` | `quick/full` 刷新、路径对账、缺失预览修复、未入库图片收编 |
 | `services/imports/hash_index.py` | `.hash_index.json` 的加载、查询和重建 |
 | `services/imports/helpers.py` | 路径归一化、文件时间回写、缩略图条目更新等辅助函数 |
+| `services/recent_import_service.py` | 维护“最近一批成功导入图片”的快照，支持按 replace/append 聚合同一前端导入会话 |
 | `services/parallel_processor.py` | 并行哈希、尺寸识别与月份封面生成 |
 | `services/cache_thumb_service.py` | 生成 `data/cache/*.webp` 浏览缓存缩略图 |
 | `services/thumbnail_service.py` | 缩略图生成底层逻辑 |
@@ -116,11 +126,28 @@
   - `last_modified_json`
   - `created_time_json`
   - `category_id`
+  - `recent_import_mode`
 - 后端会先校验 `category_id` 是否存在，再进入导入流水线。
+- `recent_import_mode` 当前有两种语义：
+  - `replace`：开始一次新的“最近导入”会话，重置旧快照
+  - `append`：把后续批次合并到当前快照，解决前端分块上传导致的 recent 只显示最后一批问题
+- `RecentImportOperation.successful_image_ids` 当前是 recent 一级页的主数据源，记录该前端导入流程里所有成功导入的图片 id；旧的 `preview_image_ids` 仅保留兼容用途。
 - 如果 `tag_match_setting.enabled=true`，导入批次会在同一数据库事务内按文件名自动匹配 Tag，并以 `append_unique` 方式追加到图片 `tags`。
 - 导入期只会为本批次真正新增关联的 Tag 刷新 `last_used_at` 并增量同步 `usage_count`。
 
-### 4.2 图片元数据编辑
+### 4.2 图库管理聚合协议
+
+- `GET /api/gallery/recent/overview` 与 `GET /api/gallery/all/overview` 都返回：
+  - `scope`
+  - `total`
+  - `items`
+- 一级页 overview 只返回图片预览条目，不返回相册节点；recent overview 优先读取 `successful_image_ids`，而不是旧的 preview 兼容字段。
+- `GET /api/gallery/recent/items` 与 `GET /api/gallery/all/items` 返回 `DateItem` 风格的混合列表，继续复用 `BrowsePage`：
+  - 相册节点在前
+  - 直图节点在后
+  - 两类节点都沿用现有日期视图的排序与详情协议
+
+### 4.3 图片元数据编辑
 
 - `PATCH /api/images/metadata` 当前支持三种更新：
   - `name`
@@ -130,7 +157,7 @@
 - 传入 `file_created_at` 后，如果月份变化，后端会把文件物理移动到新的 `media/YYYY-MM/...` 目录。
 - 如果一张图片有多个 `media_path` 实例，前端应通过 `media_rel_path` 精确指定目标实例。
 
-### 4.3 Tag 协议
+### 4.4 Tag 协议
 
 - 草稿 Tag 通过 `created_by = system:draft-reserve` 标记。
 - 草稿不会出现在：
@@ -144,7 +171,7 @@
   3. `PATCH /api/tags/{id}` 保存并转正
   4. 取消时 `DELETE /api/tags/{id}` 删除草稿
 
-### 4.4 收藏夹协议
+### 4.5 收藏夹协议
 
 - 收藏夹详情和封面接口都使用 `Collection.public_id`，不是数值主键。
 - `POST /api/collections/search` 的核心用途不是全文搜索，而是为“当前选中图片”返回候选收藏夹与命中统计。
@@ -153,7 +180,7 @@
   - `action`，当前使用 `add`、`remove`、`keep`
 - 如果未传现有 `collection_id`，后端会按标题创建或复用同名收藏夹。
 
-### 4.5 搜索协议
+### 4.6 搜索协议
 
 - `GET /api/search/images` 支持 `auto`、`filename`、`tag`、`path`。
 - `auto` 模式下：
@@ -163,7 +190,7 @@
   - 源路径命中
   - `quick_hash` 命中
 
-### 4.6 缓存缩略图队列协议
+### 4.7 缓存缩略图队列协议
 
 - `POST /api/thumbnails/cache` 当前请求体定义在 `app/api/schemas.py::CacheRequest`。
 - 可用字段：
@@ -181,7 +208,7 @@
   - 同一个 `page_token` 的新 `generation` 会替换旧页面任务
   - 状态接口通过 `cursor` 返回新增完成项，而不是每次全量返回
 
-### 4.7 页面配置与自动打标设置
+### 4.8 页面配置与自动打标设置
 
 - `page_config` 当前持久化在 `backend/data/app_settings.json`，包含：
   - `browse_mode`: `scroll | paged`
@@ -193,7 +220,7 @@
   - `drop_numeric_only`
 - 后端已经提供 `GET/POST /api/system/tag-match-setting`，但当前前端设置页还没有实际入口。
 
-### 4.8 回收站协议
+### 4.9 回收站协议
 
 - `POST /api/trash/move` 的请求项字段是：
   - `type`
