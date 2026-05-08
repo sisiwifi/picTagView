@@ -18,7 +18,7 @@
             type="text"
             autocomplete="off"
             spellcheck="false"
-            placeholder="输入文件名，tag:角色名，或 media/2024-01/example.jpg"
+            placeholder="输入文件名，name:文件名，tag:角色名，或 media/2024-01/example.jpg"
             @keyup.esc="clearSearch"
           >
           <button v-if="rawQuery" type="button" class="search-bar__clear" @click="clearSearch">清空</button>
@@ -26,6 +26,7 @@
 
         <div class="search-page__hints">
           <span class="search-page__hint">默认：文件名 + Tag 混合匹配</span>
+          <span class="search-page__hint">文件名：<strong>name:文件名</strong> 或 <strong>$文件名</strong></span>
           <span class="search-page__hint">Tag：<strong>tag:角色名</strong> 或 <strong>#角色名</strong></span>
           <span class="search-page__hint">路径：<strong>path:media/2024-01/a.jpg</strong></span>
         </div>
@@ -53,7 +54,7 @@
 
         <div v-else-if="!hasQuery" class="search-empty">
           <span class="search-empty__icon">⌕</span>
-          <p>输入后立即搜索。普通文本默认匹配文件名与 Tag；路径会切换为 quick hash 反查。</p>
+          <p>输入后立即搜索。普通文本默认匹配文件名与 Tag；name: 或 $ 可切换为仅文件名搜索；路径会切换为 quick hash 反查。</p>
         </div>
 
         <div v-else-if="!searchResponse.items.length" class="search-empty">
@@ -307,7 +308,10 @@ export default {
       if (this.modeInfo.mode === 'path') {
         return '未找到该路径对应的图片，或该图片当前不在可见范围内。'
       }
-      return '没有匹配结果。可以尝试更短的文件名、tag: 前缀，或直接输入 media 路径。'
+      if (this.modeInfo.mode === 'filename') {
+        return '没有匹配结果。可以尝试更短的文件名，或切回普通文本做文件名 + Tag 混合搜索。'
+      }
+      return '没有匹配结果。可以尝试更短的文件名、name: / $ 文件名专搜、tag: 前缀，或直接输入 media 路径。'
     },
     previewColumnCount() {
       const availableWidth = Number(this.resultViewportWidth || 0)

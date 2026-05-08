@@ -85,6 +85,7 @@ frontend/
 - 是当前顶层搜索入口，而不是直接把全部结果放进 `BrowsePage.vue`。
 - 输入框通过 `detectSearchMode()` 自动识别：
   - 普通文本 -> 文件名 / Tag 混合搜索
+  - `name:xxx` 或 `$xxx` -> 文件名 搜索
   - `tag:xxx` 或 `#xxx` -> Tag 搜索
   - `path:...` 或 `media/...` 路径 -> 路径 / quick hash 搜索
 - 一级页只按当前网格列数预览前 `3` 行结果，并展示匹配模式、总数和 quick hash 摘要。

@@ -18,6 +18,7 @@ export const TOP_LEVEL_NAV_ITEMS = Object.freeze([
 
 const SEARCH_PATH_PREFIX = /^path\s*:/i
 const SEARCH_TAG_PREFIX = /^tag\s*:/i
+const SEARCH_FILENAME_PREFIX = /^name\s*:/i
 const IMAGE_SUFFIX_RE = /\.(jpg|jpeg|png|webp|gif|bmp|tif|tiff|avif)$/i
 
 export function topLevelPageVars() {
@@ -43,6 +44,22 @@ export function detectSearchMode(rawValue) {
   const value = String(rawValue || '').trim()
   if (!value) {
     return { mode: 'auto', normalizedQuery: '', hint: '输入文件名、tag 或图片路径' }
+  }
+
+  if (SEARCH_FILENAME_PREFIX.test(value)) {
+    return {
+      mode: 'filename',
+      normalizedQuery: value.replace(SEARCH_FILENAME_PREFIX, '').trim(),
+      hint: '仅按文件名搜索',
+    }
+  }
+
+  if (value.startsWith('$')) {
+    return {
+      mode: 'filename',
+      normalizedQuery: value.slice(1).trim(),
+      hint: '仅按文件名搜索',
+    }
   }
 
   if (SEARCH_TAG_PREFIX.test(value)) {
