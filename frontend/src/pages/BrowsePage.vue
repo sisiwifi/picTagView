@@ -595,6 +595,7 @@ export default {
       virtualContainerTop: 0,
       selectionRowHeight: 0,
       scrollFrameId: null,
+      scrollHostTarget: null,
       selectionDetailsOpen: false,
       selectionDetailsBounds: {
         top: '0px',
@@ -1527,10 +1528,13 @@ export default {
     this.loadData()
     this.fetchPageConfigSetting()
     window.addEventListener('resize', this.onResize)
-    window.addEventListener('scroll', this.onWindowScroll, { passive: true })
     window.addEventListener('keydown', this.onWindowKeydown)
     window.addEventListener('pointerdown', this.onWindowPointerDown)
     window.addEventListener(PAGE_CONFIG_UPDATED_EVENT, this.onPageConfigUpdated)
+  },
+
+  mounted() {
+    this.attachScrollListener()
   },
 
   beforeUnmount() {
@@ -1539,8 +1543,8 @@ export default {
     this.stopPoll()
     this.clearPointerGesture()
     this.unlockPageScroll()
+    this.detachScrollListener()
     window.removeEventListener('resize', this.onResize)
-    window.removeEventListener('scroll', this.onWindowScroll)
     window.removeEventListener('keydown', this.onWindowKeydown)
     window.removeEventListener('pointerdown', this.onWindowPointerDown)
     window.removeEventListener(PAGE_CONFIG_UPDATED_EVENT, this.onPageConfigUpdated)
@@ -1569,6 +1573,84 @@ export default {
   methods: {
     logBrowseDebug(event, payload = {}) {
       console.debug('[BrowsePage]', { event, ...payload })
+    },
+
+    resolveScrollHost() {
+      if (typeof window === 'undefined') return null
+      if (this.$el && typeof this.$el.closest === 'function') {
+        const host = this.$el.closest('main')
+        if (host) return host
+      }
+      return window
+    },
+
+    attachScrollListener() {
+      if (typeof window === 'undefined') return
+      const nextHost = this.resolveScrollHost() || window
+      if (this.scrollHostTarget === nextHost) return
+      this.detachScrollListener()
+      nextHost.addEventListener('scroll', this.onWindowScroll, { passive: true })
+      this.scrollHostTarget = nextHost
+      const nextScrollTop = this.readScrollTop(nextHost)
+      this.lastObservedScrollTop = nextScrollTop
+      this.scrollTop = nextScrollTop
+    },
+
+    detachScrollListener() {
+      if (!this.scrollHostTarget) return
+      this.scrollHostTarget.removeEventListener('scroll', this.onWindowScroll)
+      this.scrollHostTarget = null
+    },
+
+    readScrollTop(host = this.scrollHostTarget || this.resolveScrollHost()) {
+      if (typeof window === 'undefined') return 0
+      if (!host || host === window) {
+        return window.scrollY || window.pageYOffset || 0
+      }
+      return Number(host.scrollTop) || 0
+    },
+
+    readViewportHeight(host = this.scrollHostTarget || this.resolveScrollHost()) {
+      if (typeof window === 'undefined') return this.viewportHeight
+      if (!host || host === window) {
+        return window.innerHeight || this.viewportHeight
+      }
+      return host.clientHeight || this.viewportHeight || window.innerHeight || 0
+    },
+
+    readViewportBounds(host = this.scrollHostTarget || this.resolveScrollHost()) {
+      if (typeof window === 'undefined') {
+        return { top: 0, bottom: 0 }
+      }
+      if (!host || host === window || typeof host.getBoundingClientRect !== 'function') {
+        return { top: 0, bottom: window.innerHeight || 0 }
+      }
+      const rect = host.getBoundingClientRect()
+      return { top: rect.top, bottom: rect.bottom }
+    },
+
+    resolveScrollOffsetTop(element, host = this.scrollHostTarget || this.resolveScrollHost()) {
+      if (!element || typeof element.getBoundingClientRect !== 'function') return 0
+      const elementRect = element.getBoundingClientRect()
+      if (!host || host === window || typeof host.getBoundingClientRect !== 'function') {
+        return elementRect.top + this.readScrollTop(window)
+      }
+      const hostRect = host.getBoundingClientRect()
+      return elementRect.top - hostRect.top + this.readScrollTop(host)
+    },
+
+    scrollHostTo(top, host = this.scrollHostTarget || this.resolveScrollHost()) {
+      if (typeof window === 'undefined') return
+      const nextTop = Math.max(0, Math.round(top))
+      if (!host || host === window) {
+        window.scrollTo({ top: nextTop, behavior: 'auto' })
+        return
+      }
+      if (typeof host.scrollTo === 'function') {
+        host.scrollTo({ top: nextTop, behavior: 'auto' })
+      } else {
+        host.scrollTop = nextTop
+      }
     },
 
     async fetchPageConfigSetting() {
@@ -1631,10 +1713,11 @@ export default {
       this.pageMainHeight = pageMainRect ? Math.round(pageMainRect.height) : 0
       if (!this.$refs.itemGrid) return
 
+      const scrollHost = this.scrollHostTarget || this.resolveScrollHost()
       const rect = this.$refs.itemGrid.getBoundingClientRect()
       this.containerWidth = this.$refs.itemGrid.offsetWidth
       this.itemGridViewportTop = Math.max(0, Math.round(rect.top))
-      this.virtualContainerTop = rect.top + (window.scrollY || window.pageYOffset || 0)
+      this.virtualContainerTop = this.resolveScrollOffsetTop(this.$refs.itemGrid, scrollHost)
 
       const paginationHostRect = this.$refs.paginationHost?.getBoundingClientRect?.()
       this.paginationHostHeight = paginationHostRect ? Math.round(paginationHostRect.height) : 0
@@ -1767,9 +1850,8 @@ export default {
 
     scrollItemGridIntoView() {
       if (!this.$refs.itemGrid || typeof window === 'undefined') return
-      const rect = this.$refs.itemGrid.getBoundingClientRect()
-      const desiredTop = (window.scrollY || window.pageYOffset || 0) + rect.top - RESTORE_ANCHOR_PADDING_PX
-      window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
+      const desiredTop = this.resolveScrollOffsetTop(this.$refs.itemGrid) - RESTORE_ANCHOR_PADDING_PX
+      this.scrollHostTo(desiredTop)
     },
 
     onPaginationPageChange(nextPage) {
@@ -1848,7 +1930,7 @@ export default {
       this.layoutFingerprint = ''
       this.lastCenter = -1
       this.lastScrollDirection = 'none'
-      this.lastObservedScrollTop = typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0
+      this.lastObservedScrollTop = this.readScrollTop()
       this.cacheRequestGeneration = 0
       this.cacheStatusCursor = 0
       this.lastCacheRequestSignature = ''
@@ -1889,7 +1971,7 @@ export default {
         this.selectionGridPageIndex = 0
         this.listPageIndex = 0
       }
-      this.scrollTop = typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0
+      this.scrollTop = this.readScrollTop()
       this.viewportHeight = typeof window !== 'undefined' ? window.innerHeight : this.viewportHeight
       this.teardownObserver()
       this.teardownResizeObserver()
@@ -1918,7 +2000,7 @@ export default {
       }
       const consumedRouteFocus = this.applyRouteFocusAnchor()
       if (!preserveView && !consumedRouteFocus) {
-        window.scrollTo({ top: 0, behavior: 'instant' })
+        this.scrollHostTo(0)
       }
       this.refreshObservedGrid()
       this.pageContract.afterLoad(this)
@@ -2972,7 +3054,7 @@ export default {
     },
 
     onWindowScroll() {
-      const nextScrollTop = window.scrollY || window.pageYOffset || 0
+      const nextScrollTop = this.readScrollTop()
       if (nextScrollTop > this.lastObservedScrollTop) {
         this.lastScrollDirection = 'forward'
       } else if (nextScrollTop < this.lastObservedScrollTop) {
@@ -2986,7 +3068,7 @@ export default {
       this.scrollFrameId = window.requestAnimationFrame(() => {
         this.scrollFrameId = null
         if (this.isVirtualizedMode) {
-          this.scrollTop = window.scrollY || window.pageYOffset || 0
+          this.scrollTop = this.readScrollTop()
           this.syncVirtualWindow()
         }
         if (this.selectionDetailsOpen) {
@@ -3006,12 +3088,13 @@ export default {
 
     collectVisibleDomEntries() {
       if (!this.$refs.itemGrid || typeof window === 'undefined') return []
+      const viewportBounds = this.readViewportBounds()
       return Array.from(this.$refs.itemGrid.querySelectorAll('[data-index]'))
         .map((element) => {
           const index = Number(element.getAttribute('data-index'))
           if (!Number.isInteger(index)) return null
           const rect = element.getBoundingClientRect()
-          if (rect.bottom <= 0 || rect.top >= window.innerHeight) return null
+          if (rect.bottom <= viewportBounds.top || rect.top >= viewportBounds.bottom) return null
           return {
             index,
             left: rect.left,
@@ -3091,7 +3174,7 @@ export default {
 
       if (this.viewMode === 'list') {
         const desiredTop = this.virtualContainerTop + (targetIndex * LIST_ROW_HEIGHT) - RESTORE_ANCHOR_PADDING_PX
-        window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
+        this.scrollHostTo(desiredTop)
         this.logBrowseDebug('anchor-restore', { mode: 'list', targetIndex })
         window.requestAnimationFrame(() => {
           this.syncVirtualWindow(true)
@@ -3102,7 +3185,7 @@ export default {
       if (this.isSelectionGridMode) {
         const rowIndex = Math.floor(targetIndex / this.selectionColumnCount)
         const desiredTop = this.virtualContainerTop + (rowIndex * (this.effectiveSelectionRowHeight + this.selectionGridGapPx)) - RESTORE_ANCHOR_PADDING_PX
-        window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
+        this.scrollHostTo(desiredTop)
         this.logBrowseDebug('anchor-restore', { mode: 'selection-grid', targetIndex, rowIndex })
         window.requestAnimationFrame(() => {
           this.syncVirtualWindow(true)
@@ -3116,7 +3199,7 @@ export default {
           const placement = this.masonryLayout.placements.find(p => p._idx === targetIndex)
           if (placement) {
             const desiredTop = this.virtualContainerTop + placement.top - RESTORE_ANCHOR_PADDING_PX
-            window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
+            this.scrollHostTo(desiredTop)
             this.logBrowseDebug('anchor-restore', { mode: 'masonry', targetIndex, top: placement.top })
             window.requestAnimationFrame(() => {
               this.queuePhotoGridCachePlan(targetIndex, true, 'restore')
@@ -3126,9 +3209,8 @@ export default {
         }
         const target = this.$refs.itemGrid?.querySelector?.(`[data-index="${targetIndex}"]`)
         if (!target) return
-        const rect = target.getBoundingClientRect()
-        const desiredTop = (window.scrollY || window.pageYOffset || 0) + rect.top - RESTORE_ANCHOR_PADDING_PX
-        window.scrollTo({ top: Math.max(0, Math.round(desiredTop)), behavior: 'instant' })
+        const desiredTop = this.resolveScrollOffsetTop(target) - RESTORE_ANCHOR_PADDING_PX
+        this.scrollHostTo(desiredTop)
         this.logBrowseDebug('anchor-restore', { mode: 'photo-grid', targetIndex })
         window.requestAnimationFrame(() => {
           this.queuePhotoGridCachePlan(targetIndex, true, 'restore')
@@ -3280,11 +3362,11 @@ export default {
     syncVirtualWindow(force = false) {
       if (!this.$refs.itemGrid) return
 
-      this.scrollTop = window.scrollY || window.pageYOffset || 0
-      this.viewportHeight = window.innerHeight || this.viewportHeight
+      const scrollHost = this.scrollHostTarget || this.resolveScrollHost()
+      this.scrollTop = this.readScrollTop(scrollHost)
+      this.viewportHeight = this.readViewportHeight(scrollHost)
       this.containerWidth = this.$refs.itemGrid.offsetWidth
-      const rect = this.$refs.itemGrid.getBoundingClientRect()
-      this.virtualContainerTop = rect.top + this.scrollTop
+      this.virtualContainerTop = this.resolveScrollOffsetTop(this.$refs.itemGrid, scrollHost)
 
       if (!this.isVirtualizedMode) {
         this.virtualStartIndex = 0
