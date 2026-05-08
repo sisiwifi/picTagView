@@ -23,6 +23,21 @@
   user-select: none;
 }
 
+.tag-chip--interactive {
+  appearance: none;
+  cursor: pointer;
+  transition: filter 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.tag-chip--interactive:hover {
+  filter: saturate(1.05) brightness(0.98);
+}
+
+.tag-chip--interactive:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(191, 219, 254, 0.9);
+}
+
 .tag-chip--add {
   min-width: 1.36rem;
   padding: 0.14rem 0.44rem;

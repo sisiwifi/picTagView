@@ -165,10 +165,12 @@
                     >{{ tagsField.text }}</span>
                     <TagChipList
                       :tags="Array.isArray(tagsField.items) ? tagsField.items : []"
+                      :clickable="true"
                       :compact="true"
                       :show-add-button="resolvedCanEditTags"
                       :add-disabled="tagMenuDisabled"
                       @add-click="$emit('open-tag-menu')"
+                      @tag-click="$emit('tag-click', $event)"
                     />
                   </div>
                 </div>
@@ -407,6 +409,7 @@ export default {
     'open-primary',
     'open-collection-menu',
     'open-tag-menu',
+    'tag-click',
     'preview-error',
     'secondary-action',
     'submit-name-edit',

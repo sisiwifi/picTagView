@@ -356,6 +356,7 @@
       @close="closeSelectionDetails"
       @open-collection-menu="openCollectionMenu"
       @open-tag-menu="openTagMenu"
+      @tag-click="openBrowseTagFromSelectionDetails"
       @open-primary="openPrimaryFromDetails"
       @secondary-action="onSelectionDetailSecondaryAction"
       @preview-error="onSelectionDetailPreviewError"
@@ -2343,6 +2344,21 @@ export default {
 
     onSelectionDetailSecondaryAction() {
       this.pageContract.runSecondaryAction(this)
+    },
+
+    openBrowseTagFromSelectionDetails(tag) {
+      const tagId = Number(tag?.id)
+      if (!Number.isInteger(tagId) || tagId <= 0) return
+
+      this.closeSelectionDetails()
+      if (this.$route?.name === 'browse-tag' && Number(this.$route?.params?.tagId) === tagId) {
+        return
+      }
+
+      this.$router.push({
+        name: 'browse-tag',
+        params: { tagId },
+      })
     },
 
     openSelectionDetailsFromIsland() {

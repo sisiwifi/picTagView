@@ -1,14 +1,18 @@
 <template>
   <div class="tag-chip-list" :class="{ 'tag-chip-list--compact': compact }">
-    <span
+    <component
       v-for="tag in sortedTags"
       :key="tag.id || tag.name"
+      :is="clickable ? 'button' : 'span'"
       class="tag-chip"
+      :class="{ 'tag-chip--interactive': clickable }"
       :style="chipStyle(tag)"
       :title="tag.description || ''"
+      :type="clickable ? 'button' : null"
+      @click="handleTagClick(tag)"
     >
       {{ tag.display_name || tag.name || '' }}
-    </span>
+    </component>
     <button
       v-if="showAddButton"
       class="tag-chip tag-chip--add"
@@ -27,11 +31,15 @@ import { normalizeTagColors } from '../utils/tagColors'
 
 export default {
   name: 'TagChipList',
-  emits: ['add-click'],
+  emits: ['add-click', 'tag-click'],
   props: {
     tags: {
       type: Array,
       default: () => [],
+    },
+    clickable: {
+      type: Boolean,
+      default: false,
     },
     compact: {
       type: Boolean,
@@ -56,6 +64,10 @@ export default {
     },
   },
   methods: {
+    handleTagClick(tag) {
+      if (!this.clickable) return
+      this.$emit('tag-click', tag)
+    },
     chipStyle(tag) {
       const { color, borderColor, backgroundColor } = normalizeTagColors(tag)
 
