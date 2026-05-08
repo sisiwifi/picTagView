@@ -99,7 +99,7 @@
 - 子目录会创建树形 `Album`
 - 图片只保留一个主分类，优先使用导入请求给出的 `category_id`
 - 同批次导入会在一个事务内完成写库、关联和自动打标
-- 前端一次导入会被拆成多个上传批次；后端通过 `RecentImportOperation` 快照与 `recent_import_mode = replace/append` 把这些批次重新聚合成一次“最近导入操作”，并在 `successful_image_ids` 中保存整批成功导入图片全集。
+- 前端一次导入会被拆成多个上传批次；后端通过 `RecentImportOperation` 快照与 `recent_import_mode = replace/append` 把这些批次重新聚合成一次“最近导入操作”，并在 `successful_image_ids` 中保存整批成功导入图片全集；recent 一级页优先读取这一字段，旧的 `preview_image_ids` 仅保留兼容用途。
 
 ### 5.1.1 图库管理聚合
 
@@ -120,7 +120,8 @@
 - `tags.py` 负责 Tag CRUD、草稿占位、导入导出和 Tag 二级浏览。
 - 草稿 Tag 使用 `created_by = system:draft-reserve` 标记，并在查询与导出时过滤。
 - `tag_match_service.py` 封装文件名分词、Tag 匹配、Tag 排序和计数更新；导入流程与图片页“自动标签”共用这一套逻辑。
-- `search.py` 支持 `filename`、`tag`、`path` 三类搜索，并在路径模式下额外按 `quick_hash` 找到同图图片。
+- `search.py` 支持 `filename`、`tag`、`path` 三类显式搜索，以及 `auto -> mixed/path` 解析，并在路径模式下额外按 `quick_hash` 找到同图图片。
+- 搜索响应当前同时服务 `SearchPage.vue` 一级预览和 `/search/results` 完整列表，返回体包含 `requested_mode`、`resolved_mode`、`included_tags`、`matched_by`、`matched_tags` 等前端渲染所需元数据。
 
 ### 5.4 收藏夹与封面
 
@@ -164,8 +165,8 @@
 - `app_settings_service.py` 当前持久化到 `backend/data/app_settings.json` 的设置包括：
   - 浏览缓存缩略图短边尺寸
   - 月份封面尺寸
-  - 页面浏览模式与滚动窗口范围
-  - 文件名自动打标设置
+  - 页面浏览模式与滚动窗口范围（`40-200`，步长 `20`）
+  - 文件名自动打标设置（`enabled`、`noise_tokens`、`min_token_length`、`drop_numeric_only`，返回体额外带固定 `sort_mode = name_asc`）
 
 ## 6. 数据模型摘要
 
@@ -209,5 +210,5 @@ python -m venv ..\.venv
 
 - 前端默认直连 `http://127.0.0.1:8000`，后端端口变化时需要同步更新前端代码。
 - `backend/data/app.db` 是当前默认数据库文件，仓库运行期间会持续变化。
-- 文件名自动打标配置 API 已存在，但前端设置页尚未接入对应 UI。
+- 文件名自动打标配置 API 已存在，但前端设置页尚未接入对应 UI；设置页内部虽然保留了 `Tag过滤` 占位子面板结构，但入口按钮当前未开放。
 - 草稿 Tag 属于正常数据库记录，只是通过 `created_by` 被隐藏；调试数据库时要注意区分。

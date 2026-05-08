@@ -21,7 +21,7 @@
 | `basic.py` | `GET /` | 健康检查，返回 `{"status": "ok"}` |
 | `basic.py` | `POST /api/import` | 接收 `files`、`last_modified_json`、`created_time_json`、`category_id`、`recent_import_mode`，调用导入流水线 |
 | `basic.py` | `GET /api/images/count` | 返回库中 `ImageAsset` 总数 |
-| `basic.py` | `POST /api/admin/refresh` | 触发 `quick` 或 `full` 刷新；支持 `repair_cache + image_ids/trash_entry_ids` 的定向预览修复 |
+| `basic.py` | `POST /api/admin/refresh` | 触发 `quick` 或 `full` 刷新；当请求体里 `repair_cache=true` 时，可配合 `image_ids` 或 `trash_entry_ids` 做定向预览修复 |
 
 ### 2.2 图库管理聚合
 
@@ -66,7 +66,7 @@
 | `collections.py` | `POST /api/collections/search` | 为收藏菜单提供候选收藏夹与命中统计 |
 | `collections.py` | `POST /api/collections/apply` | 批量把图片添加、移除或保留在收藏夹中；不存在时可创建收藏夹 |
 | `collections.py` | `POST /api/collections/{collection_id}/cover` | 设置手动收藏封面 |
-| `search.py` | `GET /api/search/images` | 单输入搜索，支持 `auto`、`filename`、`tag`、`path` |
+| `search.py` | `GET /api/search/images` | 单输入搜索，支持 `auto`、`filename`、`tag`、`path`；`auto` 会解析到 `mixed` 或 `path`，并返回匹配元数据 |
 
 ### 2.5 分类、缓存、系统与回收站
 
@@ -186,6 +186,15 @@
 - `auto` 模式下：
   - 看起来像图片路径时，会转为 `path`
   - 否则会转为混合搜索 `mixed`
+- 前端一级搜索页默认使用有限结果；`/search/results` 二级页会把 `limit=0` 传给后端，以拉取完整结果集。
+- 返回体当前包含：
+  - `requested_mode` / `resolved_mode`
+  - `total`
+  - `source_media_rel_path`
+  - `quick_hash`
+  - `included_tags`
+  - `items[*].matched_by`
+  - `items[*].matched_tags`
 - 路径模式先定位源图片，再按 `quick_hash` 返回同图图片，因此结果里可能同时含：
   - 源路径命中
   - `quick_hash` 命中
@@ -218,6 +227,7 @@
   - `noise_tokens`
   - `min_token_length`
   - `drop_numeric_only`
+  - `sort_mode`，当前固定为 `name_asc`
 - 后端已经提供 `GET/POST /api/system/tag-match-setting`，但当前前端设置页还没有实际入口。
 
 ### 4.9 回收站协议

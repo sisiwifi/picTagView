@@ -42,7 +42,8 @@ frontend/
 | 路由 | 组件 | 说明 |
 | --- | --- | --- |
 | `/` | `HomePage.vue` | 首页统计 |
-| `/search` | `SearchPage.vue` | 单输入搜索 |
+| `/search` | `SearchPage.vue` | 单输入搜索与一级预览 |
+| `/search/results` | `BrowsePage.vue` | 完整搜索结果二级浏览，`browseContract = 'search-results'` |
 | `/tags` | `TagOverviewPage.vue` | 标签总览与编辑入口 |
 | `/tags/:tagId` | `BrowsePage.vue` | 标签二级浏览，`browseContract = 'tag'` |
 | `/gallery` | `GalleryPage.vue` | 图库管理父页，包含导入、刷新、最近导入预览、图库总览预览，`meta.keepAlive = true` |
@@ -79,7 +80,17 @@ frontend/
 - 导入状态、进度和结果提示恢复为按需展开的紧凑反馈区，不再在页面空闲时预留固定大块空白。
 - 页面激活时会检查月份缩略图缺失，并在需要时静默触发 `POST /api/admin/refresh`。
 
-### 4.2 `TagOverviewPage.vue`
+### 4.2 `SearchPage.vue`
+
+- 是当前顶层搜索入口，而不是直接把全部结果放进 `BrowsePage.vue`。
+- 输入框通过 `detectSearchMode()` 自动识别：
+  - 普通文本 -> 文件名 / Tag 混合搜索
+  - `tag:xxx` 或 `#xxx` -> Tag 搜索
+  - `path:...` 或 `media/...` 路径 -> 路径 / quick hash 搜索
+- 一级页只按当前网格列数预览前 `3` 行结果，并展示匹配模式、总数和 quick hash 摘要。
+- 点击“查看全部”后，会带着 `q` 查询参数进入 `/search/results`，完整结果列表交给 `BrowsePage.vue` 的 `search-results` 契约处理。
+
+### 4.3 `TagOverviewPage.vue`
 
 - 当前不是占位页，而是完整的标签总览页。
 - 主要能力：
@@ -89,13 +100,13 @@ frontend/
   - 编辑模式下支持直接打开 Tag 表单与删除确认
 - 非编辑模式点击 Tag 会进入 `/tags/:tagId` 的二级浏览页。
 
-### 4.3 `FavoritesPage.vue`
+### 4.4 `FavoritesPage.vue`
 
 - 当前不是占位页，而是收藏夹总览页。
 - 页面调用 `GET /api/collections` 获取可见收藏夹。
 - 如果封面图片还没有缓存缩略图，会主动启动 `/api/thumbnails/cache` 队列并轮询状态。
 
-### 4.4 `SettingsPage.vue`
+### 4.5 `SettingsPage.vue`
 
 - 当前已接入的设置项：
   - 浏览缓存缩略图尺寸
@@ -105,16 +116,18 @@ frontend/
   - 图片查看器偏好
   - 主分类管理入口
   - 回收站入口
+  - 夜间模式占位按钮
 - 当前仍是占位的入口：
   - 夜间模式
-  - `Tag过滤` 二级页
+- `SettingsPage.vue` 内部仍保留 `activePanel = 'tag-filter'` 的占位子面板结构，但入口按钮当前被注释，用户界面里不会显示。
 - 注意：后端已有 `/api/system/tag-match-setting`，但设置页目前没有实际 UI 去编辑它。
 
-### 4.5 `BrowsePage.vue`
+### 4.6 `BrowsePage.vue`
 
 - 是当前最核心的共享浏览壳。
-- 通过 `browseContract` 切换六类数据源：
+- 通过 `browseContract` 切换七类数据源：
   - `calendar`
+  - `search-results`
   - `gallery-recent`
   - `gallery-all`
   - `collection`
@@ -142,6 +155,7 @@ frontend/
   - `tag:xxx` 或 `#xxx` -> Tag 搜索
   - `path:...` 或看起来像 `media/...` 的路径 -> 路径搜索
   - 其他情况 -> 文件名 / Tag 混合搜索
+- 搜索一级页只展示当前布局下的前 3 行预览；完整结果挂在 `/search/results`，并沿用顶层“搜索”导航高亮。
 - 搜索结果显示文案映射
 - 顶层页公用 CSS 变量
 
@@ -155,6 +169,7 @@ frontend/
 已实现契约：
 
 - `calendar`
+- `search-results`
 - `gallery-recent`
 - `gallery-all`
 - `collection`
@@ -189,7 +204,11 @@ const API_BASE = 'http://127.0.0.1:8000'
 - `src/pages/topLevelPageConvention.js`
 - `src/utils/commonBrowsePage.js`
 - `src/utils/pageConfig.js`
-- 多个页面文件内的本地常量
+- `src/pages/BrowsePage.vue`
+- `src/pages/SettingsPage.vue`
+- `src/pages/CategorySettingsPage.vue`
+- `src/pages/HomePage.vue`
+- `src/pages/CalendarOverview.vue`
 
 如果后端端口变化，需要同步修改这些位置。
 
@@ -199,6 +218,8 @@ const API_BASE = 'http://127.0.0.1:8000'
 
 - `browse_mode`: `scroll | paged`
 - `scroll_window_size`: `40, 60, ..., 200`
+
+这些配置会作用到所有复用 `BrowsePage.vue` 的契约页，包括搜索结果、标签、收藏、图库、日期和回收站。
 
 工具模块会：
 
@@ -247,4 +268,4 @@ npm run lint
 - 前端依赖后端先启动，否则大部分页面会直接请求失败。
 - 当前 `vue.config.js` 没有启用代理配置。
 - `GalleryPage` 的保活依赖 `App.vue` 保持 `KeepAlive` 容器常驻；如果后续调整路由渲染结构，需要特别注意这一点。
-- 设置页只有 Tag JSON 导入导出，没有图形化的文件名自动打标设置入口。
+- 设置页只有 Tag JSON 导入导出，没有图形化的文件名自动打标设置入口；内部 `Tag过滤` 子面板目前仍是未开放的占位结构。

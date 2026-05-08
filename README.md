@@ -11,7 +11,7 @@
 | 日期与相册浏览 | `CalendarOverview` 展示月份总览；`BrowsePage` 负责月份列表与相册层级浏览，数据来自 `/api/dates/*` 与 `/api/albums/*` |
 | 标签系统 | 标签总览页支持按首字母分组、Top10 排行、草稿预占、编辑、删除、JSON 导入导出；标签二级页复用 `BrowsePage`，数据来自 `/api/tags/{tag_id}/images` |
 | 收藏夹 | 收藏总览页展示全部可见收藏夹；收藏二级页复用 `BrowsePage`，支持批量添加/移除图片与手动选择封面 |
-| 搜索 | 一级搜索页支持单输入检索，自动识别文件名、Tag 与图片路径；路径模式会先定位源图片，再按 `quick_hash` 查找同图 |
+| 搜索 | 一级搜索页支持单输入检索并按当前布局预览前 3 行结果；完整结果进入 `/search/results`，自动识别文件名、Tag 与图片路径；路径模式会先定位源图片，再按 `quick_hash` 查找同图 |
 | 选择模式与详情 | `BrowsePage` 内支持多选、详情浮层、Tag 菜单、收藏菜单；`PATCH /api/images/metadata` 可直接修改文件名、主分类和创建时间 |
 | 主分类 | 图片只保留一个生效主分类；默认主分类固定为 `id=1`，主分类设置页支持增删改、启停和批量操作 |
 | 回收站 | 支持图片或相册移入回收站、还原、彻底删除、清空；回收站页复用 `BrowsePage` 的统一壳和选择态 |
@@ -44,7 +44,8 @@
 | 路由 | 组件 | 说明 |
 | --- | --- | --- |
 | `/` | `HomePage.vue` | 首页统计 |
-| `/search` | `SearchPage.vue` | 单输入搜索 |
+| `/search` | `SearchPage.vue` | 单输入搜索与一级预览 |
+| `/search/results` | `BrowsePage.vue` | 完整搜索结果二级浏览，`browseContract = 'search-results'` |
 | `/tags` | `TagOverviewPage.vue` | 标签总览 |
 | `/tags/:tagId` | `BrowsePage.vue` | 标签二级浏览 |
 | `/gallery` | `GalleryPage.vue` | 图库管理父页：导入、刷新、最近导入预览、图库总览预览 |
@@ -61,7 +62,7 @@
 | `/settings/categories` | `CategorySettingsPage.vue` | 主分类管理 |
 | `/trash` | `BrowsePage.vue` | 回收站浏览 |
 
-`BrowsePage.vue` 通过 `browseContract` 在 `calendar`、`gallery-recent`、`gallery-all`、`collection`、`tag`、`trash` 六种模式之间切换，统一复用布局、分页/滚动配置、选择态、详情浮层和预览修复流程。更细的契约说明见 `frontend/commonBrowsePage.md`。
+`BrowsePage.vue` 通过 `browseContract` 在 `calendar`、`search-results`、`gallery-recent`、`gallery-all`、`collection`、`tag`、`trash` 七种模式之间切换，统一复用布局、分页/滚动配置、选择态、详情浮层和预览修复流程。更细的契约说明见 `frontend/commonBrowsePage.md`。
 
 ## 目录说明
 
@@ -85,7 +86,7 @@ picTagView_main/
 └── build/start_project.bat     # 一键启动脚本
 ```
 
-首次启动时，`backend/app/core/config.py` 会自动创建 `backend/data`、`backend/temp`、`media`、`trash` 等运行时目录。
+首次启动时，`backend/app/core/config.py` 会自动创建 `backend/data`、`backend/temp`、`backend/data/cache`、`backend/data/viewer_icons`、`media`、`trash` 等运行时目录。
 
 ## 启动与开发
 
@@ -134,12 +135,13 @@ npm run serve
 
 ## 当前运行约定
 
-- 前端多个文件内直接写死 `API_BASE = 'http://127.0.0.1:8000'`，切换后端端口时需要同步修改代码。
+- 前端尚未通过环境变量或 `devServer.proxy` 统一注入后端地址；当前直连 `http://127.0.0.1:8000` 的常量分散在 `topLevelPageConvention.js`、`commonBrowsePage.js`、`pageConfig.js`、`BrowsePage.vue`、`SettingsPage.vue`、`CategorySettingsPage.vue`、`HomePage.vue`、`CalendarOverview.vue`，切换后端端口时需要一并修改。
 - 页面配置由 `backend/data/app_settings.json` 持久化，当前包含：
   - 浏览缓存缩略图短边尺寸
   - 月份封面尺寸
   - 页面浏览模式与滚动窗口范围
   - 文件名自动打标设置 `tag_match_setting`
+- 搜索当前采用两段式交互：`/search` 只负责输入、模式识别和一级预览，完整结果列表复用 `BrowsePage.vue` 挂在 `/search/results?q=...`。
 - 文件名自动打标已经接入导入流程和手动文件名匹配接口，但当前前端设置页还没有图形化配置入口；如需调整，只能通过后端 API 或 `app_settings.json`。
 - 标签草稿通过 `POST /api/tags/draft` 预占，草稿标签会被列表、导出和打标接口过滤；保存时通过 `PATCH /api/tags/{id}` 转正。
 
