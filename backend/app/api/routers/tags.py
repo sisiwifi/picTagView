@@ -35,6 +35,7 @@ _VALID_CREATED_VIA = {
 _VALID_TAG_TYPES = {"normal", "artist", "copyright", "character", "series"}
 _DRAFT_CREATED_BY = "system:draft-reserve"
 _TAG_NAME_PATTERN = re.compile(r"^[a-z0-9_]+$")
+_IMPORT_COMPAT_TAG_NAME_PATTERN = re.compile(r"^[a-z0-9_!'\(\)\-\.@]+$")
 _HEX_PATTERN = re.compile(r"^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 _RGBA_PATTERN = re.compile(
     r"^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*([0-9]*\.?[0-9]+))?\s*\)$",
@@ -63,6 +64,20 @@ def _normalize_tag_name(name: object) -> str:
         raise HTTPException(status_code=400, detail="name 不能为空")
     if not _TAG_NAME_PATTERN.fullmatch(normalized):
         raise HTTPException(status_code=400, detail="name 仅支持小写字母、数字和下划线")
+    return normalized
+
+
+def _normalize_import_tag_name(name: object) -> str:
+    normalized = str(name or "").strip().lower()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="name 不能为空")
+    # Keep JSON import compatible with older exported tag names so round-trip
+    # import/export does not silently drop legacy entries.
+    if not _IMPORT_COMPAT_TAG_NAME_PATTERN.fullmatch(normalized):
+        raise HTTPException(
+            status_code=400,
+            detail="name 仅支持小写字母、数字、下划线及兼容导入字符 ! ' ( ) - . @",
+        )
     return normalized
 
 
@@ -466,7 +481,7 @@ def import_tags(body: TagImportBody) -> dict:
     with get_session() as session:
         for item in body.tags:
             try:
-                raw_name = _normalize_tag_name(item.get("name", ""))
+                raw_name = _normalize_import_tag_name(item.get("name", ""))
             except HTTPException as exc:
                 errors.append(f"跳过非法 name 条目：{exc.detail}；原始数据：{item}")
                 continue
