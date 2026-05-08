@@ -1,3 +1,5 @@
+import { detectSearchMode, formatSearchModeLabel } from '../pages/topLevelPageConvention'
+
 const API_BASE = 'http://127.0.0.1:8000'
 
 function toUnixSeconds(value) {
@@ -217,6 +219,44 @@ function buildTagBrowseInfo(tag, itemCount = 0) {
     metadata: tag?.metadata && typeof tag.metadata === 'object' ? tag.metadata : {},
     photo_count: Number(itemCount || 0),
   }
+}
+
+function getSearchQuery(vm) {
+  return String(vm?.$route?.query?.q || '').trim()
+}
+
+function buildSearchCrumbs(vm) {
+  const rawQuery = getSearchQuery(vm)
+  return [
+    {
+      label: '搜索',
+      title: '搜索',
+      to: rawQuery ? { path: '/search', query: { q: rawQuery } } : '/search',
+    },
+    {
+      label: vm.bcLabel(rawQuery || '搜索结果'),
+      title: rawQuery || '搜索结果',
+      current: true,
+    },
+  ]
+}
+
+function buildSearchBrowseInfo(rawQuery, resolvedMode, itemCount = 0) {
+  return {
+    title: rawQuery ? `搜索：${rawQuery}` : '搜索结果',
+    description: rawQuery ? `模式：${formatSearchModeLabel(resolvedMode)} · ${Number(itemCount || 0)} 条结果` : '',
+    photo_count: Number(itemCount || 0),
+  }
+}
+
+function normalizeSearchItem(rawItem) {
+  return normalizeCalendarItem({
+    ...rawItem,
+    type: 'image',
+    full_filename: rawItem?.name || rawItem?.full_filename || '未命名',
+    matched_tags: Array.isArray(rawItem?.matched_tags) ? rawItem.matched_tags : [],
+    matched_by: Array.isArray(rawItem?.matched_by) ? rawItem.matched_by : [],
+  })
 }
 
 function getGalleryScopeBasePath(contractName) {
@@ -627,6 +667,103 @@ const galleryRecentContract = {
   },
 }
 
+const searchResultsContract = {
+  name: 'search-results',
+  emptyState: {
+    icon: '🔎',
+    text: '当前搜索暂无结果。',
+  },
+  defaultSort() {
+    return {
+      sortBy: 'alpha',
+      sortDir: 'asc',
+    }
+  },
+  buildCrumbs(vm) {
+    return buildSearchCrumbs(vm)
+  },
+  buildHeaderActions() {
+    return []
+  },
+  buildSelectionActions(vm) {
+    return buildCalendarLikeSelectionActions(vm)
+  },
+  buildDetailPolicy(vm) {
+    return buildCalendarLikeDetailPolicy(vm)
+  },
+  async loadItems(vm) {
+    const rawQuery = getSearchQuery(vm)
+    if (!rawQuery) {
+      return {
+        items: [],
+        album: buildSearchBrowseInfo('', 'auto', 0),
+      }
+    }
+
+    const modeInfo = detectSearchMode(rawQuery)
+    if (!modeInfo.normalizedQuery) {
+      return {
+        items: [],
+        album: buildSearchBrowseInfo(rawQuery, modeInfo.mode, 0),
+      }
+    }
+
+    const params = new URLSearchParams({
+      q: modeInfo.normalizedQuery,
+      mode: modeInfo.mode,
+      limit: '0',
+    })
+    const res = await fetch(`${API_BASE}/api/search/images?${params.toString()}`)
+    if (!res.ok) {
+      return {
+        items: [],
+        album: buildSearchBrowseInfo(rawQuery, modeInfo.mode, 0),
+      }
+    }
+
+    const data = await res.json()
+    const items = Array.isArray(data?.items) ? data.items : []
+    return {
+      items,
+      album: buildSearchBrowseInfo(rawQuery, data?.resolved_mode || modeInfo.mode, Number(data?.total || items.length || 0)),
+    }
+  },
+  normalizeItems(rawItems) {
+    return (rawItems || []).map(item => normalizeSearchItem(item))
+  },
+  afterLoad(vm) {
+    vm.ensureCategoryLabelsLoaded()
+    if (vm.selectionInfoMode === 'tags') {
+      vm.ensureTagLabelsLoaded()
+    }
+  },
+  back(vm) {
+    const rawQuery = getSearchQuery(vm)
+    vm.$router.push({
+      path: '/search',
+      query: rawQuery ? { q: rawQuery } : {},
+    })
+  },
+  openItem(vm, item) {
+    const index = vm.items.findIndex(candidate => candidate?.stable_key === item?.stable_key)
+    if (index >= 0) {
+      vm.onReservedDetailsClick(vm.items[index], index)
+      return
+    }
+    openImageItem(item)
+  },
+  openPrimary(_vm, item) {
+    openImageItem(item)
+  },
+  runSecondaryAction(vm) {
+    vm.moveSelectedToTrash()
+  },
+  previewRepairPayloadKey: 'image_ids',
+  async afterPreviewRepair(vm, repairIds) {
+    await vm.refreshPreviewMetadata(repairIds)
+  },
+}
+
 const galleryAllContract = {
   name: 'gallery-all',
   emptyState: {
@@ -798,6 +935,7 @@ const trashContract = {
 }
 
 export function getCommonBrowsePageContract(contractName = 'calendar') {
+  if (contractName === 'search-results') return searchResultsContract
   if (contractName === 'gallery-recent') return galleryRecentContract
   if (contractName === 'gallery-all') return galleryAllContract
   if (contractName === 'trash') return trashContract

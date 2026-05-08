@@ -21,6 +21,12 @@ const routes = [
     component: SearchPage
   },
   {
+    path: '/search/results',
+    name: 'search-results',
+    component: BrowsePage,
+    meta: { reuseKey: 'browse', browseContract: 'search-results' }
+  },
+  {
     path: '/tags',
     name: 'tags',
     component: TagOverviewPage

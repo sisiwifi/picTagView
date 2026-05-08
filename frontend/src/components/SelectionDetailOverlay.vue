@@ -184,7 +184,7 @@
             </div>
 
             <div class="detail-field">
-              <span class="detail-field__label">导入时间</span>
+              <span class="detail-field__label">{{ importedLabel }}</span>
               <div class="detail-field__value">
                 <em v-if="importedField.isVarious" class="detail-field__various">various</em>
                 <span v-else class="detail-field__text">{{ importedField.text || '—' }}</span>
@@ -193,7 +193,7 @@
 
             <div class="detail-field">
               <div class="detail-field__head">
-                <span class="detail-field__label">创建时间</span>
+                <span class="detail-field__label">{{ createdLabel }}</span>
               </div>
               <div class="detail-field__value">
                 <div class="detail-field__display detail-field__display--editable">
@@ -365,10 +365,12 @@ export default {
       type: Object,
       default: () => ({ text: '', isVarious: false, isEmpty: false }),
     },
+    importedLabel: { type: String, default: '导入时间' },
     createdField: {
       type: Object,
       default: () => ({ text: '', isVarious: false, isEmpty: false }),
     },
+    createdLabel: { type: String, default: '创建时间' },
     rawName: { type: String, default: '' },
     rawCategoryId: { type: Number, default: null },
     rawCreatedAt: {

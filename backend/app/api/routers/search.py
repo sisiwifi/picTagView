@@ -130,7 +130,7 @@ def _build_search_item(asset, preview_resolver: AssetPreviewResolver, tags_by_id
 def search_images(
     q: str = Query(..., min_length=1, description="搜索关键字或图片路径"),
     mode: str = Query(default="auto", description="auto | filename | tag | path"),
-    limit: int = Query(default=120, ge=1, le=400),
+    limit: int = Query(default=120, ge=0, le=400),
 ) -> SearchImageResponse:
     query = str(q or "").strip()
     requested_mode = _normalize_mode(mode)
@@ -248,7 +248,10 @@ def search_images(
         result_map.values(),
         key=lambda row: (row["priority"], row["name"], row["item"].id),
     )
-    items = [row["item"] for row in ordered_rows[:limit]]
+    if limit == 0:
+        items = [row["item"] for row in ordered_rows]
+    else:
+        items = [row["item"] for row in ordered_rows[:limit]]
 
     included_tag_ids = sorted(
         {

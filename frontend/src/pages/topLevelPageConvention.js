@@ -8,7 +8,7 @@ export const TOP_LEVEL_PAGE_STANDARD = Object.freeze({
 
 export const TOP_LEVEL_NAV_ITEMS = Object.freeze([
   { path: '/', label: '主页', icon: '🏠' },
-  { path: '/search', label: '搜索', icon: '🔎' },
+  { path: '/search', label: '搜索', icon: '🔎', matchPrefixes: ['/search/results'] },
   { path: '/tags', label: '标签总览', icon: '🏷️', matchPrefixes: ['/tags/'] },
   { path: '/gallery', label: '图库管理', icon: '🖼️', matchPrefixes: ['/gallery/'] },
   { path: '/calendar', label: '日期视图', icon: '📅', matchPrefixes: ['/calendar/'] },
@@ -128,7 +128,7 @@ export function buildOriginalMediaUrl(mediaRelPath) {
   return `${API_BASE}/${normalized}`
 }
 
-export function buildBrowseLocation(mediaRelPath) {
+export function buildBrowseLocation(mediaRelPath, options = {}) {
   const normalized = String(mediaRelPath || '').replace(/\\/g, '/').trim()
   if (!normalized) return null
 
@@ -139,10 +139,21 @@ export function buildBrowseLocation(mediaRelPath) {
 
   const group = encodeURIComponent(parts[1])
   const albumSegments = parts.slice(2, -1).map(segment => encodeURIComponent(segment))
-  if (!albumSegments.length) {
-    return `/calendar/${group}`
+  const query = {}
+  const focusId = Number(options?.focusId)
+  if (Number.isInteger(focusId) && focusId > 0) {
+    query.focus = String(focusId)
   }
-  return `/calendar/${group}/${albumSegments.join('/')}`
+  if (normalized) {
+    query.focusPath = normalized
+  }
+  if (!albumSegments.length) {
+    return Object.keys(query).length
+      ? { path: `/calendar/${group}`, query }
+      : `/calendar/${group}`
+  }
+  const path = `/calendar/${group}/${albumSegments.join('/')}`
+  return Object.keys(query).length ? { path, query } : path
 }
 
 export function shortenQuickHash(value) {

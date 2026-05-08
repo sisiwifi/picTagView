@@ -84,6 +84,7 @@
           :class="{
             'is-selected': isItemSelected(entry.item, entry.index),
             'is-disabled': isItemDisabled(entry.item),
+            'is-route-focus': isRouteFocusItem(entry.item, entry.index),
           }"
           :data-index="entry.index"
           :data-select-index="entry.index"
@@ -123,6 +124,7 @@
             v-for="item in row.items"
             :key="item.public_id || item.id || item._idx"
             class="photo-wrap"
+            :class="{ 'is-route-focus': isRouteFocusItem(item, item._idx) }"
             :data-index="item._idx"
             :style="{ width: item.computedWidth + 'px' }"
           >
@@ -178,6 +180,7 @@
           v-for="item in activeMasonryPlacements"
           :key="item.public_id || item.id || item._idx"
           class="photo-wrap photo-wrap--masonry"
+          :class="{ 'is-route-focus': isRouteFocusItem(item, item._idx) }"
           :data-index="item._idx"
           :style="{
             left: item.col * (masonryColWidth + 6) + 'px',
@@ -222,6 +225,7 @@
             'list-row--selecting': selectionMode,
             'is-selected': isItemSelected(entry.item, entry.index),
             'is-disabled': isItemDisabled(entry.item),
+            'is-route-focus': isRouteFocusItem(entry.item, entry.index),
           }"
           :data-index="entry.index"
           :data-select-index="entry.index"
@@ -549,6 +553,9 @@ export default {
       imgDimensions: {},
       layoutFingerprint: '',
       pendingViewAnchor: null,
+      consumedRouteFocusSignature: '',
+      routeFocusItemKey: '',
+      routeFocusClearTimer: null,
       pendingDimensionCorrections: {},
       dimensionFlushTimer: null,
       containerWidth: 0,
@@ -694,6 +701,10 @@ export default {
       return this.items.length
     },
     cachePageToken() {
+      if (this.pageContractName === 'search-results') {
+        const queryValue = String(this.$route.query.q || '').trim()
+        return `browse:search-results:${encodeURIComponent(queryValue || 'empty')}`
+      }
       if (this.isCollectionMode) {
         return `browse:collection:${this.collectionPublicId}`
       }
@@ -710,6 +721,16 @@ export default {
     },
     cacheSortSignature() {
       return `${this.sortBy}:${this.sortDir}:${this.items.length}`
+    },
+    currentRouteFocusSignature() {
+      const rawFocusId = Array.isArray(this.$route.query.focus) ? this.$route.query.focus[0] : this.$route.query.focus
+      const rawFocusPath = Array.isArray(this.$route.query.focusPath) ? this.$route.query.focusPath[0] : this.$route.query.focusPath
+      const focusId = String(rawFocusId || '').trim()
+      const focusPath = String(rawFocusPath || '').trim()
+      if (!focusId && !focusPath) {
+        return ''
+      }
+      return `${this.$route.path}|${focusId}|${focusPath}`
     },
     scrollWindowRadius() {
       return Math.max(1, Math.floor((this.pageScrollWindowSize || DEFAULT_PAGE_CONFIG.scrollWindowSize) / 2))
@@ -1539,6 +1560,10 @@ export default {
       clearTimeout(this.tagMenuSearchTimer)
       this.tagMenuSearchTimer = null
     }
+    if (this.routeFocusClearTimer) {
+      clearTimeout(this.routeFocusClearTimer)
+      this.routeFocusClearTimer = null
+    }
   },
 
   methods: {
@@ -1644,9 +1669,78 @@ export default {
       }
 
       this.normalizePaginationState()
+
       this.$nextTick(() => {
         this.queueCurrentPageCache(true, 'restore-paged')
       })
+    },
+
+    clearRouteFocusHighlight() {
+      if (this.routeFocusClearTimer) {
+        clearTimeout(this.routeFocusClearTimer)
+        this.routeFocusClearTimer = null
+      }
+      this.routeFocusItemKey = ''
+    },
+
+    scheduleRouteFocusHighlight(itemKey) {
+      this.clearRouteFocusHighlight()
+      if (!itemKey) return
+      this.routeFocusItemKey = itemKey
+      this.routeFocusClearTimer = window.setTimeout(() => {
+        this.routeFocusClearTimer = null
+        this.routeFocusItemKey = ''
+      }, 2800)
+    },
+
+    isRouteFocusItem(item, index) {
+      if (!this.routeFocusItemKey) return false
+      return this.routeFocusItemKey === this.itemKey(item, index)
+    },
+
+    buildRouteFocusAnchor() {
+      const signature = this.currentRouteFocusSignature
+      if (!signature || signature === this.consumedRouteFocusSignature || !this.items.length) {
+        return null
+      }
+
+      const rawFocusId = Array.isArray(this.$route.query.focus) ? this.$route.query.focus[0] : this.$route.query.focus
+      const rawFocusPath = Array.isArray(this.$route.query.focusPath) ? this.$route.query.focusPath[0] : this.$route.query.focusPath
+      const focusId = Number.parseInt(String(rawFocusId || ''), 10)
+      const focusPath = String(rawFocusPath || '').replace(/\\/g, '/').trim()
+
+      let targetIndex = -1
+      if (Number.isInteger(focusId) && focusId > 0) {
+        targetIndex = this.items.findIndex(item => Number(item?.id) === focusId)
+      }
+      if (targetIndex < 0 && focusPath) {
+        targetIndex = this.items.findIndex(item => String(item?.media_rel_path || '').replace(/\\/g, '/').trim() === focusPath)
+      }
+      if (targetIndex < 0) {
+        return null
+      }
+
+      const targetItem = this.items[targetIndex]
+      return {
+        signature,
+        anchor: {
+          index: targetIndex,
+          itemKey: this.itemKey(targetItem, targetIndex),
+          anchorOffset: 0,
+        },
+      }
+    },
+
+    applyRouteFocusAnchor() {
+      const nextFocus = this.buildRouteFocusAnchor()
+      if (!nextFocus) {
+        return false
+      }
+
+      this.pendingViewAnchor = nextFocus.anchor
+      this.consumedRouteFocusSignature = nextFocus.signature
+      this.scheduleRouteFocusHighlight(nextFocus.anchor.itemKey)
+      return true
     },
 
     currentPageAnchorIndex() {
@@ -1822,7 +1916,8 @@ export default {
       if (preserveSelection) {
         this.restoreSelectionSnapshot(selectionSnapshot)
       }
-      if (!preserveView) {
+      const consumedRouteFocus = this.applyRouteFocusAnchor()
+      if (!preserveView && !consumedRouteFocus) {
         window.scrollTo({ top: 0, behavior: 'instant' })
       }
       this.refreshObservedGrid()
@@ -1901,6 +1996,7 @@ export default {
       }
       if (item.cache_thumb_url) return item.cache_thumb_url
       if (item.thumb_url) return item.thumb_url
+      if (this.pageContractName === 'search-results') return this.originalPreviewPath(item)
       return ''
     },
 
@@ -5261,6 +5357,26 @@ export default {
   display: flex;
   flex-direction: column;
   justify-content: center;
+}
+
+.selection-wrap.is-route-focus,
+.photo-wrap.is-route-focus,
+.list-row.is-route-focus {
+  outline: 3px solid rgba(16, 185, 129, 0.9);
+  outline-offset: 4px;
+  box-shadow: 0 0 0 8px rgba(16, 185, 129, 0.18), 0 20px 38px rgba(16, 185, 129, 0.2);
+  border-radius: 18px;
+  animation: browse-route-focus-pulse 1.8s ease-out 1;
+}
+
+@keyframes browse-route-focus-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.34), 0 14px 28px rgba(16, 185, 129, 0.16);
+  }
+
+  100% {
+    box-shadow: 0 0 0 8px rgba(16, 185, 129, 0.18), 0 20px 38px rgba(16, 185, 129, 0.2);
+  }
 }
 
 .vm-btns {
