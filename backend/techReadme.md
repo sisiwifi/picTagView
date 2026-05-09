@@ -120,8 +120,9 @@
 - `tags.py` 负责 Tag CRUD、草稿占位、导入导出和 Tag 二级浏览。
 - 草稿 Tag 使用 `created_by = system:draft-reserve` 标记，并在查询与导出时过滤。
 - `tag_match_service.py` 封装文件名分词、Tag 匹配、Tag 排序和计数更新；导入流程与图片页“自动标签”共用这一套逻辑。
-- `search.py` 支持 `filename`、`tag`、`path` 三类显式搜索，以及 `auto -> mixed/path` 解析，并在路径模式下额外按 `quick_hash` 找到同图图片。
-- 搜索响应当前同时服务 `SearchPage.vue` 一级预览和 `/search/results` 完整列表，返回体包含 `requested_mode`、`resolved_mode`、`included_tags`、`matched_by`、`matched_tags` 等前端渲染所需元数据。
+- `search.py` 现在支持 `filename`、`tag`、`path`、`file`、`imported_at`、`file_created_at` 六类显式搜索，以及 `auto -> mixed/path` 解析；其中 `file` 通过 `quick_hash` 找到同图图片，时间模式通过 `start_at/end_at` 做区间过滤。
+- 搜索响应当前同时服务 `SearchPage.vue` 一级虚拟化预览和 `/search/results` 完整列表，返回体包含 `requested_mode`、`resolved_mode`、`included_tags`、`matched_by`、`matched_tags` 等前端渲染所需元数据；前端顶层页提供“按图搜索”和“时间范围”两个辅助入口来生成对应查询。
+- 搜索 UI 的主预览现在优先使用 temp/cache 缩略图，不再拿原图作为主卡片兜底；当搜索结果缺失缩略图时，前端会复用现有 `POST /api/admin/refresh?mode=quick` + `/api/images/meta` 的 targeted repair 链路，后台异步生成并回填预览元数据。
 
 ### 5.4 收藏夹与封面
 

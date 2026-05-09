@@ -537,6 +537,7 @@ export default {
       cacheUrls: {},
       previewFailureTokens: {},
       detailOriginalFailureTokens: {},
+      missingPreviewRepairTokens: {},
       previewRepairQueue: [],
       previewRepairTimer: null,
       previewRepairInFlight: false,
@@ -896,6 +897,18 @@ export default {
         ? (this.isPagedBrowseMode ? this.selectionGridPageEndIndex : this.virtualEndIndex)
         : this.items.length
       return this.items.slice(start, end).map((item, offset) => ({ item, index: start + offset }))
+    },
+    renderedPreviewItems() {
+      if (this.viewMode === 'selection') {
+        return this.visibleSelectionEntries.map(entry => entry.item)
+      }
+      if (this.viewMode === 'list') {
+        return this.visibleListEntries.map(entry => entry.item)
+      }
+      if (this.isPortraitMasonryMode) {
+        return this.activeMasonryPlacements
+      }
+      return this.activePhotoRows.flatMap(row => row.items)
     },
     isPaginationBarVisible() {
       if (!this.isPagedBrowseMode || !this.items.length || !this.activePaginationConfig) return false
@@ -1491,6 +1504,11 @@ export default {
     '$route.fullPath': {
       handler() { this.loadData() },
     },
+    renderedPreviewItems: {
+      handler(items) {
+        this.enqueueMissingSearchResultPreviewRepairs(items)
+      },
+    },
     photoGridRowCount(newVal, oldVal) {
       if (newVal !== oldVal) {
         this.refreshObservedGrid()
@@ -1937,6 +1955,7 @@ export default {
       this.lastCacheRequestSignature = ''
       this.previewFailureTokens = {}
       this.detailOriginalFailureTokens = {}
+      this.missingPreviewRepairTokens = {}
       this.previewRepairQueue = []
       this.previewRepairInFlight = false
       this.lastPreviewRepairSignature = ''
@@ -2079,8 +2098,50 @@ export default {
       }
       if (item.cache_thumb_url) return item.cache_thumb_url
       if (item.thumb_url) return item.thumb_url
-      if (this.pageContractName === 'search-results') return this.originalPreviewPath(item)
       return ''
+    },
+
+    missingPreviewRepairStateKey(item) {
+      return this.previewStateKey(item) || ''
+    },
+
+    missingPreviewRepairToken(item) {
+      return `${item?.cache_thumb_url || ''}|${item?.thumb_url || ''}`
+    },
+
+    enqueueMissingSearchResultPreviewRepairs(items) {
+      if (this.pageContractName !== 'search-results' || !Array.isArray(items) || !items.length) return
+
+      let didQueue = false
+      const nextTokens = { ...this.missingPreviewRepairTokens }
+      const nextQueue = [...this.previewRepairQueue]
+
+      for (const item of items) {
+        if (item?.type !== 'image') continue
+        if (!Number.isInteger(item?.id) || item.id <= 0) continue
+        if (this.primaryPreviewPath(item)) continue
+
+        const stateKey = this.missingPreviewRepairStateKey(item)
+        const token = this.missingPreviewRepairToken(item)
+        if (!stateKey || nextTokens[stateKey] === token) continue
+
+        nextTokens[stateKey] = token
+        if (!nextQueue.includes(item.id)) {
+          nextQueue.push(item.id)
+          didQueue = true
+        }
+      }
+
+      if (!didQueue) return
+      this.missingPreviewRepairTokens = nextTokens
+      this.previewRepairQueue = nextQueue
+      if (this.previewRepairTimer) {
+        clearTimeout(this.previewRepairTimer)
+      }
+      this.previewRepairTimer = setTimeout(() => {
+        this.previewRepairTimer = null
+        this.flushPreviewRepairQueue()
+      }, 90)
     },
 
     originalPreviewPath(item) {
@@ -2577,6 +2638,7 @@ export default {
 
         const nextCacheUrls = { ...this.cacheUrls }
         const nextDimensions = { ...this.imgDimensions }
+        const nextMissingTokens = { ...this.missingPreviewRepairTokens }
         const nextItems = this.items.map((item) => {
           if (!Number.isInteger(item?.id)) return item
           const meta = metaMap.get(item.id)
@@ -2610,9 +2672,15 @@ export default {
         imageIds.forEach((imageId) => {
           const matched = nextItems.find(item => item?.id === imageId)
           if (matched) {
+            const stateKey = this.missingPreviewRepairStateKey(matched)
+            const token = this.missingPreviewRepairToken(matched)
+            if (stateKey && nextMissingTokens[stateKey] !== token) {
+              delete nextMissingTokens[stateKey]
+            }
             this.clearPreviewFailureState(matched)
           }
         })
+        this.missingPreviewRepairTokens = nextMissingTokens
       } catch {
         // ignore preview metadata refresh failures
       }

@@ -42,8 +42,8 @@ frontend/
 | 路由 | 组件 | 说明 |
 | --- | --- | --- |
 | `/` | `HomePage.vue` | 首页统计 |
-| `/search` | `SearchPage.vue` | 单输入搜索与一级预览 |
-| `/search/results` | `BrowsePage.vue` | 完整搜索结果二级浏览，`browseContract = 'search-results'` |
+| `/search` | `SearchPage.vue` | 单输入搜索、本地文件搜图、时间范围过滤与一级虚拟化预览 |
+| `/search/results` | `BrowsePage.vue` | 完整搜索结果二级浏览，`browseContract = 'search-results'`，支持复用 `q` 与 `quick_hash` |
 | `/tags` | `TagOverviewPage.vue` | 标签总览与编辑入口 |
 | `/tags/:tagId` | `BrowsePage.vue` | 标签二级浏览，`browseContract = 'tag'` |
 | `/gallery` | `GalleryPage.vue` | 图库管理父页，包含导入、刷新、最近导入预览、图库总览预览，`meta.keepAlive = true` |
@@ -87,9 +87,16 @@ frontend/
   - 普通文本 -> 文件名 / Tag 混合搜索
   - `name:xxx` 或 `$xxx` -> 文件名 搜索
   - `tag:xxx` 或 `#xxx` -> Tag 搜索
-  - `path:...` 或 `media/...` 路径 -> 路径 / quick hash 搜索
-- 一级页只按当前网格列数预览前 `3` 行结果，并展示匹配模式、总数和 quick hash 摘要。
-- 点击“查看全部”后，会带着 `q` 查询参数进入 `/search/results`，完整结果列表交给 `BrowsePage.vue` 的 `search-results` 契约处理。
+  - `file:xxx` -> 本地图片 quick hash 搜索；正常入口是点击输入框右侧“按图搜索”按钮上传单张图片，由前端自动写回 `file:文件名`
+  - `import:YYYY-MM-DD HH:mm:ss~YYYY-MM-DD HH:mm:ss` -> 导入时间范围搜索
+  - `create:YYYY-MM-DD HH:mm:ss~YYYY-MM-DD HH:mm:ss` -> 创建时间范围搜索
+- 输入框右侧提供两个辅助入口：
+  - “按图搜索”按钮：使用与页面其他操作一致的扁平圆角按钮样式，打开单文件选择框，调用 `POST /api/search/by-file`，并把 quick hash 搜索结果同步回搜索框与路由
+  - “时间范围”按钮：使用与页面其他操作一致的扁平圆角按钮样式，打开 `SearchTimeRangeDialog.vue`，辅助生成 `import:` / `create:` 查询串
+- 一级页不再固定只展示前 `3` 行，而是使用连续滚动的局部虚拟化网格；页面只渲染视口附近约 `3` 行加少量 overscan 的卡片。
+- 搜索详情浮层中的“主分类”会显示分类名称；“匹配方式”会按搜索语义显示为“按文件搜索 / 文件名匹配 / 标签匹配 / 按导入时间搜索 / 按创建时间搜索”。
+- 搜索主结果卡片只使用 temp/cache 缩略图作为预览来源；缺失时先显示占位，再通过 targeted refresh 拉起缩略图修复，不再用原图作为主预览兜底。
+- 点击“查看全部”后，会带着 `q` 查询参数进入 `/search/results`；如果当前是 `file:` 搜索，还会一并带上 `quick_hash`，完整结果列表交给 `BrowsePage.vue` 的 `search-results` 契约处理。
 
 ### 4.3 `TagOverviewPage.vue`
 
@@ -153,11 +160,16 @@ frontend/
 - 顶层导航项 `TOP_LEVEL_NAV_ITEMS`
 - 顶层缩略图边长约定 `thumbEdgePx = 400`
 - 搜索模式识别：
+  - `name:xxx` 或 `$xxx` -> 文件名搜索
   - `tag:xxx` 或 `#xxx` -> Tag 搜索
-  - `path:...` 或看起来像 `media/...` 的路径 -> 路径搜索
+  - `file:xxx` -> 本地文件 / quick hash 搜索
+  - `import:开始~结束` -> 导入时间范围搜索
+  - `create:开始~结束` -> 创建时间范围搜索
+  - 看起来像 `media/...` 的路径 -> 后端兼容路径搜索
   - 其他情况 -> 文件名 / Tag 混合搜索
-- 搜索一级页只展示当前布局下的前 3 行预览；完整结果挂在 `/search/results`，并沿用顶层“搜索”导航高亮。
+- 搜索一级页使用连续滚动虚拟化预览；完整结果挂在 `/search/results`，并沿用顶层“搜索”导航高亮。
 - 搜索结果显示文案映射
+- 搜索请求参数生成与 `file` / 时间范围参数归一化
 - 顶层页公用 CSS 变量
 
 ## 6. 统一浏览页契约

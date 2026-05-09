@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from datetime import datetime
+
+from fastapi import APIRouter, File, Query, UploadFile
 from sqlmodel import select
 
 from app.api.common import (
@@ -13,12 +15,13 @@ from app.api.schemas import SearchImageItem, SearchImageResponse, TagBriefItem
 from app.db.session import get_session
 from app.models.tag import Tag
 from app.services.category_service import DEFAULT_CATEGORY_ID, get_active_category_ids
+from app.services.imports.helpers import quick_hash_from_bytes
 from app.services.visible_album_service import list_visible_assets
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
 _DRAFT_CREATED_BY = "system:draft-reserve"
-_SUPPORTED_MODES = {"auto", "filename", "tag", "path"}
+_SUPPORTED_MODES = {"auto", "filename", "tag", "path", "file", "imported_at", "file_created_at"}
 _IMAGE_SUFFIXES = (
     ".jpg",
     ".jpeg",
@@ -126,19 +129,7 @@ def _build_search_item(asset, preview_resolver: AssetPreviewResolver, tags_by_id
     )
 
 
-@router.get("/images", response_model=SearchImageResponse)
-def search_images(
-    q: str = Query(..., min_length=1, description="搜索关键字或图片路径"),
-    mode: str = Query(default="auto", description="auto | filename | tag | path"),
-    limit: int = Query(default=120, ge=0, le=400),
-) -> SearchImageResponse:
-    query = str(q or "").strip()
-    requested_mode = _normalize_mode(mode)
-    if not query:
-        return SearchImageResponse(query="", requested_mode=requested_mode, resolved_mode=requested_mode, limit=limit)
-
-    query_lower = query.casefold()
-
+def _load_search_context() -> tuple[list, dict[int, Tag], AssetPreviewResolver]:
     with get_session() as session:
         active_category_ids = get_active_category_ids(session)
         assets = list_visible_assets(session, active_category_ids)
@@ -152,6 +143,92 @@ def search_images(
         if tag.id is not None
     }
     preview_resolver = AssetPreviewResolver(build_preview_availability_index())
+    return assets, tags_by_id, preview_resolver
+
+
+def _sort_search_rows(result_map: dict[int, dict], limit: int) -> list[SearchImageItem]:
+    ordered_rows = sorted(
+        result_map.values(),
+        key=lambda row: (row["priority"], row["name"], row["item"].id),
+    )
+    if limit == 0:
+        return [row["item"] for row in ordered_rows]
+    return [row["item"] for row in ordered_rows[:limit]]
+
+
+def _build_included_tags(items: list[SearchImageItem], tags_by_id: dict[int, Tag]) -> list[TagBriefItem]:
+    included_tag_ids = sorted(
+        {
+            tag_id
+            for item in items
+            for tag_id in item.tags
+            if tag_id in tags_by_id
+        },
+        key=lambda tag_id: (tags_by_id[tag_id].name or "").casefold(),
+    )
+    return [_to_tag_brief(tags_by_id[tag_id]) for tag_id in included_tag_ids]
+
+
+def _search_by_file_hash(assets: list, preview_resolver: AssetPreviewResolver, tags_by_id: dict[int, Tag], search_hash: str) -> dict[int, dict]:
+    result_map: dict[int, dict] = {}
+    if not search_hash:
+        return result_map
+
+    normalized_hash = search_hash.strip()
+    for asset in assets:
+        if asset.id is None or asset.quick_hash != normalized_hash:
+            continue
+        item = _build_search_item(asset, preview_resolver, tags_by_id, ["quick_hash"])
+        if item is None:
+            continue
+        result_map[item.id] = {
+            "item": item,
+            "priority": 0,
+            "name": item.name.casefold(),
+        }
+    return result_map
+
+
+def _search_by_datetime_field(assets: list, preview_resolver: AssetPreviewResolver, tags_by_id: dict[int, Tag], field_name: str, start_at: datetime | None, end_at: datetime | None) -> dict[int, dict]:
+    result_map: dict[int, dict] = {}
+    if start_at is None or end_at is None or start_at > end_at:
+        return result_map
+
+    matched_label = "imported_at" if field_name == "imported_at" else "file_created_at"
+    for asset in assets:
+        if asset.id is None:
+            continue
+        candidate_value = getattr(asset, field_name, None)
+        if candidate_value is None or candidate_value < start_at or candidate_value > end_at:
+            continue
+        item = _build_search_item(asset, preview_resolver, tags_by_id, [matched_label])
+        if item is None:
+            continue
+        result_map[item.id] = {
+            "item": item,
+            "priority": 0,
+            "name": item.name.casefold(),
+        }
+    return result_map
+
+
+@router.get("/images", response_model=SearchImageResponse)
+def search_images(
+    q: str = Query(..., min_length=1, description="搜索关键字或图片路径"),
+    mode: str = Query(default="auto", description="auto | filename | tag | path | file | imported_at | file_created_at"),
+    limit: int = Query(default=120, ge=0, le=400),
+    quick_hash: str | None = Query(default=None, description="文件 quick hash 搜索所需的 hash"),
+    start_at: datetime | None = Query(default=None, description="时间范围搜索起点"),
+    end_at: datetime | None = Query(default=None, description="时间范围搜索终点"),
+) -> SearchImageResponse:
+    query = str(q or "").strip()
+    requested_mode = _normalize_mode(mode)
+    if not query:
+        return SearchImageResponse(query="", requested_mode=requested_mode, resolved_mode=requested_mode, limit=limit)
+
+    query_lower = query.casefold()
+
+    assets, tags_by_id, preview_resolver = _load_search_context()
 
     resolved_mode = requested_mode
     if requested_mode == "auto":
@@ -159,7 +236,7 @@ def search_images(
 
     result_map: dict[int, dict] = {}
     source_media_rel_path: str | None = None
-    source_quick_hash: str | None = None
+    source_quick_hash: str | None = quick_hash.strip() if isinstance(quick_hash, str) and quick_hash.strip() else None
 
     if resolved_mode == "path":
         normalized_path = _normalize_path_query(query)
@@ -197,6 +274,15 @@ def search_images(
                     "priority": 0 if asset.id == source_asset.id else 1,
                     "name": item.name.casefold(),
                 }
+
+    elif resolved_mode == "file":
+        result_map = _search_by_file_hash(assets, preview_resolver, tags_by_id, source_quick_hash or "")
+
+    elif resolved_mode == "imported_at":
+        result_map = _search_by_datetime_field(assets, preview_resolver, tags_by_id, "imported_at", start_at, end_at)
+
+    elif resolved_mode == "file_created_at":
+        result_map = _search_by_datetime_field(assets, preview_resolver, tags_by_id, "file_created_at", start_at, end_at)
 
     else:
         for asset in assets:
@@ -244,24 +330,7 @@ def search_images(
                 "name": item.name.casefold(),
             }
 
-    ordered_rows = sorted(
-        result_map.values(),
-        key=lambda row: (row["priority"], row["name"], row["item"].id),
-    )
-    if limit == 0:
-        items = [row["item"] for row in ordered_rows]
-    else:
-        items = [row["item"] for row in ordered_rows[:limit]]
-
-    included_tag_ids = sorted(
-        {
-            tag_id
-            for item in items
-            for tag_id in item.tags
-            if tag_id in tags_by_id
-        },
-        key=lambda tag_id: (tags_by_id[tag_id].name or "").casefold(),
-    )
+    items = _sort_search_rows(result_map, limit)
 
     return SearchImageResponse(
         query=query,
@@ -271,6 +340,22 @@ def search_images(
         total=len(result_map),
         source_media_rel_path=source_media_rel_path,
         quick_hash=source_quick_hash,
-        included_tags=[_to_tag_brief(tags_by_id[tag_id]) for tag_id in included_tag_ids],
+        included_tags=_build_included_tags(items, tags_by_id),
         items=items,
+    )
+
+
+@router.post("/by-file", response_model=SearchImageResponse)
+async def search_images_by_file(
+    file: UploadFile = File(..., description="要计算 quick hash 的本地图片文件"),
+    limit: int = Query(default=120, ge=0, le=400),
+) -> SearchImageResponse:
+    content = await file.read()
+    quick_hash = quick_hash_from_bytes(content or b"") if content is not None else ""
+    filename = (file.filename or "selected-file").strip() or "selected-file"
+    return search_images(
+        q=filename,
+        mode="file",
+        limit=limit,
+        quick_hash=quick_hash,
     )

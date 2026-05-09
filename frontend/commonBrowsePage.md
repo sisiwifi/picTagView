@@ -60,7 +60,7 @@
 - 仅生成 `image` 条目，不包含相册节点
 - 保留后端返回的 `matched_by`
 - 保留后端返回的 `matched_tags`
-- 当缓存缩略图和普通缩略图都缺失时，浏览页会回退到原图 URL 做预览
+- `search-results` 不再把原图当作主预览兜底；当 temp/cache 缩略图都缺失时，页面先显示骨架，再复用 targeted preview repair 链路异步补图
 
 ### 3.3 `trash`
 
@@ -102,7 +102,7 @@
 | 契约 | 数据源 | 默认排序 | 页头动作 | 主动作 / 次动作 | 预览修复 key |
 | --- | --- | --- | --- | --- | --- |
 | `calendar` | `/api/dates/{group}/items` 或 `/api/albums/by-path/{path}` | 月份页 `date asc`；相册页 `alpha asc` | 相册模式下可进入“选择封面” | `查看原图/查看相册` + `移入回收站` | `image_ids` |
-| `search-results` | `/api/search/images?q=...&mode=...&limit=0` | `alpha asc` | 无 | `查看原图` + `移入回收站` | `image_ids` |
+| `search-results` | `/api/search/images?...&limit=0`，由统一搜索参数生成器补齐 `mode`，必要时带 `quick_hash/start_at/end_at` | `alpha asc` | 无 | `查看原图` + `移入回收站` | `image_ids` |
 | `gallery-recent` | `/api/gallery/recent/items` | `date asc` | 无 | 图片 `查看原图`、相册 `打开目录` + `移入回收站` | `image_ids` |
 | `gallery-all` | `/api/gallery/all/items` | `date asc` | 无 | 图片 `查看原图`、相册 `打开目录` + `移入回收站` | `image_ids` |
 | `collection` | `/api/collections/{collectionPublicId}` | `date asc` | 可进入“选择封面” | `查看原图` + `移入回收站` | `image_ids` |
@@ -121,11 +121,12 @@
 
 ### 6.2 `search-results`
 
-- 数据源来自 `/api/search/images`，查询参数取自当前路由的 `q`。
-- 契约会先用 `detectSearchMode()` 对查询串做模式识别，再以 `limit=0` 请求完整结果集。
+- 数据源来自 `/api/search/images`，查询参数的主入口仍是当前路由的 `q`；当一级页是 `file:` 搜索时，还会额外读取路由里的 `quick_hash`。
+- 契约会先用统一的 `buildSearchRequestParams()` 生成搜索参数，再以 `limit=0` 请求完整结果集。
 - 面包屑结构固定为“搜索 -> 当前查询词”。
 - 条目只包含图片，不包含相册节点；点击卡片主体会先打开详情浮层，而不是直接打开原图。
-- 返回行为会回到 `/search`，并保留原始 `q` 查询参数。
+- 主预览优先使用 temp/cache 缩略图；如果当前渲染项缺失缩略图，契约页会把对应 image id 批量送入现有 preview repair 队列，后台异步修复后再通过 `/api/images/meta` 回填。
+- 返回行为会回到 `/search`，并保留原始 `q`；如果当前是 `file:` 搜索，也会一并保留 `quick_hash`，保证一级页与二级页结果一致。
 
 ### 6.3 `gallery-recent` / `gallery-all`
 

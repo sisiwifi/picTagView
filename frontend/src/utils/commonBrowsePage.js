@@ -1,4 +1,4 @@
-import { detectSearchMode, formatSearchModeLabel } from '../pages/topLevelPageConvention'
+import { buildSearchRequestParams, formatSearchModeLabel } from '../pages/topLevelPageConvention'
 
 const API_BASE = 'http://127.0.0.1:8000'
 
@@ -225,13 +225,25 @@ function getSearchQuery(vm) {
   return String(vm?.$route?.query?.q || '').trim()
 }
 
+function getSearchQuickHash(vm) {
+  return String(vm?.$route?.query?.quick_hash || '').trim()
+}
+
 function buildSearchCrumbs(vm) {
   const rawQuery = getSearchQuery(vm)
+  const quickHash = getSearchQuickHash(vm)
+  const searchQuery = {}
+  if (rawQuery) {
+    searchQuery.q = rawQuery
+  }
+  if (quickHash) {
+    searchQuery.quick_hash = quickHash
+  }
   return [
     {
       label: '搜索',
       title: '搜索',
-      to: rawQuery ? { path: '/search', query: { q: rawQuery } } : '/search',
+      to: rawQuery || quickHash ? { path: '/search', query: searchQuery } : '/search',
     },
     {
       label: vm.bcLabel(rawQuery || '搜索结果'),
@@ -693,6 +705,7 @@ const searchResultsContract = {
   },
   async loadItems(vm) {
     const rawQuery = getSearchQuery(vm)
+    const quickHash = getSearchQuickHash(vm)
     if (!rawQuery) {
       return {
         items: [],
@@ -700,19 +713,15 @@ const searchResultsContract = {
       }
     }
 
-    const modeInfo = detectSearchMode(rawQuery)
-    if (!modeInfo.normalizedQuery) {
+    const { modeInfo, params } = buildSearchRequestParams(rawQuery, { quickHash })
+    if (!modeInfo.normalizedQuery || modeInfo.validationError) {
       return {
         items: [],
         album: buildSearchBrowseInfo(rawQuery, modeInfo.mode, 0),
       }
     }
 
-    const params = new URLSearchParams({
-      q: modeInfo.normalizedQuery,
-      mode: modeInfo.mode,
-      limit: '0',
-    })
+    params.set('limit', '0')
     const res = await fetch(`${API_BASE}/api/search/images?${params.toString()}`)
     if (!res.ok) {
       return {
@@ -739,9 +748,17 @@ const searchResultsContract = {
   },
   back(vm) {
     const rawQuery = getSearchQuery(vm)
+    const quickHash = getSearchQuickHash(vm)
+    const query = {}
+    if (rawQuery) {
+      query.q = rawQuery
+    }
+    if (quickHash) {
+      query.quick_hash = quickHash
+    }
     vm.$router.push({
       path: '/search',
-      query: rawQuery ? { q: rawQuery } : {},
+      query,
     })
   },
   openItem(vm, item) {

@@ -66,7 +66,8 @@
 | `collections.py` | `POST /api/collections/search` | 为收藏菜单提供候选收藏夹与命中统计 |
 | `collections.py` | `POST /api/collections/apply` | 批量把图片添加、移除或保留在收藏夹中；不存在时可创建收藏夹 |
 | `collections.py` | `POST /api/collections/{collection_id}/cover` | 设置手动收藏封面 |
-| `search.py` | `GET /api/search/images` | 单输入搜索，支持 `auto`、`filename`、`tag`、`path`；`auto` 会解析到 `mixed` 或 `path`，并返回匹配元数据 |
+| `search.py` | `GET /api/search/images` | 单输入搜索，支持 `auto`、`filename`、`tag`、`path`、`file`、`imported_at`、`file_created_at`；可结合 `quick_hash`、`start_at`、`end_at` 返回匹配元数据 |
+| `search.py` | `POST /api/search/by-file` | 上传单张本地图片，按其 quick hash 反查同图结果，并返回统一搜索响应 |
 
 ### 2.5 分类、缓存、系统与回收站
 
@@ -182,10 +183,22 @@
 
 ### 4.6 搜索协议
 
-- `GET /api/search/images` 支持 `auto`、`filename`、`tag`、`path`。
+- `GET /api/search/images` 现在支持：
+  - `auto`
+  - `filename`
+  - `tag`
+  - `path`
+  - `file`
+  - `imported_at`
+  - `file_created_at`
 - `auto` 模式下：
   - 看起来像图片路径时，会转为 `path`
   - 否则会转为混合搜索 `mixed`
+- 各模式的额外参数约定：
+  - `file`：前端传 `q=文件名`、`mode=file`，并额外传 `quick_hash`
+  - `imported_at`：前端传 `q=开始时间~结束时间`、`mode=imported_at`，并额外传 `start_at`、`end_at`
+  - `file_created_at`：前端传 `q=开始时间~结束时间`、`mode=file_created_at`，并额外传 `start_at`、`end_at`
+- `POST /api/search/by-file` 使用 `multipart/form-data` 上传单个 `file`，后端会计算 quick hash，再复用 `file` 模式返回统一的 `SearchImageResponse`。
 - 前端一级搜索页默认使用有限结果；`/search/results` 二级页会把 `limit=0` 传给后端，以拉取完整结果集。
 - 返回体当前包含：
   - `requested_mode` / `resolved_mode`
@@ -195,7 +208,14 @@
   - `included_tags`
   - `items[*].matched_by`
   - `items[*].matched_tags`
-- 路径模式先定位源图片，再按 `quick_hash` 返回同图图片，因此结果里可能同时含：
+- `matched_by` 目前可能出现：
+  - `filename`
+  - `tag`
+  - `path`
+  - `quick_hash`
+  - `imported_at`
+  - `file_created_at`
+- 路径模式依然保留给后端兼容逻辑；文件模式会直接按传入的 `quick_hash` 返回同图图片，因此结果里可能同时含：
   - 源路径命中
   - `quick_hash` 命中
 
