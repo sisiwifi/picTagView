@@ -21,7 +21,7 @@
 | `basic.py` | `GET /` | 健康检查，返回 `{"status": "ok"}` |
 | `basic.py` | `POST /api/import` | 接收 `files`、`last_modified_json`、`created_time_json`、`category_id`、`recent_import_mode`，调用导入流水线 |
 | `basic.py` | `GET /api/images/count` | 返回库中 `ImageAsset` 总数 |
-| `basic.py` | `POST /api/admin/refresh` | 触发 `quick` 或 `full` 刷新；当请求体里 `repair_cache=true` 时，可配合 `image_ids` 或 `trash_entry_ids` 做定向预览修复 |
+| `basic.py` | `POST /api/admin/refresh` | 触发 `quick` 或 `full` 刷新；当 `mode=quick` 且请求体里 `repair_cache=true` 并带 `image_ids` 或 `trash_entry_ids` 时，会走 targeted-only 轻路径做定向预览修复，不再顺带执行全库维护 |
 
 ### 2.2 图库管理聚合
 

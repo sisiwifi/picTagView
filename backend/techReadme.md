@@ -123,6 +123,7 @@
 - `search.py` 现在支持 `filename`、`tag`、`path`、`file`、`imported_at`、`file_created_at` 六类显式搜索，以及 `auto -> mixed/path` 解析；其中 `file` 通过 `quick_hash` 找到同图图片，时间模式通过 `start_at/end_at` 做区间过滤。
 - 搜索响应当前同时服务 `SearchPage.vue` 一级虚拟化预览和 `/search/results` 完整列表，返回体包含 `requested_mode`、`resolved_mode`、`included_tags`、`matched_by`、`matched_tags` 等前端渲染所需元数据；前端顶层页提供“按图搜索”和“时间范围”两个辅助入口来生成对应查询。
 - 搜索 UI 的主预览现在优先使用 temp/cache 缩略图，不再拿原图作为主卡片兜底；当搜索结果缺失缩略图时，前端会复用现有 `POST /api/admin/refresh?mode=quick` + `/api/images/meta` 的 targeted repair 链路，后台异步生成并回填预览元数据。
+- `POST /api/admin/refresh` 在 targeted preview repair 场景下已经做了轻路径分流：当 `mode=quick` 且请求体带 `repair_cache=true` 和 `image_ids` / `trash_entry_ids` 时，后端会直接修复指定条目的缩略图与缓存引用，不再先执行全库路径对账、缓存目录清理、月份代表图补缩略图、hash index 全量重建或相册计数重算。
 
 ### 5.4 收藏夹与封面
 

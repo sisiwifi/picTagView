@@ -17,7 +17,7 @@ from app.services.cover_service import build_asset_cover_payload, cover_is_manua
 from app.services.file_scanner import list_image_files
 from app.services.parallel_processor import process_from_paths, process_hash_only_from_paths
 
-from .hash_index import rebuild_hash_index
+from .hash_index import add_to_hash_index, load_hash_index, rebuild_hash_index, save_hash_index
 from .helpers import (
     has_required_thumb,
     image_dimensions_from_file,
@@ -265,6 +265,18 @@ def _cache_hash_from_path(cache_path: str | Path | None) -> Optional[str]:
     return file_hash or None
 
 
+def _normalize_positive_ids(values: list[int] | None) -> list[int]:
+    normalized: set[int] = set()
+    for value in values or []:
+        try:
+            candidate = int(value)
+        except (TypeError, ValueError):
+            continue
+        if candidate > 0:
+            normalized.add(candidate)
+    return sorted(normalized)
+
+
 def _repair_targeted_cache_entries(
     image_ids: list[int] | None = None,
     trash_entry_ids: list[int] | None = None,
@@ -274,12 +286,15 @@ def _repair_targeted_cache_entries(
         "cache_images_cleaned": 0,
         "cache_trash_repaired": 0,
         "cache_trash_cleaned": 0,
+        "hash_index_rebuilt": 0,
     }
 
-    normalized_image_ids = sorted({int(value) for value in (image_ids or []) if int(value) > 0})
-    normalized_trash_entry_ids = sorted({int(value) for value in (trash_entry_ids or []) if int(value) > 0})
+    normalized_image_ids = _normalize_positive_ids(image_ids)
+    normalized_trash_entry_ids = _normalize_positive_ids(trash_entry_ids)
 
     if normalized_image_ids:
+        hash_index_rebuild_needed = False
+        hash_index_updates: list[tuple[str, int, Optional[str]]] = []
         with get_session() as session:
             assets = session.exec(
                 select(ImageAsset)
@@ -341,8 +356,12 @@ def _repair_targeted_cache_entries(
                     asset.thumbs = updated_thumbs
                     changed = True
                 if next_hash and asset.file_hash != next_hash:
+                    if asset.file_hash:
+                        hash_index_rebuild_needed = True
                     asset.file_hash = next_hash
                     changed = True
+                if next_hash and asset.id is not None:
+                    hash_index_updates.append((next_hash, asset.id, asset.quick_hash))
                 if not previous_cache_exists or removed_missing_cache_refs:
                     result["cache_images_repaired"] += 1
 
@@ -350,6 +369,16 @@ def _repair_targeted_cache_entries(
 
             if changed:
                 session.commit()
+
+        if hash_index_updates:
+            if hash_index_rebuild_needed:
+                rebuild_hash_index()
+                result["hash_index_rebuilt"] = 1
+            else:
+                load_hash_index()
+                for file_hash, image_id, quick_hash in hash_index_updates:
+                    add_to_hash_index(file_hash, image_id, quick_hash)
+                save_hash_index()
 
     if normalized_trash_entry_ids:
         with get_session() as session:
@@ -584,6 +613,34 @@ def refresh_library(
     if mode not in {"quick", "full"}:
         mode = "quick"
 
+    normalized_repair_image_ids = _normalize_positive_ids(repair_cache_image_ids)
+    normalized_repair_trash_entry_ids = _normalize_positive_ids(repair_cache_trash_entry_ids)
+    targeted_only_refresh = bool(
+        mode == "quick"
+        and (normalized_repair_image_ids or normalized_repair_trash_entry_ids)
+    )
+
+    if targeted_only_refresh:
+        targeted_cache_result = _repair_targeted_cache_entries(
+            image_ids=normalized_repair_image_ids,
+            trash_entry_ids=normalized_repair_trash_entry_ids,
+        )
+        return {
+            "mode": mode,
+            "refresh_scope": "targeted",
+            "pruned": 0,
+            "total_images": 0,
+            "cache_deleted": 0,
+            "regenerated": 0,
+            "new_ingested": 0,
+            "hash_conflicts": 0,
+            "non_album_deduped": 0,
+            "cleaned_paths": 0,
+            "targeted_image_count": len(normalized_repair_image_ids),
+            "targeted_trash_entry_count": len(normalized_repair_trash_entry_ids),
+            **targeted_cache_result,
+        }
+
     regenerated = 0
     new_ingested = 0
     hash_conflicts = 0
@@ -711,8 +768,8 @@ def refresh_library(
         session.commit()
 
     targeted_cache_result = _repair_targeted_cache_entries(
-        image_ids=repair_cache_image_ids,
-        trash_entry_ids=repair_cache_trash_entry_ids,
+        image_ids=normalized_repair_image_ids,
+        trash_entry_ids=normalized_repair_trash_entry_ids,
     )
 
     rebuild_hash_index()
@@ -720,6 +777,7 @@ def refresh_library(
 
     return {
         "mode": mode,
+        "refresh_scope": "full" if mode == "full" else "global-quick",
         "pruned": pruned,
         "total_images": total_images,
         "cache_deleted": cache_deleted,
