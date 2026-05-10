@@ -263,6 +263,8 @@ def image_meta(ids: str = Query(..., description="Comma-separated image ids")) -
                 thumb_url=thumb_url(asset),
                 cache_thumb_url=cache_thumb_url(asset),
                 media_paths=[path for path in (asset.media_path or []) if isinstance(path, str) and path],
+                is_animated=bool(asset.is_animated),
+                animation_meta=asset.normalized_animation_meta if asset.is_animated else None,
             )
         )
 

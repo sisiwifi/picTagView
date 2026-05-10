@@ -92,6 +92,8 @@ def _build_album_response(album: Album, session, active_category_ids: set[int]) 
             sort_ts=_to_unix_ts(sa.updated_at or sa.created_at),
             photo_count=stats.direct_photo_count if stats else 0,
             created_at=sa.created_at,
+            is_animated=bool(cover_asset.is_animated) if cover_asset else False,
+            animation_meta=cover_asset.normalized_animation_meta if cover_asset and cover_asset.is_animated else None,
         ))
     sub_items.sort(key=lambda item: _item_sort_key(item.name))
 
@@ -138,6 +140,8 @@ def _build_album_response(album: Album, session, active_category_ids: set[int]) 
             media_index=media_index,
             media_rel_path=media_rel_path,
             is_cover=bool(current_cover_photo_id is not None and asset.id == current_cover_photo_id),
+            is_animated=bool(asset.is_animated),
+            animation_meta=asset.normalized_animation_meta if asset.is_animated else None,
         ))
     image_items.sort(key=lambda item: _item_sort_key(item.name))
 

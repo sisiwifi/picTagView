@@ -19,8 +19,10 @@ from app.services.parallel_processor import process_from_paths, process_hash_onl
 
 from .hash_index import add_to_hash_index, load_hash_index, rebuild_hash_index, save_hash_index
 from .helpers import (
+    apply_animation_metadata,
     has_required_thumb,
     image_dimensions_from_file,
+    image_metadata_from_file,
     mime_from_name,
     quick_hash_from_bytes,
     required_thumb_entry,
@@ -28,6 +30,9 @@ from .helpers import (
     to_project_relative,
     upsert_thumb,
 )
+
+
+_REFRESH_DB_COMMIT_BATCH_SIZE = 50
 
 
 def _normalize_rel_path(path: str) -> str:
@@ -255,6 +260,14 @@ def _first_live_media_path(asset: ImageAsset) -> Optional[Path]:
     return None
 
 
+def _needs_animation_metadata_backfill(asset: ImageAsset) -> bool:
+    if asset.is_animated is None:
+        return True
+    if asset.is_animated and asset.normalized_animation_meta is None:
+        return True
+    return False
+
+
 def _cache_hash_from_path(cache_path: str | Path | None) -> Optional[str]:
     if not cache_path:
         return None
@@ -331,7 +344,7 @@ def _repair_targeted_cache_entries(
                     session.add(asset)
                     continue
 
-                _key, cache_path_str, error, width, height = generate_cache_thumb_entry(
+                _key, cache_path_str, error, width, height, is_animated, frame_count, animation_format = generate_cache_thumb_entry(
                     str(asset.id),
                     str(media_path),
                     CACHE_DIR,
@@ -354,6 +367,8 @@ def _repair_targeted_cache_entries(
                 updated_thumbs = upsert_thumb(asset.thumbs, next_thumb_entry)
                 if updated_thumbs != asset.thumbs:
                     asset.thumbs = updated_thumbs
+                    changed = True
+                if apply_animation_metadata(asset, is_animated, frame_count, animation_format):
                     changed = True
                 if next_hash and asset.file_hash != next_hash:
                     if asset.file_hash:
@@ -405,7 +420,7 @@ def _repair_targeted_cache_entries(
                     session.add(entry)
                     continue
 
-                _key, cache_path_str, error, _width, _height = generate_cache_thumb_entry(
+                _key, cache_path_str, error, _width, _height, _is_animated, _frame_count, _animation_format = generate_cache_thumb_entry(
                     str(entry.id or ""),
                     str(preview_source),
                     CACHE_DIR,
@@ -452,9 +467,10 @@ def ingest_media_entries(
 
     with get_session() as session:
         for index, (rel_path, path) in enumerate(entries):
-            result = proc.get(str(index), (None, None, "no result", None, None, None))
+            result = proc.get(str(index), (None, None, "no result", None, None, None, None, None, None))
             file_hash, thumb_path_str, _error = result[0], result[1], result[2]
             quick_hash, px_w, px_h = result[3], result[4], result[5]
+            is_animated, frame_count, animation_format = result[6], result[7], result[8]
             if not file_hash:
                 outcomes.append({"rel_path": rel_path, "status": "error"})
                 continue
@@ -521,6 +537,7 @@ def ingest_media_entries(
                     existing.file_size = path.stat().st_size
                 if not existing.mime_type:
                     existing.mime_type = mime_from_name(path.name)
+                apply_animation_metadata(existing, is_animated, frame_count, animation_format)
                 if not existing.full_filename:
                     existing.full_filename = path.name
                 if existing.tags is None:
@@ -562,10 +579,13 @@ def ingest_media_entries(
                 file_size=stat.st_size,
                 mime_type=mime_from_name(path.name),
                 category_id=DEFAULT_CATEGORY_ID,
+                is_animated=False,
+                animation_meta=None,
                 tags=[],
                 album=[album_public_ids] if album_public_ids else [],
                 collection=[],
             )
+            apply_animation_metadata(asset, is_animated, frame_count, animation_format)
             session.add(asset)
             session.flush()
             if album_public_ids and asset.id is not None:
@@ -705,24 +725,43 @@ def refresh_library(
         proc = {}
 
     with get_session() as session:
-        for asset in remaining:
-            media_path = _first_live_media_path(asset)
+        db_remaining = session.exec(select(ImageAsset).order_by(col(ImageAsset.id))).all()
+        pending_commit_count = 0
+
+        for db_asset in db_remaining:
+            media_path = _first_live_media_path(db_asset)
             if not media_path:
                 continue
 
-            db_asset = session.exec(select(ImageAsset).where(ImageAsset.id == asset.id)).first()
-            if not db_asset:
-                continue
-
-            result = proc.get(str(asset.id))
+            result = proc.get(str(db_asset.id))
             if result:
                 _file_hash, thumb_path_str, _error = result[0], result[1], result[2]
                 proc_qh = result[3]
                 proc_w = result[4]
                 proc_h = result[5]
+                proc_is_animated = result[6]
+                proc_frame_count = result[7]
+                proc_animation_format = result[8]
             else:
                 _file_hash, thumb_path_str, _error = None, None, "not processed"
                 proc_qh, proc_w, proc_h = None, None, None
+                proc_is_animated, proc_frame_count, proc_animation_format = None, None, None
+
+            fallback_w = fallback_h = None
+            fallback_is_animated = fallback_frame_count = fallback_animation_format = None
+            needs_animation_backfill = _needs_animation_metadata_backfill(db_asset)
+            needs_fallback_metadata = (
+                (not db_asset.width or not db_asset.height)
+                or needs_animation_backfill
+            ) and (proc_w is None or proc_h is None or proc_is_animated is None or proc_frame_count is None)
+            if needs_fallback_metadata:
+                (
+                    fallback_w,
+                    fallback_h,
+                    fallback_is_animated,
+                    fallback_frame_count,
+                    fallback_animation_format,
+                ) = image_metadata_from_file(media_path)
 
             if not db_asset.quick_hash:
                 if proc_qh:
@@ -733,8 +772,16 @@ def refresh_library(
             if not db_asset.width or not db_asset.height:
                 if proc_w is not None and proc_h is not None:
                     db_asset.width, db_asset.height = proc_w, proc_h
+                elif fallback_w is not None and fallback_h is not None:
+                    db_asset.width, db_asset.height = fallback_w, fallback_h
                 else:
                     db_asset.width, db_asset.height = image_dimensions_from_file(media_path)
+            apply_animation_metadata(
+                db_asset,
+                proc_is_animated if proc_is_animated is not None else fallback_is_animated,
+                proc_frame_count if proc_frame_count is not None else fallback_frame_count,
+                proc_animation_format if proc_animation_format is not None else fallback_animation_format,
+            )
             if not db_asset.file_size:
                 db_asset.file_size = media_path.stat().st_size
             if not db_asset.mime_type:
@@ -765,7 +812,13 @@ def refresh_library(
                 db_asset.file_hash = _file_hash
 
             session.add(db_asset)
-        session.commit()
+            pending_commit_count += 1
+            if pending_commit_count >= _REFRESH_DB_COMMIT_BATCH_SIZE:
+                session.commit()
+                pending_commit_count = 0
+
+        if pending_commit_count:
+            session.commit()
 
     targeted_cache_result = _repair_targeted_cache_entries(
         image_ids=normalized_repair_image_ids,

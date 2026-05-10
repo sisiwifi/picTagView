@@ -126,6 +126,8 @@ def _build_search_item(asset, preview_resolver: AssetPreviewResolver, tags_by_id
             for tag_id in (matched_tag_ids or [])
             if tag_id in tags_by_id
         ],
+        is_animated=bool(asset.is_animated),
+        animation_meta=asset.normalized_animation_meta if asset.is_animated else None,
     )
 
 

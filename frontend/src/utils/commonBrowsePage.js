@@ -1,4 +1,5 @@
 import { buildSearchRequestParams, formatSearchModeLabel } from '../pages/topLevelPageConvention'
+import { normalizeAnimatedFields, resolveAnimatedBadgeLabel } from './animatedMedia'
 
 const API_BASE = 'http://127.0.0.1:8000'
 
@@ -18,15 +19,18 @@ function normalizeCalendarItem(rawItem) {
   const stableKey = type === 'album'
     ? `album:${rawItem?.public_id || rawItem?.album_path || rawItem?.id || name}`
     : `image:${rawItem?.media_rel_path || rawItem?.id || name}`
+  const animatedFields = normalizeAnimatedFields(rawItem)
 
   return {
     ...rawItem,
+    ...animatedFields,
     type,
     name,
     count: Number(rawItem?.count ?? rawItem?.photo_count ?? 0) || 0,
     sort_ts: Number(rawItem?.sort_ts) || toUnixSeconds(rawItem?.file_created_at || rawItem?.imported_at || rawItem?.created_at),
     stable_key: stableKey,
     layout_key: rawItem?.id || rawItem?.public_id || rawItem?.album_path || rawItem?.media_rel_path || stableKey,
+    animated_badge_label: resolveAnimatedBadgeLabel(rawItem),
     preview_original_url: type === 'image' && rawItem?.media_rel_path
       ? `/media/${String(rawItem.media_rel_path).replace(/\\/g, '/')}`
       : '',
@@ -46,9 +50,11 @@ function normalizeTrashItem(rawItem) {
   const previewCacheUrl = rawItem?.cache_thumb_url || rawItem?.preview_cache_path || ''
   const previewThumbUrl = rawItem?.thumb_url || rawItem?.preview_thumb_path || rawItem?.preview_path || ''
   const previewOriginalUrl = rawItem?.trash_media_url || rawItem?.preview_path || ''
+  const animatedFields = normalizeAnimatedFields(rawItem)
 
   return {
     ...rawItem,
+    ...animatedFields,
     type,
     name,
     public_id: type === 'album' ? (rawItem?.public_id || rawItem?.entry_key || String(rawItem?.id || '')) : rawItem?.public_id,
@@ -56,6 +62,7 @@ function normalizeTrashItem(rawItem) {
     sort_ts: Number(rawItem?.sort_ts) || toUnixSeconds(rawItem?.file_created_at || rawItem?.imported_at || rawItem?.created_at),
     stable_key: stableKey,
     layout_key: rawItem?.entry_key || rawItem?.id || stableKey,
+    animated_badge_label: resolveAnimatedBadgeLabel(rawItem),
     cache_thumb_url: previewCacheUrl,
     thumb_url: previewThumbUrl,
     preview_original_url: previewOriginalUrl,

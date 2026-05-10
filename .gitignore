@@ -1,6 +1,7 @@
 media/
 backend/temp/
 backend/data/cache/
+backend/data/app.db
 backend/scripts/
 backend/tests/
 __pycache__/

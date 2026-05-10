@@ -27,6 +27,7 @@
             :src="resolvedUrl(mg)"
             :fallback-src="originalPreviewUrl(mg)"
             :unavailable="isPreviewUnavailable(mg)"
+            :badge-label="animatedBadgeLabel(mg)"
             class="month-card"
             :overlay-opacity="0.40"
             :rounded="'1.25rem'"
@@ -44,6 +45,7 @@
 <script>
 import ThumbCard from '../components/ThumbCard.vue'
 import LoadingSpinner from '../components/LoadingSpinner.vue'
+import { resolveAnimatedBadgeLabel } from '../utils/animatedMedia'
 import TopLevelPageHeader from './TopLevelPageHeader.vue'
 
 const API_BASE = 'http://127.0.0.1:8000'
@@ -74,6 +76,7 @@ export default {
   },
 
   methods: {
+    animatedBadgeLabel: resolveAnimatedBadgeLabel,
     previewUrl(item) {
       if (!item) return ''
       const cached = this.cacheUrls[item.id]

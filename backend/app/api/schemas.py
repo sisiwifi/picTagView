@@ -9,6 +9,11 @@ class ImportResponse(BaseModel):
     skipped: List[str]
 
 
+class AnimationMeta(BaseModel):
+    frame_count: int = 1
+    format: Optional[str] = None
+
+
 class MonthGroup(BaseModel):
     group: str        # e.g. "2025-3"
     year: int
@@ -18,6 +23,8 @@ class MonthGroup(BaseModel):
     cache_thumb_url: Optional[str] = None
     id: Optional[int] = None
     preview_original_url: Optional[str] = None
+    is_animated: bool = False
+    animation_meta: Optional[AnimationMeta] = None
 
 
 class YearGroup(BaseModel):
@@ -51,6 +58,8 @@ class DateItem(BaseModel):
     media_index: Optional[int] = None
     media_rel_path: Optional[str] = None
     is_cover: bool = False
+    is_animated: bool = False
+    animation_meta: Optional[AnimationMeta] = None
 
 
 class DateItemsResponse(BaseModel):
@@ -113,6 +122,8 @@ class ImageMetaItem(BaseModel):
     thumb_url: str = ""
     cache_thumb_url: Optional[str] = None
     media_paths: List[str] = Field(default_factory=list)
+    is_animated: bool = False
+    animation_meta: Optional[AnimationMeta] = None
 
 
 class ImageMetaResponse(BaseModel):
@@ -238,6 +249,8 @@ class SearchImageItem(BaseModel):
     quick_hash: Optional[str] = None
     matched_by: List[str] = Field(default_factory=list)
     matched_tags: List[TagBriefItem] = Field(default_factory=list)
+    is_animated: bool = False
+    animation_meta: Optional[AnimationMeta] = None
 
 
 class SearchImageResponse(BaseModel):
@@ -321,6 +334,8 @@ class AlbumItem(BaseModel):
     media_index: Optional[int] = None
     media_rel_path: Optional[str] = None
     is_cover: bool = False
+    is_animated: bool = False
+    animation_meta: Optional[AnimationMeta] = None
 
 
 class AlbumInfo(BaseModel):
@@ -363,6 +378,8 @@ class CollectionOverviewItem(BaseModel):
     width: Optional[int] = None
     height: Optional[int] = None
     updated_at: Optional[datetime] = None
+    is_animated: bool = False
+    animation_meta: Optional[AnimationMeta] = None
 
 
 class CollectionOverviewResponse(BaseModel):

@@ -17,7 +17,7 @@ from app.services.cache_thumb_service import generate_cache_thumbs_progressively
 from app.services.category_service import DEFAULT_CATEGORY_ID
 from app.services.file_scanner import iter_image_files, list_image_files
 from app.services.imports.hash_index import rebuild_hash_index
-from app.services.imports.helpers import mime_from_name, required_thumb_entry, to_project_relative, unique_dest, unique_dir_dest, upsert_thumb
+from app.services.imports.helpers import apply_animation_metadata, mime_from_name, required_thumb_entry, to_project_relative, unique_dest, unique_dir_dest, upsert_thumb
 from app.services.imports.maintenance import ingest_media_entries, recalculate_album_counts, reconcile_library_paths
 from app.services.parallel_processor import process_from_paths
 
@@ -484,7 +484,7 @@ def _ensure_album_cover_thumbs(album_paths: set[str]) -> None:
             result = thumb_results.get(job_key)
             if not result:
                 continue
-            file_hash, thumb_path_str, error, _quick_hash, width, height = result
+            file_hash, thumb_path_str, error, _quick_hash, width, height, is_animated, frame_count, animation_format = result
             if error or not thumb_path_str:
                 continue
 
@@ -505,6 +505,8 @@ def _ensure_album_cover_thumbs(album_paths: set[str]) -> None:
                 changed = True
             if height is not None and not asset.height:
                 asset.height = height
+                changed = True
+            if apply_animation_metadata(asset, is_animated, frame_count, animation_format):
                 changed = True
             session.add(asset)
 

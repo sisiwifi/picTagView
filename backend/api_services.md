@@ -104,6 +104,7 @@
 | `services/imports/maintenance.py` | `quick/full` 刷新、路径对账、缺失预览修复、未入库图片收编 |
 | `services/imports/hash_index.py` | `.hash_index.json` 的加载、查询和重建 |
 | `services/imports/helpers.py` | 路径归一化、文件时间回写、缩略图条目更新等辅助函数 |
+| `services/image_frame_service.py` | 多帧图片首帧提取、动图识别、尺寸与帧数元数据归一化 |
 | `services/recent_import_service.py` | 维护“最近一批成功导入图片”的快照，支持按 replace/append 聚合同一前端导入会话 |
 | `services/parallel_processor.py` | 并行哈希、尺寸识别与月份封面生成 |
 | `services/cache_thumb_service.py` | 生成 `data/cache/*.webp` 浏览缓存缩略图 |
@@ -135,6 +136,7 @@
 - `RecentImportOperation.successful_image_ids` 当前是 recent 一级页的主数据源，记录该前端导入流程里所有成功导入的图片 id；旧的 `preview_image_ids` 仅保留兼容用途。
 - 如果 `tag_match_setting.enabled=true`，导入批次会在同一数据库事务内按文件名自动匹配 Tag，并以 `append_unique` 方式追加到图片 `tags`。
 - 导入期只会为本批次真正新增关联的 Tag 刷新 `last_used_at` 并增量同步 `usage_count`。
+- GIF、动态 WEBP 等多帧图片会在导入阶段统一抽取首帧生成 temp 缩略图与尺寸元数据，同时写入 `ImageAsset.is_animated + animation_meta`；其中 `animation_meta` 只在动图时保存 `frame_count / format`。
 
 ### 4.2 图库管理聚合协议
 
@@ -147,6 +149,7 @@
   - 相册节点在前
   - 直图节点在后
   - 两类节点都沿用现有日期视图的排序与详情协议
+- 日期、相册、收藏、搜索、图库 overview/item 接口现在都会把动图元数据一并返回给前端，用于统一显示 `GIF` / `WEBP` 标记。
 
 ### 4.3 图片元数据编辑
 
@@ -236,6 +239,7 @@
   - 已存在的缓存缩略图会立即放进返回流
   - 同一个 `page_token` 的新 `generation` 会替换旧页面任务
   - 状态接口通过 `cursor` 返回新增完成项，而不是每次全量返回
+- 浏览缓存缩略图对多帧图片也统一使用首帧，不再依赖 OpenCV 直接解码整段 GIF/WEBP 原始文件。
 
 ### 4.8 页面配置与自动打标设置
 

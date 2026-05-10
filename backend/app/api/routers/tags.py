@@ -221,6 +221,8 @@ def _build_tag_image_item(asset: ImageAsset, preview_resolver: AssetPreviewResol
         file_created_at=asset.file_created_at,
         media_index=media_index,
         media_rel_path=media_rel_path,
+        is_animated=bool(asset.is_animated),
+        animation_meta=asset.normalized_animation_meta if asset.is_animated else None,
     )
 
 

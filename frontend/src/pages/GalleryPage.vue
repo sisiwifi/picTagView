@@ -111,6 +111,7 @@
           v-for="slot in section.displaySlots"
           :key="slot.key"
           :src="resolvedOverviewUrl(slot.item)"
+          :badge-label="slot.isSummary ? '' : animatedBadgeLabel(slot.item)"
           :class="['gallery-overview__card', { 'gallery-overview__card--summary': slot.isSummary }]"
           :overlay-opacity="slot.isSummary ? 0.24 : 0"
           :rounded="'1.25rem'"
@@ -186,6 +187,7 @@ import FolderImportDialog from '../components/FolderImportDialog.vue'
 import LoadingSpinner from '../components/LoadingSpinner.vue'
 import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
 import ThumbCard from '../components/ThumbCard.vue'
+import { resolveAnimatedBadgeLabel } from '../utils/animatedMedia'
 import TopLevelPageHeader from './TopLevelPageHeader.vue'
 import {
   API_BASE,
@@ -342,6 +344,7 @@ export default {
           type: 'image',
           previewUrl: this.resolvedOverviewUrl(this.detailItem),
           aspectRatio: this.detailAspectRatio(this.detailItem),
+          animationLabel: this.animatedBadgeLabel(this.detailItem),
         },
       ]
     },
@@ -415,6 +418,7 @@ export default {
   },
 
   methods: {
+    animatedBadgeLabel: resolveAnimatedBadgeLabel,
     resolvePreviewUrl,
     showNotice({ type = 'info', title = '', lines = [] }) {
       this.noticeType = type

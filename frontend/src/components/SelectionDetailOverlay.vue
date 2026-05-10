@@ -30,6 +30,7 @@
                 class="detail-preview-list__thumb"
                 :style="preview.aspectRatio ? { aspectRatio: preview.aspectRatio } : null"
               >
+                <span v-if="preview.animationLabel" class="detail-preview__motion-badge">{{ preview.animationLabel }}</span>
                 <img
                   v-if="preview.previewUrl"
                   class="detail-preview-list__img"
@@ -54,6 +55,7 @@
           </div>
 
           <div v-else class="detail-preview-stage">
+            <span v-if="primaryPreview && primaryPreview.animationLabel" class="detail-preview__motion-badge">{{ primaryPreview.animationLabel }}</span>
             <img
               v-if="primaryPreview && primaryPreview.previewUrl"
               class="detail-preview-stage__img"
@@ -816,6 +818,7 @@ export default {
 }
 
 .detail-preview-stage {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -884,11 +887,34 @@ export default {
 }
 
 .detail-preview-list__thumb {
+  position: relative;
   width: 100%;
   border-radius: 14px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.88);
   box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.92);
+}
+
+.detail-preview__motion-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  min-width: 46px;
+  height: 24px;
+  padding: 0 0.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.86);
+  color: #ffffff;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  pointer-events: none;
+  z-index: 2;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
 }
 
 .detail-preview-list__img {

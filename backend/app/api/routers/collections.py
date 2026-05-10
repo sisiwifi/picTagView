@@ -79,6 +79,8 @@ def list_collections() -> CollectionOverviewResponse:
                 width=cover_asset.width if cover_asset else None,
                 height=cover_asset.height if cover_asset else None,
                 updated_at=collection.updated_at or collection.created_at,
+                is_animated=bool(cover_asset.is_animated) if cover_asset else False,
+                animation_meta=cover_asset.normalized_animation_meta if cover_asset and cover_asset.is_animated else None,
             ))
 
         return CollectionOverviewResponse(items=items)
@@ -129,6 +131,8 @@ def collection_detail(collection_id: str) -> CollectionDetailResponse:
                 media_index=media_index,
                 media_rel_path=media_rel_path,
                 is_cover=bool(cover_photo_id is not None and asset.id == cover_photo_id),
+                is_animated=bool(asset.is_animated),
+                animation_meta=asset.normalized_animation_meta if asset.is_animated else None,
             ))
 
         if not items:

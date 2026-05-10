@@ -26,8 +26,17 @@
         <span v-if="selected" class="media-card__pick-mark">✓</span>
       </button>
 
-      <span v-if="coverMarked" class="media-card__cover-flag">封面</span>
-      <span v-if="itemType === 'album'" class="media-card__type-flag">ALB</span>
+      <span v-if="mediaBadgeLabel" class="media-card__media-flag">{{ mediaBadgeLabel }}</span>
+      <span
+        v-if="coverMarked"
+        class="media-card__cover-flag"
+        :class="{ 'media-card__cover-flag--stacked': mediaBadgeLabel }"
+      >封面</span>
+      <span
+        v-if="itemType === 'album'"
+        class="media-card__type-flag"
+        :class="{ 'media-card__type-flag--stacked': mediaBadgeLabel }"
+      >ALB</span>
     </div>
 
     <div class="media-card__info">
@@ -82,6 +91,7 @@ export default {
     selected: { type: Boolean, default: false },
     disabled: { type: Boolean, default: false },
     coverMarked: { type: Boolean, default: false },
+    mediaBadgeLabel: { type: String, default: '' },
   },
   emits: ['toggle-info', 'details', 'toggle-select', 'img-error'],
   computed: {
@@ -209,6 +219,7 @@ export default {
   background: #0f172a;
 }
 
+.media-card__media-flag,
 .media-card__type-flag {
   position: absolute;
   top: 12px;
@@ -226,6 +237,19 @@ export default {
   font-size: 0.62rem;
   font-weight: 700;
   letter-spacing: 0.12em;
+}
+
+.media-card__media-flag {
+  min-width: 44px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.86);
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.22);
+}
+
+.media-card__type-flag--stacked {
+  top: 42px;
 }
 
 .media-card__cover-flag {
@@ -248,6 +272,10 @@ export default {
   white-space: nowrap;
   word-break: keep-all;
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.22);
+}
+
+.media-card__cover-flag--stacked {
+  top: 42px;
 }
 
 .media-card__info {

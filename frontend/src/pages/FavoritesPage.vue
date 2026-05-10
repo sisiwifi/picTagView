@@ -19,6 +19,7 @@
         :src="resolvedUrl(collection)"
         :fallback-src="originalPreviewUrl(collection)"
         :unavailable="isPreviewUnavailable(collection)"
+        :badge-label="animatedBadgeLabel(collection)"
         class="favorites-card"
         :overlay-opacity="0.42"
         :rounded="'1.25rem'"
@@ -34,6 +35,7 @@
 <script>
 import ThumbCard from '../components/ThumbCard.vue'
 import LoadingSpinner from '../components/LoadingSpinner.vue'
+import { resolveAnimatedBadgeLabel } from '../utils/animatedMedia'
 import TopLevelPageHeader from './TopLevelPageHeader.vue'
 import { API_BASE, topLevelPageVars } from './topLevelPageConvention'
 
@@ -68,6 +70,7 @@ export default {
     this.stopPoll()
   },
   methods: {
+    animatedBadgeLabel: resolveAnimatedBadgeLabel,
     previewUrl(item) {
       if (!item) return ''
       const cacheKey = item.cover_photo_id

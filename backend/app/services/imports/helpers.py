@@ -9,6 +9,7 @@ from typing import Optional
 
 from app.core.config import MEDIA_DIR, PROJECT_ROOT
 from app.services.app_settings_service import get_month_cover_size_px
+from app.services.image_frame_service import extract_preview_frame_from_bytes, extract_preview_frame_from_path
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".tiff", ".tif", ".png", ".webp", ".gif", ".bmp"}
 
@@ -57,26 +58,100 @@ def mime_from_name(name: str) -> str:
     return "application/octet-stream"
 
 
-def image_dimensions_from_bytes(content: bytes) -> tuple[Optional[int], Optional[int]]:
+def image_metadata_from_bytes(
+    content: bytes,
+) -> tuple[Optional[int], Optional[int], Optional[bool], Optional[int], Optional[str]]:
     try:
-        import cv2
-        import numpy as np
-
-        arr = np.frombuffer(content, dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if img is None:
-            return None, None
-        height, width = img.shape[:2]
-        return int(width), int(height)
+        frame = extract_preview_frame_from_bytes(content)
+        return frame.width, frame.height, frame.is_animated, frame.frame_count, frame.animation_format
     except Exception:
-        return None, None
+        return None, None, None, None, None
+
+
+def image_metadata_from_file(
+    path: Path,
+) -> tuple[Optional[int], Optional[int], Optional[bool], Optional[int], Optional[str]]:
+    try:
+        frame = extract_preview_frame_from_path(path)
+        return frame.width, frame.height, frame.is_animated, frame.frame_count, frame.animation_format
+    except Exception:
+        return None, None, None, None, None
+
+
+def image_dimensions_from_bytes(content: bytes) -> tuple[Optional[int], Optional[int]]:
+    width, height, _is_animated, _frame_count, _animation_format = image_metadata_from_bytes(content)
+    return width, height
 
 
 def image_dimensions_from_file(path: Path) -> tuple[Optional[int], Optional[int]]:
-    try:
-        return image_dimensions_from_bytes(path.read_bytes())
-    except Exception:
-        return None, None
+    width, height, _is_animated, _frame_count, _animation_format = image_metadata_from_file(path)
+    return width, height
+
+
+def normalize_animation_meta(
+    animation_meta: object,
+    *,
+    frame_count: Optional[int] = None,
+    animation_format: Optional[str] = None,
+) -> Optional[dict[str, object]]:
+    raw_meta = animation_meta if isinstance(animation_meta, dict) else {}
+
+    raw_frame_count = frame_count if frame_count is not None else raw_meta.get("frame_count")
+    raw_animation_format = (
+        animation_format
+        if animation_format is not None
+        else raw_meta.get("format") or raw_meta.get("animation_format")
+    )
+
+    normalized_format = str(raw_animation_format or "").strip().upper() or None
+    has_frame_count = raw_frame_count is not None or normalized_format is not None
+    if not has_frame_count:
+        return None
+
+    normalized_frame_count = max(int(raw_frame_count or 1), 1)
+    return {
+        "frame_count": normalized_frame_count,
+        "format": normalized_format,
+    }
+
+
+def animation_meta_parts(source: object) -> tuple[Optional[dict[str, object]], int, Optional[str]]:
+    normalized_meta = normalize_animation_meta(getattr(source, "animation_meta", None))
+    if not normalized_meta:
+        return None, 1, None
+    normalized_frame_count = max(int(normalized_meta.get("frame_count") or 1), 1)
+    normalized_format = str(normalized_meta.get("format") or "").strip().upper() or None
+    return normalized_meta, normalized_frame_count, normalized_format
+
+
+def apply_animation_metadata(
+    target: object,
+    is_animated: Optional[bool],
+    frame_count: Optional[int],
+    animation_format: Optional[str],
+) -> bool:
+    if is_animated is None and frame_count is None and not animation_format:
+        return False
+
+    normalized_meta = normalize_animation_meta(
+        getattr(target, "animation_meta", None),
+        frame_count=frame_count,
+        animation_format=animation_format,
+    )
+    normalized_frame_count = max(int((normalized_meta or {}).get("frame_count") or 1), 1)
+    normalized_animation_format = str((normalized_meta or {}).get("format") or "").strip().upper() or None
+    normalized_is_animated = bool(is_animated) or normalized_meta is not None or normalized_frame_count > 1
+    if not normalized_is_animated:
+        normalized_meta = None
+
+    changed = False
+    if getattr(target, "is_animated", None) != normalized_is_animated:
+        setattr(target, "is_animated", normalized_is_animated)
+        changed = True
+    if normalize_animation_meta(getattr(target, "animation_meta", None)) != normalized_meta:
+        setattr(target, "animation_meta", normalized_meta)
+        changed = True
+    return changed
 
 
 def required_thumb_entry(thumb_path_str: str, width: Optional[int] = None, height: Optional[int] = None) -> dict:

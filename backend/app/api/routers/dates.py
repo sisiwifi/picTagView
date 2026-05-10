@@ -111,10 +111,12 @@ def dates_view() -> DateViewResponse:
             row_cache_thumb_url = None
             cover_id = None
             preview_original_url = None
+            cover_asset_for_group = None
 
             rep, rep_preview = _pick_representative_asset(direct_assets, preview_resolver)
 
             if rep:
+                cover_asset_for_group = rep
                 cover_id = rep.id
                 row_thumb_url = rep_preview.thumb_url if rep_preview else ""
                 row_cache_thumb_url = None if row_thumb_url else (rep_preview.cache_thumb_url if rep_preview else None)
@@ -124,6 +126,7 @@ def dates_view() -> DateViewResponse:
                     stats = stats_by_public_id.get(album.public_id or "")
                     cover_asset = stats.cover_asset if stats else None
                     if cover_asset:
+                        cover_asset_for_group = cover_asset
                         cover_preview = preview_resolver.resolve(cover_asset)
                         cover_id = cover_asset.id
                         row_thumb_url = cover_preview.thumb_url
@@ -142,6 +145,12 @@ def dates_view() -> DateViewResponse:
                     cache_thumb_url=row_cache_thumb_url,
                     id=cover_id,
                     preview_original_url=preview_original_url,
+                    is_animated=bool(cover_asset_for_group.is_animated) if cover_asset_for_group else False,
+                    animation_meta=(
+                        cover_asset_for_group.normalized_animation_meta
+                        if cover_asset_for_group and cover_asset_for_group.is_animated
+                        else None
+                    ),
                 )
             )
 
@@ -192,6 +201,8 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     file_created_at=asset.file_created_at,
                     media_index=media_index,
                     media_rel_path=media_rel_path,
+                    is_animated=bool(asset.is_animated),
+                    animation_meta=asset.normalized_animation_meta if asset.is_animated else None,
                 )
             )
         direct_items.sort(key=lambda item: _item_sort_key(item.name))
@@ -237,6 +248,8 @@ def date_group_items(date_group: str) -> DateItemsResponse:
                     sort_ts=_to_unix_ts(album.updated_at or album.created_at),
                     photo_count=stats.direct_photo_count if stats else 0,
                     created_at=album.created_at,
+                    is_animated=bool(cover_asset.is_animated) if cover_asset else False,
+                    animation_meta=cover_asset.normalized_animation_meta if cover_asset and cover_asset.is_animated else None,
                 )
             )
         album_items.sort(key=lambda item: _item_sort_key(item.name))

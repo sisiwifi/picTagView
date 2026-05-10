@@ -38,6 +38,7 @@ from .hash_index import (
     save_hash_index,
 )
 from .helpers import (
+    apply_animation_metadata,
     date_group_from_ts,
     has_required_thumb,
     image_dimensions_from_bytes,
@@ -332,7 +333,7 @@ async def import_files(
             meta["_quick_hash"] = quick_hash
             known_fh = lookup_quick_hash(quick_hash)
             if known_fh is not None and lookup_hash_index(known_fh) is not None:
-                pre_resolved[index] = (known_fh, None, None, quick_hash, None, None)
+                pre_resolved[index] = (known_fh, None, None, quick_hash, None, None, None, None, None)
 
         thumb_entries = [
             (str(index), content)
@@ -356,11 +357,14 @@ async def import_files(
             tag_usage_deltas: dict[int, int] = {}
             touched_tag_ids: set[int] = set()
             for index, (meta, content) in enumerate(batch_ready):
-                result = proc.get(str(index), (None, None, "no result", None, None, None))
+                result = proc.get(str(index), (None, None, "no result", None, None, None, None, None, None))
                 file_hash, thumb_path_str, _error = result[0], result[1], result[2]
                 quick_hash = result[3]
                 px_w = result[4]
                 px_h = result[5]
+                is_animated = result[6]
+                frame_count = result[7]
+                animation_format = result[8]
                 original = meta["original"]
                 file_size = len(content)
                 mime_type = mime_from_name(meta["filename"])
@@ -426,6 +430,8 @@ async def import_files(
                         if new_thumb:
                             existing.thumbs = upsert_thumb(existing.thumbs, new_thumb)
 
+                        apply_animation_metadata(existing, is_animated, frame_count, animation_format)
+
                         apply_import_category_to_image_asset(existing, requested_category_id)
                         apply_import_filename_tags(
                             existing,
@@ -489,6 +495,8 @@ async def import_files(
                             needs_update = True
                         if not existing.height and px_h is not None:
                             existing.height = px_h
+                            needs_update = True
+                        if apply_animation_metadata(existing, is_animated, frame_count, animation_format):
                             needs_update = True
                         if not existing.file_size:
                             existing.file_size = file_size
@@ -558,10 +566,13 @@ async def import_files(
                     file_size=file_size,
                     mime_type=mime_type,
                     category_id=asset_category_id,
+                    is_animated=False,
+                    animation_meta=None,
                     tags=[],
                     album=[album_public_ids] if album_public_ids else [],
                     collection=[],
                 )
+                apply_animation_metadata(asset, is_animated, frame_count, animation_format)
                 apply_import_filename_tags(
                     asset,
                     meta["filename"],

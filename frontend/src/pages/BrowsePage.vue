@@ -100,6 +100,7 @@
             :selected="isItemSelected(entry.item, entry.index)"
             :disabled="isItemDisabled(entry.item)"
             :cover-marked="Boolean(entry.item?.is_cover)"
+            :media-badge-label="animatedBadgeLabel(entry.item)"
             @toggle-select="onItemSelectionButtonClick(entry.item, entry.index)"
             @toggle-info="toggleInfoDisplayMode"
             @details="onReservedDetailsClick(entry.item, entry.index)"
@@ -150,7 +151,8 @@
                 @load="onImgLoad(item, $event)"
                 @error="onPrimaryPreviewError(item)"
               />
-              <span v-if="item.is_cover" class="item-cover-badge">封面</span>
+              <span v-if="animatedBadgeLabel(item)" class="media-motion-badge">{{ animatedBadgeLabel(item) }}</span>
+              <span v-if="item.is_cover" class="item-cover-badge" :class="{ 'item-cover-badge--stacked': animatedBadgeLabel(item) }">封面</span>
               <div v-if="item.type === 'album'" class="album-badge">
                 <span class="badge-icon">📁</span>
                 <span class="badge-name">{{ item.name }}</span>
@@ -213,7 +215,8 @@
               @load="onImgLoad(item, $event)"
               @error="onPrimaryPreviewError(item)"
             />
-            <span v-if="item.is_cover" class="item-cover-badge">封面</span>
+            <span v-if="animatedBadgeLabel(item)" class="media-motion-badge">{{ animatedBadgeLabel(item) }}</span>
+            <span v-if="item.is_cover" class="item-cover-badge" :class="{ 'item-cover-badge--stacked': animatedBadgeLabel(item) }">封面</span>
             <div v-if="item.type === 'album'" class="album-badge">
               <span class="badge-icon">📁</span>
               <span class="badge-name">{{ item.name }}</span>
@@ -264,7 +267,8 @@
               @load="onImgLoad(entry.item, $event)"
               @error="onPrimaryPreviewError(entry.item)"
             />
-            <span v-if="entry.item.is_cover" class="list-cover-badge">封面</span>
+            <span v-if="animatedBadgeLabel(entry.item)" class="list-motion-badge">{{ animatedBadgeLabel(entry.item) }}</span>
+            <span v-if="entry.item.is_cover" class="list-cover-badge" :class="{ 'list-cover-badge--stacked': animatedBadgeLabel(entry.item) }">封面</span>
           </div>
           <div class="list-main">
             <div class="list-title-row">
@@ -461,6 +465,7 @@ import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
 import CollectionMenuDialog from '../components/CollectionMenuDialog.vue'
 import TagMenuDialog from '../components/TagMenuDialog.vue'
 import TagFormDialog from '../components/TagFormDialog.vue'
+import { normalizeAnimatedFields, resolveAnimatedBadgeLabel } from '../utils/animatedMedia'
 import { normalizeTagColors } from '../utils/tagColors'
 import { getCommonBrowsePageContract } from '../utils/commonBrowsePage'
 import {
@@ -1263,6 +1268,7 @@ export default {
         type: item?.type || 'image',
         previewUrl: this.detailPreviewUrl(item),
         aspectRatio: this.detailAspectRatio(item),
+        animationLabel: this.animatedBadgeLabel(item),
       }))
     },
     selectionDetailsLayerStyle() {
@@ -1602,6 +1608,7 @@ export default {
   },
 
   methods: {
+    animatedBadgeLabel: resolveAnimatedBadgeLabel,
     logBrowseDebug(event, payload = {}) {
       console.debug('[BrowsePage]', { event, ...payload })
     },
@@ -2742,6 +2749,15 @@ export default {
             thumb_url: meta.thumb_url || item.thumb_url,
             width: Number.isFinite(width) && width > 0 ? width : item.width,
             height: Number.isFinite(height) && height > 0 ? height : item.height,
+            ...normalizeAnimatedFields({
+              ...item,
+              is_animated: Boolean(meta.is_animated),
+              animation_meta: meta.animation_meta ?? item.animation_meta ?? null,
+            }),
+            animated_badge_label: resolveAnimatedBadgeLabel({
+              is_animated: Boolean(meta.is_animated),
+              animation_meta: meta.animation_meta ?? item.animation_meta ?? null,
+            }),
           }
         })
 
@@ -5880,10 +5896,11 @@ export default {
 .photo-card:hover .photo-img { transform: scale(1.03); }
 
 .item-cover-badge,
-.list-cover-badge {
+.list-cover-badge,
+.media-motion-badge,
+.list-motion-badge {
   position: absolute;
   top: 10px;
-  right: 10px;
   min-width: 44px;
   height: 24px;
   padding: 0 0.5rem;
@@ -5901,6 +5918,21 @@ export default {
   word-break: keep-all;
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.22);
   pointer-events: none;
+}
+
+.item-cover-badge,
+.list-cover-badge {
+  right: 10px;
+}
+
+.media-motion-badge,
+.list-motion-badge {
+  left: 10px;
+  background: rgba(15, 23, 42, 0.84);
+}
+
+.item-cover-badge--stacked {
+  top: 42px;
 }
 
 .album-badge {
@@ -6009,6 +6041,19 @@ export default {
   height: 18px;
   padding: 0 0.35rem;
   font-size: 0.54rem;
+}
+
+.list-motion-badge {
+  top: 6px;
+  left: 6px;
+  min-width: 34px;
+  height: 18px;
+  padding: 0 0.35rem;
+  font-size: 0.54rem;
+}
+
+.list-cover-badge--stacked {
+  top: 28px;
 }
 
 .list-thumb-skeleton {

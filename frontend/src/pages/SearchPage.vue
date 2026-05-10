@@ -102,6 +102,7 @@
                     v-for="item in virtualResults"
                     :key="item.id"
                     :src="resolvedSearchCardPreviewUrl(item)"
+                    :badge-label="animatedBadgeLabel(item)"
                     class="search-result-card"
                     :style="virtualCardStyle"
                     :overlay-opacity="0.16"
@@ -214,6 +215,7 @@ import SearchTimeRangeDialog from '../components/SearchTimeRangeDialog.vue'
 import SelectionDetailOverlay from '../components/SelectionDetailOverlay.vue'
 import TagChipList from '../components/TagChipList.vue'
 import ThumbCard from '../components/ThumbCard.vue'
+import { resolveAnimatedBadgeLabel } from '../utils/animatedMedia'
 import TopLevelPageHeader from './TopLevelPageHeader.vue'
 import {
   API_BASE,
@@ -504,6 +506,7 @@ export default {
           type: 'image',
           previewUrl: this.resolvedSearchPreviewUrl(this.detailItem),
           aspectRatio: this.detailAspectRatio(this.detailItem),
+          animationLabel: this.animatedBadgeLabel(this.detailItem),
         },
       ]
     },
@@ -622,6 +625,7 @@ export default {
     window.removeEventListener('resize', this.handleWindowResize)
   },
   methods: {
+    animatedBadgeLabel: resolveAnimatedBadgeLabel,
     resolvePreviewUrl,
     buildOriginalMediaUrl,
     formatMatchedByLabel,

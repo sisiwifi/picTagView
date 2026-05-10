@@ -193,7 +193,7 @@ def _complete_image_for_current_pages(image_id: int, cache_url: Optional[str]) -
 
 
 def _generate_cache_job(image_id: int, payload: dict) -> tuple[int, Optional[str], Optional[str], Optional[int], Optional[int]]:
-    _key, cache_path, error, width, height = generate_cache_thumb_entry(
+    _key, cache_path, error, width, height, _is_animated, _frame_count, _animation_format = generate_cache_thumb_entry(
         str(image_id),
         payload["media_path"],
         CACHE_DIR,

@@ -77,6 +77,8 @@ def _build_image_item(
         file_created_at=asset.file_created_at,
         media_index=media_index,
         media_rel_path=media_rel_path,
+        is_animated=bool(asset.is_animated),
+        animation_meta=asset.normalized_animation_meta if asset.is_animated else None,
     )
 
 
@@ -112,6 +114,8 @@ def _build_album_item(
         sort_ts=_to_unix_ts(album.updated_at or album.created_at),
         photo_count=stats.direct_photo_count if stats else 0,
         created_at=album.created_at,
+        is_animated=bool(cover_asset.is_animated) if cover_asset else False,
+        animation_meta=cover_asset.normalized_animation_meta if cover_asset and cover_asset.is_animated else None,
     )
 
 

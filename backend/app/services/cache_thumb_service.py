@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from app.services.app_settings_service import get_cache_thumb_short_side_px
+from app.services.image_frame_service import extract_preview_frame_from_bytes
 
 _CACHE_QUALITY = 85
 
@@ -25,11 +26,11 @@ def _resolve_max_workers(max_workers: Optional[int]) -> int:
 
 def _generate_cache_thumb_worker(
     args: Tuple[str, str, str, int],
-) -> Tuple[str, Optional[str], Optional[str], Optional[int], Optional[int]]:
+) -> Tuple[str, Optional[str], Optional[str], Optional[int], Optional[int], Optional[bool], Optional[int], Optional[str]]:
     """
     Worker (ThreadPoolExecutor): read image from disk → scale to 600px short-side → WebP.
     args = (key, file_path_str, cache_dir_str, short_side_px)
-    returns (key, cache_path_str, error_str, actual_width, actual_height)
+    returns (key, cache_path_str, error_str, actual_width, actual_height, is_animated, frame_count, animation_format)
     """
     key, file_path_str, cache_dir_str, short_side_px = args
     import cv2
@@ -39,19 +40,29 @@ def _generate_cache_thumb_worker(
         content = Path(file_path_str).read_bytes()
         file_hash = hashlib.sha256(content).hexdigest()
         cache_path = Path(cache_dir_str) / f"{file_hash}_cache.webp"
+        preview_frame = extract_preview_frame_from_bytes(content)
 
         if cache_path.exists():
             # Read actual dimensions from the existing file
             existing = cv2.imdecode(np.frombuffer(cache_path.read_bytes(), dtype=np.uint8), cv2.IMREAD_COLOR)
             if existing is not None:
                 eh, ew = existing.shape[:2]
-                return key, str(cache_path), None, int(ew), int(eh)
-            return key, str(cache_path), None, None, None
+                return (
+                    key,
+                    str(cache_path),
+                    None,
+                    int(ew),
+                    int(eh),
+                    preview_frame.is_animated,
+                    preview_frame.frame_count,
+                    preview_frame.animation_format,
+                )
+            try:
+                cache_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
-        arr = np.frombuffer(content, dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if img is None:
-            return key, None, "decode_failed", None, None
+        img = preview_frame.image
 
         h, w = img.shape[:2]
         short_side = min(h, w)
@@ -67,9 +78,18 @@ def _generate_cache_thumb_worker(
             img,
             [int(cv2.IMWRITE_WEBP_QUALITY), _CACHE_QUALITY],
         )
-        return key, str(cache_path), None, int(out_w), int(out_h)
+        return (
+            key,
+            str(cache_path),
+            None,
+            int(out_w),
+            int(out_h),
+            preview_frame.is_animated,
+            preview_frame.frame_count,
+            preview_frame.animation_format,
+        )
     except Exception as exc:
-        return key, None, str(exc), None, None
+        return key, None, str(exc), None, None, None, None, None
 
 
 def generate_cache_thumb_entry(
@@ -77,7 +97,7 @@ def generate_cache_thumb_entry(
     file_path_str: str,
     cache_dir: Path,
     short_side_px: Optional[int] = None,
-) -> Tuple[str, Optional[str], Optional[str], Optional[int], Optional[int]]:
+) -> Tuple[str, Optional[str], Optional[str], Optional[int], Optional[int], Optional[bool], Optional[int], Optional[str]]:
     short_side = short_side_px or get_cache_thumb_short_side_px()
     return _generate_cache_thumb_worker((key, file_path_str, str(cache_dir), short_side))
 
@@ -112,7 +132,7 @@ def generate_cache_thumbs_from_paths(
     with ThreadPoolExecutor(max_workers=_resolve_max_workers(max_workers)) as pool:
         futures = {pool.submit(_generate_cache_thumb_worker, a): a[0] for a in args_list}
         for fut in as_completed(futures):
-            key, cache_path, error, _w, _h = fut.result()
+            key, cache_path, error, _w, _h, _is_animated, _frame_count, _animation_format = fut.result()
             results[key] = (cache_path, error)
 
     return results
@@ -137,5 +157,5 @@ def generate_cache_thumbs_progressively(
     with ThreadPoolExecutor(max_workers=_resolve_max_workers(max_workers)) as pool:
         futures = {pool.submit(_generate_cache_thumb_worker, a): a[0] for a in args_list}
         for fut in as_completed(futures):
-            key, cache_path, error, w, h = fut.result()
+            key, cache_path, error, w, h, _is_animated, _frame_count, _animation_format = fut.result()
             on_complete(key, cache_path, error, w, h)

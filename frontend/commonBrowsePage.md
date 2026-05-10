@@ -50,6 +50,8 @@
 | `sort_ts` | 排序时间戳；没有就从时间字段回退计算 |
 | `stable_key` | 页面级稳定 key；图片优先用 `media_rel_path`，相册优先用 `public_id/album_path` |
 | `layout_key` | 布局缓存 key |
+| `is_animated / animation_meta` | 后端返回的动图元信息；`animation_meta` 只在动图时包含 `frame_count / format`，用于共享卡片与详情浮层的状态展示 |
+| `animated_badge_label` | 前端根据动图元信息归一化出的显式标记，目前只会是 `GIF` / `WEBP` 或空字符串 |
 | `preview_original_url` | 图片详情层原图 URL，来自 `media_rel_path` |
 | `editable` | 图片可编辑 `name/category/tags/createdAt`，相册不可编辑 |
 
@@ -60,6 +62,7 @@
 - 仅生成 `image` 条目，不包含相册节点
 - 保留后端返回的 `matched_by`
 - 保留后端返回的 `matched_tags`
+- 同样保留后端返回的动图元信息，并归一化成 `animated_badge_label`
 - `search-results` 不再把原图当作主预览兜底；当 temp/cache 缩略图都缺失时，页面先显示骨架，再复用 targeted preview repair 链路异步补图
 
 ### 3.3 `trash`
@@ -72,6 +75,7 @@
   - `thumb_url`
   - `trash_media_url`
 - `editable` 全部为 `false`
+- 当前回收站条目也会走同一套动图字段归一化流程，但因为后端暂未给回收站列表补充动图元信息，所以 badge 结果通常为空
 
 ## 4. 契约接口
 
@@ -190,6 +194,7 @@
 - `search-results` 复用了 `normalizeCalendarItem()` 的图片字段，但额外保留了搜索匹配元数据，并使用路由查询参数而不是路径参数驱动数据加载。
 - `trash` 使用独立的 `normalizeTrashItem()`，因为回收站的预览和主动作逻辑与普通浏览完全不同。
 - 预览缺失自动修复与主卡片原图回退已经改成契约开关控制，而不是写死在单个页面分支里。
+- 共享浏览壳当前约定：卡片、列表缩略图与详情浮层都只依赖归一化后的动图字段决定是否显示 `GIF` / `WEBP` 标记，不再自行判断文件后缀。
 - `previewRepairPayloadKey` 当前只有两种：
   - 普通浏览相关：`image_ids`
   - 回收站：`trash_entry_ids`

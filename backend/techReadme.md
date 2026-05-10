@@ -92,6 +92,7 @@
   - `maintenance.py`：`quick/full` 刷新、路径对账、缺失预览修复、未入库媒体收编
   - `hash_index.py`：哈希索引缓存
   - `helpers.py`：文件时间、路径与缩略图辅助工具
+- `services/image_frame_service.py` 负责统一识别多帧图片，并把 GIF、动态 WEBP 等文件的首帧转换为后续 temp/cache 预览使用的 OpenCV 图像。
 
 当前导入规则的关键点：
 
@@ -100,6 +101,7 @@
 - 图片只保留一个主分类，优先使用导入请求给出的 `category_id`
 - 同批次导入会在一个事务内完成写库、关联和自动打标
 - 前端一次导入会被拆成多个上传批次；后端通过 `RecentImportOperation` 快照与 `recent_import_mode = replace/append` 把这些批次重新聚合成一次“最近导入操作”，并在 `successful_image_ids` 中保存整批成功导入图片全集；recent 一级页优先读取这一字段，旧的 `preview_image_ids` 仅保留兼容用途。
+- 多帧图片不会再把原始动图直接交给缩略图链路处理，而是统一提取首帧，写入 `ImageAsset.is_animated + animation_meta`；其中 `animation_meta` 只在动图时保存 `frame_count / format`，供 overview、BrowsePage 和详情浮层显示状态标记。
 
 ### 5.1.1 图库管理聚合
 
@@ -114,6 +116,7 @@
 - `dates.py`、`albums.py` 不直接把所有相册都返回给前端，而是依赖 `visible_album_service.py` 根据“当前可见图片”推导相册可见性、封面和数量。
 - 相册是否可见，不再取决于相册自身的主分类字段，而取决于子树中是否还有可见图片。
 - 日期、相册、Tag、收藏、回收站这些浏览接口都会带上缩略图信息、宽高、排序时间和 `tags` ID 列表。
+- 日期、相册、收藏、图库 overview、搜索和图片元信息接口现在额外返回动图元数据，前端只对 `GIF` / `WEBP` 显式打标，其他多帧格式先保留内部识别能力。
 
 ### 5.3 Tag 与搜索
 
@@ -156,6 +159,7 @@
   - 已有缓存立即返回
   - 状态接口通过 `cursor` 增量返回新完成项
   - 任务完成后会把缓存缩略图写回 `ImageAsset.thumbs`
+- 对 GIF、动态 WEBP 等多帧图片，缓存队列也与导入链保持一致，统一使用首帧生成 WebP 缓存，不再依赖动图原始字节的逐处 OpenCV 解码。
 
 ### 5.8 查看器与系统设置
 
@@ -174,7 +178,7 @@
 
 | 模型 | 当前角色 |
 | --- | --- |
-| `ImageAsset` | 图片主表，保存哈希、宽高、`media_path`、`tags`、`category_id`、时间与缩略图信息 |
+| `ImageAsset` | 图片主表，保存哈希、宽高、`media_path`、`tags`、`category_id`、时间、缩略图信息与 `is_animated + animation_meta`；`animation_meta` 只在动图时保存 `frame_count / format` |
 | `Album` | 相册树节点，保存路径、标题、封面和统计 |
 | `AlbumImage` | 相册与图片关系表 |
 | `RecentImportOperation` | 最近一次导入操作快照，记录整批成功导入图片全集，以及 recent 二级页需要的图片 / 顶层相册集合 |

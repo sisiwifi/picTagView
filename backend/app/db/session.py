@@ -54,6 +54,8 @@ def _migrate_db() -> None:
             ("height",         "INTEGER"),
             ("file_size",      "INTEGER"),
             ("mime_type",      "TEXT"),
+            ("is_animated",    "INTEGER"),
+            ("animation_meta", "TEXT"),
             ("category_id",    "INTEGER"),
             ("tags",           "TEXT"),
             ("album",          "TEXT"),
@@ -66,6 +68,74 @@ def _migrate_db() -> None:
                 conn.commit()
             except Exception:
                 pass  # Column already exists — safe to ignore
+
+        try:
+            column_rows = conn.execute(text("PRAGMA table_info(imageasset)")).fetchall()
+            imageasset_columns = {row[1] for row in column_rows}
+        except Exception:
+            imageasset_columns = set()
+
+        if "animation_meta" in imageasset_columns and (
+            "frame_count" in imageasset_columns or "animation_format" in imageasset_columns
+        ):
+            try:
+                rows = conn.execute(
+                    text(
+                        "SELECT id, is_animated, frame_count, animation_format, animation_meta "
+                        "FROM imageasset"
+                    )
+                ).fetchall()
+                for row_id, is_animated, frame_count, animation_format, animation_meta in rows:
+                    parsed_meta = None
+                    if isinstance(animation_meta, str) and animation_meta.strip():
+                        try:
+                            loaded = json.loads(animation_meta)
+                            if isinstance(loaded, dict):
+                                parsed_meta = loaded
+                        except Exception:
+                            parsed_meta = None
+
+                    normalized_format = str(
+                        ((parsed_meta or {}).get("format") if isinstance(parsed_meta, dict) else None)
+                        or ((parsed_meta or {}).get("animation_format") if isinstance(parsed_meta, dict) else None)
+                        or animation_format
+                        or ""
+                    ).strip().upper() or None
+                    has_frame_count = (
+                        (isinstance(parsed_meta, dict) and parsed_meta.get("frame_count") is not None)
+                        or frame_count is not None
+                    )
+                    normalized_frame_count = max(
+                        int(
+                            (parsed_meta or {}).get("frame_count")
+                            if isinstance(parsed_meta, dict) and (parsed_meta or {}).get("frame_count") is not None
+                            else (frame_count or 1)
+                        ),
+                        1,
+                    )
+                    normalized_is_animated = bool(is_animated) or normalized_frame_count > 1 or normalized_format is not None
+                    normalized_meta = None
+                    if normalized_is_animated and (has_frame_count or normalized_format is not None):
+                        normalized_meta = {
+                            "frame_count": normalized_frame_count,
+                            "format": normalized_format,
+                        }
+
+                    serialized_meta = json.dumps(normalized_meta) if normalized_meta is not None else None
+                    conn.execute(
+                        text(
+                            "UPDATE imageasset SET is_animated = :is_animated, animation_meta = :animation_meta "
+                            "WHERE id = :id"
+                        ),
+                        {
+                            "id": row_id,
+                            "is_animated": 1 if normalized_is_animated else 0,
+                            "animation_meta": serialized_meta,
+                        },
+                    )
+                conn.commit()
+            except Exception:
+                pass
 
         # ── Migrate media_path: convert plain strings to JSON arrays ──────
         try:
@@ -128,6 +198,14 @@ def _migrate_db() -> None:
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_imageasset_quick_hash "
                 "ON imageasset(quick_hash)"
+            ))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_imageasset_is_animated "
+                "ON imageasset(is_animated)"
             ))
             conn.commit()
         except Exception:

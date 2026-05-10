@@ -8,6 +8,7 @@
       <span class="skeleton-label">···</span>
     </div>
     <div class="thumb-card__overlay" :style="{ background: `rgba(0,0,0,${overlayOpacity})` }"></div>
+    <span v-if="badgeLabel" class="thumb-card__badge">{{ badgeLabel }}</span>
     <div class="thumb-card__body">
       <slot />
     </div>
@@ -26,6 +27,7 @@ export default {
     alt:            { type: String, default: '' },
     overlayOpacity: { type: Number, default: 0.40 },
     rounded:        { type: String, default: '1rem' },
+    badgeLabel:     { type: String, default: '' },
   },
   data() {
     return {
@@ -79,9 +81,33 @@ export default {
 }
 .thumb-card__overlay {
   @apply absolute inset-0;
+  z-index: 1;
 }
 .thumb-card__body {
   @apply absolute inset-0 flex flex-col items-center justify-center;
+  z-index: 2;
+}
+
+.thumb-card__badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  min-width: 44px;
+  height: 24px;
+  padding: 0 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.84);
+  color: #ffffff;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.22);
+  pointer-events: none;
+  z-index: 3;
 }
 
 .thumb-card__skeleton {
