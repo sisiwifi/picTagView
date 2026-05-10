@@ -9,6 +9,7 @@ from app.api.common import (
     AssetPreviewResolver,
     build_preview_availability_index,
     date_group_media_predicate,
+    media_url,
     pick_asset_media_path,
 )
 from app.api.schemas import DateItem, DateItemsResponse, DateViewResponse, MonthGroup, YearGroup
@@ -109,6 +110,7 @@ def dates_view() -> DateViewResponse:
             row_thumb_url = ""
             row_cache_thumb_url = None
             cover_id = None
+            preview_original_url = None
 
             rep, rep_preview = _pick_representative_asset(direct_assets, preview_resolver)
 
@@ -116,6 +118,7 @@ def dates_view() -> DateViewResponse:
                 cover_id = rep.id
                 row_thumb_url = rep_preview.thumb_url if rep_preview else ""
                 row_cache_thumb_url = None if row_thumb_url else (rep_preview.cache_thumb_url if rep_preview else None)
+                preview_original_url = media_url(rep)
             else:
                 for album in group_albums:
                     stats = stats_by_public_id.get(album.public_id or "")
@@ -125,6 +128,7 @@ def dates_view() -> DateViewResponse:
                         cover_id = cover_asset.id
                         row_thumb_url = cover_preview.thumb_url
                         row_cache_thumb_url = None if row_thumb_url else cover_preview.cache_thumb_url
+                        preview_original_url = media_url(cover_asset)
                         if row_thumb_url or row_cache_thumb_url:
                             break
 
@@ -137,6 +141,7 @@ def dates_view() -> DateViewResponse:
                     thumb_url=row_thumb_url,
                     cache_thumb_url=row_cache_thumb_url,
                     id=cover_id,
+                    preview_original_url=preview_original_url,
                 )
             )
 

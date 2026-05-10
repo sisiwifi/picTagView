@@ -95,7 +95,7 @@ frontend/
   - “时间范围”按钮：使用与页面其他操作一致的扁平圆角按钮样式，打开 `SearchTimeRangeDialog.vue`，辅助生成 `import:` / `create:` 查询串
 - 一级页不再固定只展示前 `3` 行，而是使用连续滚动的局部虚拟化网格；页面只渲染视口附近约 `3` 行加少量 overscan 的卡片。
 - 搜索详情浮层中的“主分类”会显示分类名称；“匹配方式”会按搜索语义显示为“按文件搜索 / 文件名匹配 / 标签匹配 / 按导入时间搜索 / 按创建时间搜索”。
-- 搜索主结果卡片只使用 temp/cache 缩略图作为预览来源；缺失时先显示占位，再通过 targeted refresh 拉起缩略图修复，不再用原图作为主预览兜底。
+- 搜索主结果卡片只使用 temp/cache 缩略图作为预览来源；缺失时先显示占位，再通过 targeted refresh 拉起缩略图修复，不再用原图作为主预览兜底；修复后仍失败时进入“预览不可用”终态，避免无限加载。
 - 点击“查看全部”后，会带着 `q` 查询参数进入 `/search/results`；如果当前是 `file:` 搜索，还会一并带上 `quick_hash`，完整结果列表交给 `BrowsePage.vue` 的 `search-results` 契约处理。
 
 ### 4.3 `TagOverviewPage.vue`
@@ -243,9 +243,10 @@ const API_BASE = 'http://127.0.0.1:8000'
 
 ### 7.3 预览与缓存
 
-- `FavoritesPage` 和 `BrowsePage` 都会使用 `POST /api/thumbnails/cache` 与 `GET /api/thumbnails/cache/status/{task_id}`。
+- `FavoritesPage`、`CalendarOverview` 和 `BrowsePage` 都会使用 `POST /api/thumbnails/cache` 与 `GET /api/thumbnails/cache/status/{task_id}`。
 - 当前前端使用了后端支持的 `page_token + generation + cursor` 协议。
-- 浏览页检测到预览缺失时，会调用 `POST /api/admin/refresh` 做定向修复，而不是盲目全量刷新。
+- 共享浏览页的主卡片缺预览修复改为契约开关控制；`calendar`、`gallery-recent`、`gallery-all`、`collection`、`tag` 会自动调用 `POST /api/admin/refresh` 做定向修复。
+- 上述非搜索契约在 targeted repair 结束后仍无预览时，会回退到卡片内原图；`search-results` 保持不回退，只显示终态提示。
 
 ## 8. 构建与运行
 

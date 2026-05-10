@@ -17,6 +17,8 @@
         v-for="collection in collections"
         :key="collection.public_id || collection.id"
         :src="resolvedUrl(collection)"
+        :fallback-src="originalPreviewUrl(collection)"
+        :unavailable="isPreviewUnavailable(collection)"
         class="favorites-card"
         :overlay-opacity="0.42"
         :rounded="'1.25rem'"
@@ -51,6 +53,7 @@ export default {
       taskId: null,
       cacheGeneration: 0,
       cacheStatusCursor: 0,
+      fallbackReadyIds: {},
     }
   },
   computed: {
@@ -65,7 +68,7 @@ export default {
     this.stopPoll()
   },
   methods: {
-    resolvedUrl(item) {
+    previewUrl(item) {
       if (!item) return ''
       const cacheKey = item.cover_photo_id
       if (cacheKey && this.cacheUrls[cacheKey]) return `${API_BASE}${this.cacheUrls[cacheKey]}`
@@ -74,12 +77,43 @@ export default {
       return ''
     },
 
+    originalPreviewUrl(item) {
+      if (!item?.preview_original_url) return ''
+      return `${API_BASE}${item.preview_original_url}`
+    },
+
+    isOriginalFallbackReady(item) {
+      return Boolean(item?.id && this.fallbackReadyIds[item.id])
+    },
+
+    resolvedUrl(item) {
+      const previewUrl = this.previewUrl(item)
+      if (previewUrl) return previewUrl
+      if (this.isOriginalFallbackReady(item)) return this.originalPreviewUrl(item)
+      return ''
+    },
+
+    isPreviewUnavailable(item) {
+      return !this.resolvedUrl(item) && this.isOriginalFallbackReady(item)
+    },
+
+    refreshFallbackReadyIds() {
+      const nextFallbacks = {}
+      for (const collection of this.collections) {
+        if (!collection?.id) continue
+        if (this.previewUrl(collection)) continue
+        nextFallbacks[collection.id] = true
+      }
+      this.fallbackReadyIds = nextFallbacks
+    },
+
     async fetchCollections() {
       this.loadingCollections = true
       try {
         const response = await fetch(`${API_BASE}/api/collections`)
         const payload = await response.json().catch(() => ({}))
         this.collections = Array.isArray(payload?.items) ? payload.items : []
+        this.fallbackReadyIds = {}
 
         const missingIds = this.collections
           .filter(item => item.cover_photo_id && !item.thumb_url && !this.cacheUrls[item.cover_photo_id])
@@ -114,10 +148,14 @@ export default {
               this.cacheStatusCursor = 0
               this.taskId = task_id
               this.startPoll(generation)
+            } else {
+              this.refreshFallbackReadyIds()
             }
           } catch {
-            // ignore cache warming failures
+            this.refreshFallbackReadyIds()
           }
+        } else {
+          this.refreshFallbackReadyIds()
         }
       } catch {
         this.collections = []
@@ -133,6 +171,7 @@ export default {
 
     startPoll(expectedGeneration = this.cacheGeneration) {
       this.stopPoll(false)
+      this.fallbackReadyIds = {}
       const poll = async () => {
         if (!this.taskId || expectedGeneration !== this.cacheGeneration) return
         try {
@@ -154,7 +193,10 @@ export default {
           }
           if (data.status === 'running') {
             this.pollTimer = setTimeout(poll, 180)
+            return
           }
+          this.taskId = null
+          this.refreshFallbackReadyIds()
         } catch {
           // ignore polling failures
         }

@@ -361,6 +361,8 @@ function openGalleryScopedPrimary(_vm, item) {
 
 const calendarContract = {
   name: 'calendar',
+  autoRepairMissingPreview: true,
+  allowOriginalPreviewFallback: true,
   emptyState: {
     icon: '📂',
     text: '此页面尚无内容。',
@@ -470,6 +472,8 @@ const calendarContract = {
 
 const collectionContract = {
   name: 'collection',
+  autoRepairMissingPreview: true,
+  allowOriginalPreviewFallback: true,
   emptyState: {
     icon: '☆',
     text: '当前收藏夹暂无可见图片。',
@@ -548,6 +552,8 @@ const collectionContract = {
 
 const tagContract = {
   name: 'tag',
+  autoRepairMissingPreview: true,
+  allowOriginalPreviewFallback: true,
   emptyState: {
     icon: '🏷',
     text: '当前标签下暂无可见图片。',
@@ -616,6 +622,8 @@ const tagContract = {
 
 const galleryRecentContract = {
   name: 'gallery-recent',
+  autoRepairMissingPreview: true,
+  allowOriginalPreviewFallback: true,
   emptyState: {
     icon: '🕘',
     text: '最近导入为空。',
@@ -681,6 +689,7 @@ const galleryRecentContract = {
 
 const searchResultsContract = {
   name: 'search-results',
+  autoRepairMissingPreview: true,
   emptyState: {
     icon: '🔎',
     text: '当前搜索暂无结果。',
@@ -783,6 +792,8 @@ const searchResultsContract = {
 
 const galleryAllContract = {
   name: 'gallery-all',
+  autoRepairMissingPreview: true,
+  allowOriginalPreviewFallback: true,
   emptyState: {
     icon: '🖼',
     text: '图库中暂无可见内容。',

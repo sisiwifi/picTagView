@@ -128,9 +128,13 @@
             :data-index="item._idx"
             :style="{ width: item.computedWidth + 'px' }"
           >
-            <div v-if="!resolvedUrl(item)" class="photo-skeleton">
+              <div v-if="shouldShowPreviewSkeleton(item)" class="photo-skeleton">
               <span class="skeleton-label">...</span>
             </div>
+
+              <div v-else-if="hasTerminalPreviewState(item)" class="photo-unavailable">
+                <span class="preview-unavailable-label">预览不可用</span>
+              </div>
 
             <div
               v-else
@@ -190,8 +194,11 @@
           }"
           @click="openItem(item)"
         >
-          <div v-if="!resolvedUrl(item)" class="photo-skeleton">
+          <div v-if="shouldShowPreviewSkeleton(item)" class="photo-skeleton">
             <span class="skeleton-label">...</span>
+          </div>
+          <div v-else-if="hasTerminalPreviewState(item)" class="photo-unavailable">
+            <span class="preview-unavailable-label">预览不可用</span>
           </div>
           <div
             v-else
@@ -245,7 +252,10 @@
             <span v-if="isItemSelected(entry.item, entry.index)" class="list-pick__mark">✓</span>
           </button>
           <div class="list-thumb-wrap" :class="{ 'list-thumb-wrap--cover-picking': coverPickerMode && canPickContainerCoverItem(entry.item) }">
-            <div v-if="!resolvedUrl(entry.item)" class="list-thumb-skeleton" />
+            <div v-if="shouldShowPreviewSkeleton(entry.item)" class="list-thumb-skeleton" />
+            <div v-else-if="hasTerminalPreviewState(entry.item)" class="list-thumb-unavailable">
+              <span class="list-thumb-unavailable__label">不可用</span>
+            </div>
             <img
               v-else
               :src="resolvedUrl(entry.item)"
@@ -536,8 +546,10 @@ export default {
       loading: true,
       cacheUrls: {},
       previewFailureTokens: {},
+      cardOriginalFailureTokens: {},
       detailOriginalFailureTokens: {},
       missingPreviewRepairTokens: {},
+      originalFallbackReadyTokens: {},
       previewRepairQueue: [],
       previewRepairTimer: null,
       previewRepairInFlight: false,
@@ -1506,7 +1518,7 @@ export default {
     },
     renderedPreviewItems: {
       handler(items) {
-        this.enqueueMissingSearchResultPreviewRepairs(items)
+        this.enqueueMissingPreviewRepairs(items)
       },
     },
     photoGridRowCount(newVal, oldVal) {
@@ -1954,8 +1966,10 @@ export default {
       this.cacheStatusCursor = 0
       this.lastCacheRequestSignature = ''
       this.previewFailureTokens = {}
+      this.cardOriginalFailureTokens = {}
       this.detailOriginalFailureTokens = {}
       this.missingPreviewRepairTokens = {}
+      this.originalFallbackReadyTokens = {}
       this.previewRepairQueue = []
       this.previewRepairInFlight = false
       this.lastPreviewRepairSignature = ''
@@ -2109,8 +2123,53 @@ export default {
       return `${item?.cache_thumb_url || ''}|${item?.thumb_url || ''}`
     },
 
-    enqueueMissingSearchResultPreviewRepairs(items) {
-      if (this.pageContractName !== 'search-results' || !Array.isArray(items) || !items.length) return
+    originalFallbackReadyToken(item) {
+      const previewPath = this.primaryPreviewPath(item)
+      if (previewPath) return `primary:${previewPath}`
+      return `missing:${this.missingPreviewRepairToken(item)}`
+    },
+
+    isOriginalFallbackReady(item) {
+      const key = this.previewStateKey(item)
+      const token = this.originalFallbackReadyToken(item)
+      if (!key || !token) return false
+      return this.originalFallbackReadyTokens[key] === token
+    },
+
+    isCardOriginalPreviewSuppressed(item) {
+      const key = this.previewStateKey(item)
+      const token = this.originalPreviewPath(item)
+      if (!key || !token) return false
+      return this.cardOriginalFailureTokens[key] === token
+    },
+
+    shouldUseOriginalPreviewFallback(item) {
+      if (!this.pageContract?.allowOriginalPreviewFallback) return false
+      if (item?.type !== 'image') return false
+      if (!this.isOriginalFallbackReady(item)) return false
+
+      const originalPath = this.originalPreviewPath(item)
+      if (!originalPath || this.isCardOriginalPreviewSuppressed(item)) return false
+      return true
+    },
+
+    hasTerminalPreviewState(item) {
+      if (!this.pageContract?.allowOriginalPreviewFallback) return false
+      if (item?.type !== 'image') return false
+      if (this.resolvedUrl(item)) return false
+      if (!this.isOriginalFallbackReady(item)) return false
+
+      const originalPath = this.originalPreviewPath(item)
+      if (!originalPath) return true
+      return this.isCardOriginalPreviewSuppressed(item)
+    },
+
+    shouldShowPreviewSkeleton(item) {
+      return !this.resolvedUrl(item) && !this.hasTerminalPreviewState(item)
+    },
+
+    enqueueMissingPreviewRepairs(items) {
+      if (!this.pageContract?.autoRepairMissingPreview || !Array.isArray(items) || !items.length) return
 
       let didQueue = false
       const nextTokens = { ...this.missingPreviewRepairTokens }
@@ -2307,8 +2366,23 @@ export default {
       return true
     },
 
+    markCardOriginalFailure(item) {
+      const key = this.previewStateKey(item)
+      const token = this.originalPreviewPath(item)
+      if (!key || !token) return false
+      if (this.cardOriginalFailureTokens[key] === token) return false
+      this.cardOriginalFailureTokens = {
+        ...this.cardOriginalFailureTokens,
+        [key]: token,
+      }
+      return true
+    },
+
     resolvedUrl(item) {
       const previewPath = this.primaryPreviewPath(item)
+      if (this.shouldUseOriginalPreviewFallback(item)) {
+        return `${API_BASE}${this.originalPreviewPath(item)}`
+      }
       if (!previewPath || this.isPrimaryPreviewSuppressed(item)) return ''
       return `${API_BASE}${previewPath}`
     },
@@ -2558,6 +2632,10 @@ export default {
 
     onPrimaryPreviewError(item) {
       if (!item) return
+      if (this.shouldUseOriginalPreviewFallback(item)) {
+        this.markCardOriginalFailure(item)
+        return
+      }
       const didChange = this.markPrimaryPreviewFailure(item)
       if (!didChange && !Number.isInteger(item?.id)) return
       this.enqueuePreviewRepair(item)
@@ -2639,6 +2717,8 @@ export default {
         const nextCacheUrls = { ...this.cacheUrls }
         const nextDimensions = { ...this.imgDimensions }
         const nextMissingTokens = { ...this.missingPreviewRepairTokens }
+        const nextOriginalFallbackReadyTokens = { ...this.originalFallbackReadyTokens }
+        const nextCardOriginalFailureTokens = { ...this.cardOriginalFailureTokens }
         const nextItems = this.items.map((item) => {
           if (!Number.isInteger(item?.id)) return item
           const meta = metaMap.get(item.id)
@@ -2672,15 +2752,29 @@ export default {
         imageIds.forEach((imageId) => {
           const matched = nextItems.find(item => item?.id === imageId)
           if (matched) {
-            const stateKey = this.missingPreviewRepairStateKey(matched)
+            const stateKey = this.previewStateKey(matched)
+            const currentPreviewToken = this.primaryPreviewPath(matched)
+            const fallbackReadyToken = this.originalFallbackReadyToken(matched)
             const token = this.missingPreviewRepairToken(matched)
             if (stateKey && nextMissingTokens[stateKey] !== token) {
               delete nextMissingTokens[stateKey]
+            }
+            if (stateKey) {
+              if (!currentPreviewToken) {
+                nextOriginalFallbackReadyTokens[stateKey] = fallbackReadyToken
+              } else if (this.previewFailureTokens[stateKey] === currentPreviewToken) {
+                nextOriginalFallbackReadyTokens[stateKey] = fallbackReadyToken
+              } else {
+                delete nextOriginalFallbackReadyTokens[stateKey]
+                delete nextCardOriginalFailureTokens[stateKey]
+              }
             }
             this.clearPreviewFailureState(matched)
           }
         })
         this.missingPreviewRepairTokens = nextMissingTokens
+        this.originalFallbackReadyTokens = nextOriginalFallbackReadyTokens
+        this.cardOriginalFailureTokens = nextCardOriginalFailureTokens
       } catch {
         // ignore preview metadata refresh failures
       }
@@ -5736,9 +5830,20 @@ export default {
   animation: skeleton-wave 1.4s ease-in-out infinite;
 }
 
+.photo-unavailable,
+.list-thumb-unavailable {
+  @apply w-full h-full rounded-xl overflow-hidden flex items-center justify-center;
+  background: linear-gradient(180deg, #cbd5e1 0%, #e2e8f0 100%);
+}
+
 .skeleton-label {
   @apply text-slate-400 text-xs font-mono tracking-widest select-none;
   animation: skeleton-fade 1.4s ease-in-out infinite;
+}
+
+.preview-unavailable-label,
+.list-thumb-unavailable__label {
+  @apply text-slate-600 text-xs font-semibold tracking-wide select-none;
 }
 
 @keyframes skeleton-wave {

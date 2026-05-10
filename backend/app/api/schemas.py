@@ -17,6 +17,7 @@ class MonthGroup(BaseModel):
     thumb_url: str    # URL path for the first image thumbnail
     cache_thumb_url: Optional[str] = None
     id: Optional[int] = None
+    preview_original_url: Optional[str] = None
 
 
 class YearGroup(BaseModel):
@@ -357,6 +358,7 @@ class CollectionOverviewItem(BaseModel):
     photo_count: int = 0
     thumb_url: str = ""
     cache_thumb_url: Optional[str] = None
+    preview_original_url: Optional[str] = None
     cover_photo_id: Optional[int] = None
     width: Optional[int] = None
     height: Optional[int] = None

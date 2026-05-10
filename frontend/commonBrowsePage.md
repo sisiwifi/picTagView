@@ -95,6 +95,8 @@
 | `runSecondaryAction(vm)` | 详情浮层次动作 |
 | `previewRepairPayloadKey` | 预览修复请求使用的字段名 |
 | `afterPreviewRepair(vm, repairIds)` | 预览修复后的收尾逻辑 |
+| `autoRepairMissingPreview` | 是否在主卡片缺预览时自动批量加入 targeted repair |
+| `allowOriginalPreviewFallback` | targeted repair 结束后，是否允许主卡片回退到卡片内原图 |
 | `updateCover(vm, item)` | 可选，仅日历相册和收藏夹支持 |
 
 ## 5. 当前七个契约
@@ -126,6 +128,7 @@
 - 面包屑结构固定为“搜索 -> 当前查询词”。
 - 条目只包含图片，不包含相册节点；点击卡片主体会先打开详情浮层，而不是直接打开原图。
 - 主预览优先使用 temp/cache 缩略图；如果当前渲染项缺失缩略图，契约页会把对应 image id 批量送入现有 preview repair 队列，后台异步修复后再通过 `/api/images/meta` 回填。
+- `search-results` 不启用主卡片原图兜底；修复后仍拿不到预览时，卡片进入终态提示而不是无限骨架。
 - 返回行为会回到 `/search`，并保留原始 `q`；如果当前是 `file:` 搜索，也会一并保留 `quick_hash`，保证一级页与二级页结果一致。
 
 ### 6.3 `gallery-recent` / `gallery-all`
@@ -137,6 +140,7 @@
   - 顶层相册节点
   - 顶层直图节点
 - 排序约定与日期视图的二级页保持一致：相册在前，图片在后，两类节点各自按时间/名称规则排序。
+- 主卡片缺少 temp/cache 缩略图时会自动加入 targeted repair；修复结束后仍无预览时，回退到卡片内原图，不再永久显示骨架。
 - 返回行为固定留在 gallery 体系内：相册页先回当前 gallery 子页上一级，相册根页再回 `/gallery`。
 
 ### 6.4 `collection`
@@ -145,12 +149,14 @@
 - 条目只包含图片，没有相册节点。
 - 点击图片和详情主动作都走系统打开图片。
 - 收藏夹页同样支持手动封面，接口为 `/api/collections/{public_id}/cover`。
+- 主卡片缺预览时会自动复用 targeted repair；修复结束后仍无缩略图时，回退为卡片内原图。
 
 ### 6.5 `tag`
 
 - 面包屑固定为“标签总览 -> 当前标签”。
 - 页头额外动作只有“编辑标签”。
 - 浏览信息并不直接使用后端相册结构，而是把 `/api/tags/{id}/images` 返回的 `tag` 元数据包装成一个“浏览容器信息”。
+- 主卡片缺预览时同样会自动加入 targeted repair；修复结束后可回退卡片内原图。
 
 ### 6.6 `trash`
 
@@ -183,6 +189,7 @@
 - `collection` 与 `tag` 复用了 `normalizeCalendarItem()`，因此它们和普通月页的图片条目字段保持一致。
 - `search-results` 复用了 `normalizeCalendarItem()` 的图片字段，但额外保留了搜索匹配元数据，并使用路由查询参数而不是路径参数驱动数据加载。
 - `trash` 使用独立的 `normalizeTrashItem()`，因为回收站的预览和主动作逻辑与普通浏览完全不同。
+- 预览缺失自动修复与主卡片原图回退已经改成契约开关控制，而不是写死在单个页面分支里。
 - `previewRepairPayloadKey` 当前只有两种：
   - 普通浏览相关：`image_ids`
   - 回收站：`trash_entry_ids`

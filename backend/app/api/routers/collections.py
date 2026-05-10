@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from sqlmodel import col, select
 
-from app.api.common import AssetPreviewResolver, build_preview_availability_index, pick_asset_media_path
+from app.api.common import AssetPreviewResolver, build_preview_availability_index, media_url, pick_asset_media_path
 from app.api.schemas import (
     AlbumItem,
     CollectionDetailResponse,
@@ -74,6 +74,7 @@ def list_collections() -> CollectionOverviewResponse:
                 photo_count=len(visible_assets),
                 thumb_url=preview.thumb_url if preview else "",
                 cache_thumb_url=preview.cache_thumb_url if preview else None,
+                preview_original_url=media_url(cover_asset) if cover_asset else None,
                 cover_photo_id=cover_asset.id if cover_asset else None,
                 width=cover_asset.width if cover_asset else None,
                 height=cover_asset.height if cover_asset else None,

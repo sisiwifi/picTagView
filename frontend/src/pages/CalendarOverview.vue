@@ -25,6 +25,8 @@
             v-for="mg in yg.months"
             :key="mg.group"
             :src="resolvedUrl(mg)"
+            :fallback-src="originalPreviewUrl(mg)"
+            :unavailable="isPreviewUnavailable(mg)"
             class="month-card"
             :overlay-opacity="0.40"
             :rounded="'1.25rem'"
@@ -59,6 +61,7 @@ export default {
       taskId: null,
       cacheGeneration: 0,
       cacheStatusCursor: 0,
+      fallbackReadyIds: {},
     }
   },
 
@@ -71,7 +74,7 @@ export default {
   },
 
   methods: {
-    resolvedUrl(item) {
+    previewUrl(item) {
       if (!item) return ''
       const cached = this.cacheUrls[item.id]
       if (cached) return `${API_BASE}${cached}`
@@ -80,12 +83,44 @@ export default {
       return ''
     },
 
+    originalPreviewUrl(item) {
+      if (!item?.preview_original_url) return ''
+      return `${API_BASE}${item.preview_original_url}`
+    },
+
+    isOriginalFallbackReady(item) {
+      return Boolean(item?.id && this.fallbackReadyIds[item.id])
+    },
+
+    resolvedUrl(item) {
+      const previewUrl = this.previewUrl(item)
+      if (previewUrl) return previewUrl
+      if (this.isOriginalFallbackReady(item)) return this.originalPreviewUrl(item)
+      return ''
+    },
+
+    isPreviewUnavailable(item) {
+      return !this.resolvedUrl(item) && this.isOriginalFallbackReady(item)
+    },
+
+    refreshFallbackReadyIds() {
+      const allMonths = this.years.flatMap(yearGroup => yearGroup.months || [])
+      const nextFallbacks = {}
+      for (const month of allMonths) {
+        if (!month?.id) continue
+        if (this.previewUrl(month)) continue
+        nextFallbacks[month.id] = true
+      }
+      this.fallbackReadyIds = nextFallbacks
+    },
+
     async fetchDates() {
       this.loadingDates = true
       try {
         const r = await fetch(`${API_BASE}/api/dates`)
         const d = await r.json()
         this.years = d.years || []
+        this.fallbackReadyIds = {}
 
         const allMonths = (d.years || []).flatMap(y => y.months || [])
         for (const m of allMonths) {
@@ -118,8 +153,14 @@ export default {
               this.cacheStatusCursor = 0
               this.taskId = task_id
               this.startPoll(generation)
+            } else {
+              this.refreshFallbackReadyIds()
             }
-          } catch { /* ignore */ }
+          } catch {
+            this.refreshFallbackReadyIds()
+          }
+        } else {
+          this.refreshFallbackReadyIds()
         }
       } catch { this.years = [] }
       finally { this.loadingDates = false }
@@ -131,6 +172,7 @@ export default {
 
     startPoll(expectedGeneration = this.cacheGeneration) {
       this.stopPoll(false)
+      this.fallbackReadyIds = {}
       const poll = async () => {
         if (!this.taskId || expectedGeneration !== this.cacheGeneration) return
         try {
@@ -152,7 +194,10 @@ export default {
           }
           if (data.status === 'running') {
             this.pollTimer = setTimeout(poll, 180)
+            return
           }
+          this.taskId = null
+          this.refreshFallbackReadyIds()
         } catch { /* ignore */ }
       }
       this.pollTimer = setTimeout(poll, 180)
