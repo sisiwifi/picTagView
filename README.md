@@ -12,8 +12,8 @@
 | 日期与相册浏览 | `CalendarOverview` 展示月份总览；`BrowsePage` 负责月份列表与相册层级浏览，数据来自 `/api/dates/*` 与 `/api/albums/*` |
 | 标签系统 | 标签总览页支持按首字母分组、Top10 排行、草稿预占、编辑、删除、JSON 导入导出；标签二级页复用 `BrowsePage`，数据来自 `/api/tags/{tag_id}/images` |
 | 收藏夹 | 收藏总览页展示全部可见收藏夹；收藏二级页复用 `BrowsePage`，支持批量添加/移除图片与手动选择封面 |
-| 搜索 | 一级搜索页支持单输入检索并按当前布局预览前 3 行结果；完整结果进入 `/search/results`，自动识别文件名、Tag 与图片路径；路径模式会先定位源图片，再按 `quick_hash` 查找同图 |
-| 选择模式与详情 | `BrowsePage` 内支持多选、详情浮层、Tag 菜单、收藏菜单；`PATCH /api/images/metadata` 可直接修改文件名、主分类和创建时间 |
+| 搜索 | 一级搜索页支持单输入检索、按图搜索和时间范围辅助输入，并以局部虚拟化网格预览当前视口附近结果；完整结果进入 `/search/results`，自动识别文件名、Tag、图片路径、quick hash 同图搜索以及导入/创建时间范围 |
+| 选择模式与详情 | `BrowsePage` 内支持统一筛选面板、多选、详情浮层、Tag 菜单、收藏菜单；`PATCH /api/images/metadata` 可直接修改文件名、主分类和创建时间 |
 | 主分类 | 图片只保留一个生效主分类；默认主分类固定为 `id=1`，主分类设置页支持增删改、启停和批量操作 |
 | 回收站 | 支持图片或相册移入回收站、还原、彻底删除、清空；回收站页复用 `BrowsePage` 的统一壳和选择态 |
 | 缓存与预览修复 | `backend/temp/` 保存月份封面/临时缩略图，`backend/data/cache/` 保存浏览缓存缩略图；前端通过共享缓存队列按需生成并轮询结果 |
@@ -64,7 +64,7 @@
 | `/settings/categories` | `CategorySettingsPage.vue` | 主分类管理 |
 | `/trash` | `BrowsePage.vue` | 回收站浏览 |
 
-`BrowsePage.vue` 通过 `browseContract` 在 `calendar`、`search-results`、`gallery-recent`、`gallery-all`、`collection`、`tag`、`trash` 七种模式之间切换，统一复用布局、分页/滚动配置、选择态、详情浮层和预览修复流程。更细的契约说明见 `frontend/commonBrowsePage.md`。
+`BrowsePage.vue` 通过 `browseContract` 在 `calendar`、`search-results`、`gallery-recent`、`gallery-all`、`collection`、`tag`、`trash` 七种模式之间切换，统一复用布局、分页/滚动配置、默认 header 筛选面板、选择态、详情浮层和预览修复流程。更细的契约说明见 `frontend/commonBrowsePage.md`。
 
 ## 目录说明
 
@@ -81,7 +81,7 @@ picTagView_main/
 │   ├── src/pages/              # 顶层页与 BrowsePage
 │   ├── src/components/         # 通用组件与对话框
 │   ├── src/utils/              # 页面契约、页面配置、颜色工具
-│   ├── README.md               # 前端说明
+│   ├── Frontend_README.md      # 前端说明
 │   └── commonBrowsePage.md     # 统一浏览页契约说明
 ├── media/                      # 已入库媒体目录
 ├── trash/                      # 回收站物理目录

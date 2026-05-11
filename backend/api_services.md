@@ -172,8 +172,8 @@
   - `name`
   - `category_id`
   - `file_created_at`
-- 多选时不允许改文件名。
-- 传入 `file_created_at` 后，如果月份变化，后端会把文件物理移动到新的 `media/YYYY-MM/...` 目录。
+- 多选时不允许改文件名；这是 `PATCH /api/images/metadata` 的后端 `400` 硬校验，前端只是同步禁用对应 UI。
+- 传入 `file_created_at` 后，如果月份变化，后端会把文件物理移动到新的 `media/YYYY-MM/...` 目录，并保留原有子目录链；如果目标目录已存在同名文件，会自动预留一个唯一文件名后再落盘。
 - 如果一张图片有多个 `media_path` 实例，前端应通过 `media_rel_path` 精确指定目标实例。
 
 ### 4.4 Tag 协议
@@ -271,6 +271,9 @@
 
 ### 4.9 回收站协议
 
+- `TrashEntry.entry_key` 是每个回收站条目的不透明唯一键，不等同于数据库自增 `id`；当前主要用于生成物理 payload 路径前缀，并作为前端回收站条目的稳定 key。
+- 当前回收站 payload 默认平铺保存为 `trash/{entry_key}__{payload_name}`；对账与清理逻辑仍兼容早期 `trash/entries/{entry_key}/payload/` 目录结构。
+- 图片移入回收站时会一并保留 `original_path`、`original_date_group`、`category_id`、`tags`、`imported_at`、`file_created_at` 等恢复所需元数据；列表接口会把这些字段继续返回给前端。
 - `POST /api/trash/move` 的请求项字段是：
   - `type`
   - `image_id`

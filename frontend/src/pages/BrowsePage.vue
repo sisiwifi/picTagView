@@ -23,6 +23,18 @@
         {{ action.label }}
       </button>
 
+      <button
+        ref="filterMenuButton"
+        class="browse-header__action"
+        :class="{ 'browse-header__action--active': filterMenuVisible || hasActiveBrowseFilter }"
+        type="button"
+        aria-haspopup="dialog"
+        :aria-expanded="filterMenuVisible ? 'true' : 'false'"
+        @click="toggleFilterMenu"
+      >
+        筛选
+      </button>
+
       <div class="vm-btns" role="group" aria-label="视图模式">
         <button
           class="vm-btn"
@@ -450,12 +462,26 @@
       :title="actionBusyTitleResolved"
       :message="actionBusyMessageResolved"
     />
+
+    <BrowseFilterMenu
+      :visible="filterMenuVisible"
+      :anchor-rect="filterMenuAnchorRect"
+      :filter="appliedBrowseFilter"
+      :tags="availableBrowseFilterTags"
+      :categories="availableBrowseFilterCategories"
+      :file-types="availableBrowseFilterFileTypes"
+      :viewport-width="viewportWidth"
+      :viewport-height="viewportHeight"
+      @close="closeFilterMenu"
+      @apply="applyBrowseFilter"
+    />
   </section>
 </template>
 
 <script>
 import LoadingSpinner from '../components/LoadingSpinner.vue'
 import BreadcrumbHeader from '../components/BreadcrumbHeader.vue'
+import BrowseFilterMenu from '../components/BrowseFilterMenu.vue'
 import MediaItemCard from '../components/MediaItemCard.vue'
 import ConfirmationDialog from '../components/ConfirmationDialog.vue'
 import ActionProgressOverlay from '../components/ActionProgressOverlay.vue'
@@ -540,14 +566,146 @@ function createDialogState() {
   }
 }
 
+function createBrowseFilterState() {
+  return {
+    filenameMode: 'contains',
+    filenameQuery: '',
+    categoryIds: [],
+    fileTypes: [],
+    tagIds: [],
+    includeUntagged: false,
+    importedStartDate: '',
+    importedStartTime: '',
+    importedEndDate: '',
+    importedEndTime: '',
+    createdStartDate: '',
+    createdStartTime: '',
+    createdEndDate: '',
+    createdEndTime: '',
+    sizeMinMb: '',
+    sizeMaxMb: '',
+  }
+}
+
+function normalizeFilterStringArray(values) {
+  const normalized = []
+  const seen = new Set()
+  for (const value of Array.isArray(values) ? values : []) {
+    const text = String(value || '').trim().toLowerCase()
+    if (!text || seen.has(text)) continue
+    seen.add(text)
+    normalized.push(text)
+  }
+  return normalized.sort((left, right) => left.localeCompare(right))
+}
+
+function normalizeFilterIntArray(values) {
+  const normalized = []
+  const seen = new Set()
+  for (const value of Array.isArray(values) ? values : []) {
+    const parsed = Number.parseInt(value, 10)
+    if (!Number.isInteger(parsed) || parsed <= 0 || seen.has(parsed)) continue
+    seen.add(parsed)
+    normalized.push(parsed)
+  }
+  return normalized.sort((left, right) => left - right)
+}
+
+function normalizeBrowseFilterState(rawFilter) {
+  const nextFilter = createBrowseFilterState()
+  const source = rawFilter && typeof rawFilter === 'object' ? rawFilter : {}
+
+  nextFilter.filenameMode = source.filenameMode === 'exact' ? 'exact' : 'contains'
+  nextFilter.filenameQuery = String(source.filenameQuery || '').trim()
+  nextFilter.categoryIds = normalizeFilterIntArray(source.categoryIds)
+  nextFilter.fileTypes = normalizeFilterStringArray(source.fileTypes)
+  nextFilter.tagIds = normalizeFilterIntArray(source.tagIds)
+  nextFilter.includeUntagged = Boolean(source.includeUntagged)
+
+  for (const field of [
+    'importedStartDate',
+    'importedStartTime',
+    'importedEndDate',
+    'importedEndTime',
+    'createdStartDate',
+    'createdStartTime',
+    'createdEndDate',
+    'createdEndTime',
+    'sizeMinMb',
+    'sizeMaxMb',
+  ]) {
+    nextFilter[field] = String(source[field] || '').trim()
+  }
+
+  return nextFilter
+}
+
+function hasBrowseFilterValue(rawFilter) {
+  const filter = normalizeBrowseFilterState(rawFilter)
+  return Boolean(
+    filter.filenameQuery
+    || filter.categoryIds.length
+    || filter.fileTypes.length
+    || filter.tagIds.length
+    || filter.includeUntagged
+    || filter.importedStartDate
+    || filter.importedStartTime
+    || filter.importedEndDate
+    || filter.importedEndTime
+    || filter.createdStartDate
+    || filter.createdStartTime
+    || filter.createdEndDate
+    || filter.createdEndTime
+    || filter.sizeMinMb
+    || filter.sizeMaxMb
+  )
+}
+
+function extractItemFileExtension(item) {
+  const source = [item?.name, item?.full_filename, item?.media_rel_path].find(value => String(value || '').trim()) || ''
+  const basename = String(source).split(/[\\/]/).pop() || ''
+  const dotIndex = basename.lastIndexOf('.')
+  if (dotIndex <= 0 || dotIndex >= basename.length - 1) {
+    return ''
+  }
+  return basename.slice(dotIndex + 1).toLowerCase()
+}
+
+function normalizeFileNameForFilter(item) {
+  return String(item?.name || item?.full_filename || '').trim().toLowerCase()
+}
+
+function parseFilterDateTime(datePart, timePart, role = 'start') {
+  const normalizedDate = String(datePart || '').trim()
+  const normalizedTime = String(timePart || '').trim()
+  if (!normalizedDate) return null
+  let timeText = normalizedTime
+  if (!timeText) {
+    timeText = role === 'end' ? '23:59:59' : '00:00:00'
+  } else if (timeText.length === 5) {
+    timeText = `${timeText}:00`
+  }
+  const parsed = new Date(`${normalizedDate}T${timeText}`)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.getTime()
+}
+
+function parseFilterSizeMb(value) {
+  const text = String(value || '').trim()
+  if (!text) return null
+  const parsed = Number(text)
+  if (!Number.isFinite(parsed) || parsed < 0) return null
+  return parsed * 1024 * 1024
+}
+
 export default {
   name: 'BrowsePage',
-  components: { LoadingSpinner, BreadcrumbHeader, MediaItemCard, ConfirmationDialog, ActionProgressOverlay, PagePaginationBar, SelectionIsland, SelectionDetailOverlay, CollectionMenuDialog, TagMenuDialog, TagFormDialog },
+  components: { LoadingSpinner, BreadcrumbHeader, BrowseFilterMenu, MediaItemCard, ConfirmationDialog, ActionProgressOverlay, PagePaginationBar, SelectionIsland, SelectionDetailOverlay, CollectionMenuDialog, TagMenuDialog, TagFormDialog },
 
   data() {
     const cachedPageConfig = getCachedPageConfig()
     return {
       items: [],
+      sourceItems: [],
       loading: true,
       cacheUrls: {},
       previewFailureTokens: {},
@@ -586,6 +744,9 @@ export default {
       sortBy: 'alpha',
       sortDir: 'asc',
       albumInfo: null,
+      filterMenuVisible: false,
+      filterMenuAnchorRect: null,
+      appliedBrowseFilter: createBrowseFilterState(),
       coverPickerMode: false,
       photoPageIndex: 0,
       selectionGridPageIndex: 0,
@@ -711,10 +872,58 @@ export default {
     pageHeaderActions() {
       return this.pageContract.buildHeaderActions(this)
     },
+    hasActiveBrowseFilter() {
+      return hasBrowseFilterValue(this.appliedBrowseFilter)
+    },
+    availableBrowseFilterTags() {
+      const tagIds = []
+      const seen = new Set()
+      for (const item of this.sourceItems) {
+        if (item?.type !== 'image' || !Array.isArray(item?.tags)) continue
+        for (const tagId of item.tags) {
+          if (!Number.isInteger(tagId) || tagId <= 0 || seen.has(tagId)) continue
+          seen.add(tagId)
+          tagIds.push(tagId)
+        }
+      }
+      return this.buildTagItemsByIds(tagIds)
+    },
+    availableBrowseFilterCategories() {
+      const categories = []
+      const seen = new Set()
+      for (const item of this.sourceItems) {
+        if (item?.type !== 'image') continue
+        const categoryId = Number(item?.category_id)
+        if (!Number.isInteger(categoryId) || categoryId <= 0 || seen.has(categoryId)) continue
+        seen.add(categoryId)
+        categories.push({
+          id: categoryId,
+          label: this.categoryDisplayMap[categoryId] || `主分类 ${categoryId}`,
+        })
+      }
+      return categories.sort((left, right) => left.label.localeCompare(right.label, 'zh-CN', { sensitivity: 'base', numeric: true }))
+    },
+    availableBrowseFilterFileTypes() {
+      const nextTypes = new Set()
+      for (const item of this.sourceItems) {
+        if (item?.type !== 'image') continue
+        const extension = extractItemFileExtension(item)
+        if (extension) {
+          nextTypes.add(extension)
+        }
+      }
+      return Array.from(nextTypes).sort((left, right) => left.localeCompare(right))
+    },
     emptyStateIcon() {
+      if (this.hasActiveBrowseFilter && !this.items.length && this.sourceItems.length) {
+        return '筛'
+      }
       return this.pageContract.emptyState?.icon || '📂'
     },
     emptyStateText() {
+      if (this.hasActiveBrowseFilter && !this.items.length && this.sourceItems.length) {
+        return '当前筛选条件下没有匹配内容。'
+      }
       return this.pageContract.emptyState?.text || '此页面尚无内容。'
     },
     totalCount() {
@@ -1520,7 +1729,10 @@ export default {
 
   watch: {
     '$route.fullPath': {
-      handler() { this.loadData() },
+      handler() {
+        this.resetBrowseFilterState()
+        this.loadData()
+      },
     },
     renderedPreviewItems: {
       handler(items) {
@@ -1951,6 +2163,204 @@ export default {
       return (hash >>> 0).toString(36)
     },
 
+    resetBrowseFilterState() {
+      this.appliedBrowseFilter = createBrowseFilterState()
+      this.closeFilterMenu()
+    },
+
+    applySourceItems(nextSourceItems) {
+      const normalizedSourceItems = Array.isArray(nextSourceItems) ? [...nextSourceItems] : []
+      const nextItems = this.buildFilteredItems(normalizedSourceItems, this.appliedBrowseFilter)
+      this.sourceItems = normalizedSourceItems
+      this.items = nextItems
+      this.virtualStartIndex = 0
+      this.virtualEndIndex = nextItems.length
+      this.virtualAnchorIndex = nextItems.length ? 0 : -1
+      this.virtualContainerTop = 0
+      this.normalizePaginationState()
+      this.layoutFingerprint = this.computeLayoutFingerprint(nextItems, this.imgDimensions)
+      this.lastCacheRequestSignature = ''
+      return nextItems
+    },
+
+    buildFilteredItems(sourceItems, rawFilter = this.appliedBrowseFilter) {
+      const filterState = normalizeBrowseFilterState(rawFilter)
+      if (!hasBrowseFilterValue(filterState)) {
+        return Array.isArray(sourceItems) ? [...sourceItems] : []
+      }
+
+      const selectedCategoryIds = new Set(filterState.categoryIds)
+      const selectedFileTypes = new Set(filterState.fileTypes)
+      const selectedTagIds = new Set(filterState.tagIds)
+      return (Array.isArray(sourceItems) ? sourceItems : []).filter((item) => {
+        if (item?.type === 'album') {
+          return true
+        }
+        return this.itemMatchesBrowseFilter(item, filterState, selectedCategoryIds, selectedFileTypes, selectedTagIds)
+      })
+    },
+
+    itemMatchesBrowseFilter(item, filterState, selectedCategoryIds = new Set(), selectedFileTypes = new Set(), selectedTagIds = new Set()) {
+      if (item?.type !== 'image') return true
+
+      if (selectedCategoryIds.size) {
+        const categoryId = Number(item?.category_id)
+        if (!Number.isInteger(categoryId) || !selectedCategoryIds.has(categoryId)) {
+          return false
+        }
+      }
+
+      if (filterState.filenameQuery) {
+        const candidateName = normalizeFileNameForFilter(item)
+        const expectedName = filterState.filenameQuery.toLowerCase()
+        if (filterState.filenameMode === 'exact') {
+          if (candidateName !== expectedName) return false
+        } else if (!candidateName.includes(expectedName)) {
+          return false
+        }
+      }
+
+      if (selectedFileTypes.size) {
+        const extension = extractItemFileExtension(item)
+        if (!extension || !selectedFileTypes.has(extension)) {
+          return false
+        }
+      }
+
+      if (!this.itemMatchesDateTimeFilter(
+        item?.imported_at,
+        filterState.importedStartDate,
+        filterState.importedStartTime,
+        filterState.importedEndDate,
+        filterState.importedEndTime,
+      )) {
+        return false
+      }
+
+      if (!this.itemMatchesDateTimeFilter(
+        item?.file_created_at,
+        filterState.createdStartDate,
+        filterState.createdStartTime,
+        filterState.createdEndDate,
+        filterState.createdEndTime,
+      )) {
+        return false
+      }
+
+      if (!this.itemMatchesSizeFilter(item, filterState.sizeMinMb, filterState.sizeMaxMb)) {
+        return false
+      }
+
+      if (selectedTagIds.size || filterState.includeUntagged) {
+        const itemTagIds = Array.isArray(item?.tags)
+          ? item.tags.filter(tagId => Number.isInteger(tagId) && tagId > 0)
+          : []
+        const matchesSelectedTag = itemTagIds.some(tagId => selectedTagIds.has(tagId))
+        const matchesUntagged = filterState.includeUntagged && !itemTagIds.length
+        if (!matchesSelectedTag && !matchesUntagged) {
+          return false
+        }
+      }
+
+      return true
+    },
+
+    itemMatchesDateTimeFilter(value, startDate, startTime, endDate, endTime) {
+      const startTs = parseFilterDateTime(startDate, startTime, 'start')
+      const endTs = parseFilterDateTime(endDate, endTime, 'end')
+      if (startTs == null && endTs == null) return true
+
+      const itemDate = new Date(value)
+      const itemTs = itemDate.getTime()
+      if (!Number.isFinite(itemTs)) return false
+      if (startTs != null && itemTs < startTs) return false
+      if (endTs != null && itemTs > endTs) return false
+      return true
+    },
+
+    itemMatchesSizeFilter(item, minMb, maxMb) {
+      const minBytes = parseFilterSizeMb(minMb)
+      const maxBytes = parseFilterSizeMb(maxMb)
+      if (minBytes == null && maxBytes == null) return true
+
+      const fileSize = Number(item?.file_size)
+      if (!Number.isFinite(fileSize) || fileSize < 0) return false
+      if (minBytes != null && fileSize < minBytes) return false
+      if (maxBytes != null && fileSize > maxBytes) return false
+      return true
+    },
+
+    updateFilterMenuAnchor() {
+      const button = this.$refs.filterMenuButton
+      if (!button || typeof button.getBoundingClientRect !== 'function') {
+        this.filterMenuAnchorRect = null
+        return
+      }
+
+      const rect = button.getBoundingClientRect()
+      this.filterMenuAnchorRect = {
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+      }
+    },
+
+    async openFilterMenu() {
+      if (this.filterMenuVisible) return
+      this.closeCollectionMenu()
+      this.closeTagMenu()
+      this.closeSelectionDetails()
+      this.closeSelectAllMenu()
+      this.coverPickerMode = false
+      await Promise.all([
+        this.ensureTagLabelsLoaded(true, this.sourceItems),
+        this.ensureCategoryLabelsLoaded(true),
+      ])
+      this.filterMenuVisible = true
+      this.$nextTick(() => {
+        this.updateFilterMenuAnchor()
+        this.lockPageScroll()
+      })
+    },
+
+    closeFilterMenu() {
+      this.filterMenuVisible = false
+      this.filterMenuAnchorRect = null
+      if (!this.selectionDetailsOpen) {
+        this.unlockPageScroll()
+      }
+    },
+
+    toggleFilterMenu() {
+      if (this.filterMenuVisible) {
+        this.closeFilterMenu()
+        return
+      }
+      this.openFilterMenu()
+    },
+
+    applyBrowseFilter(nextFilter) {
+      this.appliedBrowseFilter = normalizeBrowseFilterState(nextFilter)
+      this.closeFilterMenu()
+      this.closeCollectionMenu()
+      this.closeTagMenu()
+      this.closeSelectionDetails()
+      this.closeSelectAllMenu()
+      this.clearSelection()
+      this.photoPageIndex = 0
+      this.selectionGridPageIndex = 0
+      this.listPageIndex = 0
+      this.applySourceItems(this.sourceItems)
+      this.pendingViewAnchor = null
+      if (!this.loading) {
+        this.scrollHostTo(0)
+        this.refreshObservedGrid()
+      }
+    },
+
     async loadData(options = {}) {
       const preserveSelection = Boolean(options?.preserveSelection)
       const preserveView = Object.prototype.hasOwnProperty.call(options || {}, 'preserveView')
@@ -2027,7 +2437,7 @@ export default {
         this.albumInfo = payload?.album || null
         this.applyFetchedItems(payload?.items || [])
       } catch (err) {
-        this.items = []
+        this.applySourceItems([])
         this.albumInfo = null
         if (this.isTrashMode) {
           this.showMessage('error', err?.message || '加载回收站失败')
@@ -2050,7 +2460,7 @@ export default {
     async fetchDateGroup() {
       const res = await fetch(`${API_BASE}/api/dates/${this.dateGroup}/items`)
       if (!res.ok) {
-        this.items = []
+        this.applySourceItems([])
         return
       }
       const data = await res.json()
@@ -2060,7 +2470,7 @@ export default {
     async fetchAlbum() {
       const res = await fetch(`${API_BASE}/api/albums/by-path/${encodeURI(this.fullAlbumPath)}`)
       if (!res.ok) {
-        this.items = []
+        this.applySourceItems([])
         return
       }
       const data = await res.json()
@@ -2070,11 +2480,11 @@ export default {
 
     applyFetchedItems(rawItems) {
       const normalizedItems = this.pageContract.normalizeItems(rawItems || [], this)
-      const nextItems = this.sortItems(normalizedItems || [])
+      const nextSourceItems = this.sortItems(normalizedItems || [])
       const nextCacheUrls = {}
       const nextDimensions = {}
 
-      for (const item of nextItems) {
+      for (const item of nextSourceItems) {
         if (item.id && item.cache_thumb_url) {
           nextCacheUrls[item.id] = item.cache_thumb_url
         }
@@ -2087,12 +2497,9 @@ export default {
         }
       }
 
-      this.items = nextItems
-      this.virtualStartIndex = 0
-      this.virtualEndIndex = nextItems.length
       this.cacheUrls = nextCacheUrls
       this.imgDimensions = nextDimensions
-      this.layoutFingerprint = this.computeLayoutFingerprint(nextItems, nextDimensions)
+      this.applySourceItems(nextSourceItems)
     },
 
     getAncestorTitle(segIndex, fallback) {
@@ -2420,7 +2827,7 @@ export default {
       const nextCoverId = Number.isInteger(normalizedCoverId) && normalizedCoverId > 0
         ? normalizedCoverId
         : null
-      const nextItems = this.items.map(item => {
+      const nextItems = this.sourceItems.map(item => {
         if (item?.type !== 'image') return item
         return {
           ...item,
@@ -2435,9 +2842,7 @@ export default {
         }
       }
 
-      this.items = nextItems
-      this.layoutFingerprint = this.computeLayoutFingerprint(nextItems, this.imgDimensions)
-      this.lastCacheRequestSignature = ''
+      this.applySourceItems(nextItems)
     },
 
     toggleCoverPicker() {
@@ -2726,7 +3131,7 @@ export default {
         const nextMissingTokens = { ...this.missingPreviewRepairTokens }
         const nextOriginalFallbackReadyTokens = { ...this.originalFallbackReadyTokens }
         const nextCardOriginalFailureTokens = { ...this.cardOriginalFailureTokens }
-        const nextItems = this.items.map((item) => {
+        const nextItems = this.sourceItems.map((item) => {
           if (!Number.isInteger(item?.id)) return item
           const meta = metaMap.get(item.id)
           if (!meta) return item
@@ -2761,10 +3166,9 @@ export default {
           }
         })
 
-        this.items = nextItems
         this.cacheUrls = nextCacheUrls
         this.imgDimensions = nextDimensions
-        this.layoutFingerprint = this.computeLayoutFingerprint(nextItems, nextDimensions)
+        this.applySourceItems(nextItems)
         imageIds.forEach((imageId) => {
           const matched = nextItems.find(item => item?.id === imageId)
           if (matched) {
@@ -2835,7 +3239,7 @@ export default {
         )
         if (!metaMap.size) return
 
-        this.items = this.items.map(item => {
+        const nextItems = this.sourceItems.map(item => {
           if (item?.type !== 'image' || !Number.isInteger(item?.id)) return item
           const meta = metaMap.get(item.id)
           if (!meta) return item
@@ -2846,6 +3250,7 @@ export default {
             name: meta.name || item.name,
           }
         })
+        this.applySourceItems(nextItems)
         this.ensureCategoryLabelsLoaded()
       } catch {
         // ignore metadata hydration failures and keep current values visible
@@ -2961,7 +3366,7 @@ export default {
 
       let changed = false
       let nextItems = []
-      for (const item of this.items) {
+      for (const item of this.sourceItems) {
         if (item?.type !== 'image' || !Number.isInteger(item?.id)) {
           nextItems.push(item)
           continue
@@ -3004,9 +3409,7 @@ export default {
         nextItems = this.sortItems(nextItems)
       }
 
-      this.items = nextItems
-      this.layoutFingerprint = this.computeLayoutFingerprint(nextItems, this.imgDimensions)
-      this.lastCacheRequestSignature = ''
+      this.applySourceItems(nextItems)
       this.restoreSelectionSnapshot(selectionSnapshot)
       this.refreshObservedGrid()
 
@@ -3244,6 +3647,9 @@ export default {
       }
       if (this.selectionDetailsOpen) {
         this.updateSelectionDetailsBounds()
+      }
+      if (this.filterMenuVisible) {
+        this.updateFilterMenuAnchor()
       }
     },
 
@@ -3644,6 +4050,11 @@ export default {
         this.closeTagForm()
         return
       }
+      if (this.filterMenuVisible && event.key === 'Escape') {
+        event.preventDefault()
+        this.closeFilterMenu()
+        return
+      }
       if (this.collectionMenuVisible && event.key === 'Escape') {
         event.preventDefault()
         this.closeCollectionMenu()
@@ -3725,9 +4136,7 @@ export default {
     },
 
     refreshSortResult() {
-      this.items = this.sortItems(this.items)
-      this.layoutFingerprint = this.computeLayoutFingerprint(this.items, this.imgDimensions)
-      this.lastCacheRequestSignature = ''
+      this.applySourceItems(this.sortItems(this.sourceItems))
       if (this.loading) return
       this.clearSelection()
       this.refreshObservedGrid()
@@ -4848,6 +5257,15 @@ export default {
           return false
         })
 
+        const changedTagIds = new Set()
+        for (const imageId of changedImageIds) {
+          for (const tagId of (this.tagMenuDraftByImageId[imageId] || [])) {
+            if (Number.isInteger(tagId) && tagId > 0) {
+              changedTagIds.add(tagId)
+            }
+          }
+        }
+
         for (const imageId of changedImageIds) {
           const res = await fetch(`${API_BASE}/api/images/tags/apply`, {
             method: 'POST',
@@ -4866,7 +5284,7 @@ export default {
 
         if (changedImageIds.length) {
           const changedIdSet = new Set(changedImageIds)
-          this.items = this.items.map((item) => {
+          const nextItems = this.sourceItems.map((item) => {
             if (item?.type !== 'image' || !Number.isInteger(item?.id)) return item
             if (!changedIdSet.has(item.id)) return item
             return {
@@ -4874,9 +5292,10 @@ export default {
               tags: this.sortTagIdsByName([...(this.tagMenuDraftByImageId[item.id] || [])]),
             }
           })
+          this.applySourceItems(nextItems)
         }
 
-        await this.ensureTagLabelsLoaded(true)
+        await this.ensureTagLabelsLoaded(true, this.sourceItems, Array.from(changedTagIds))
         this.closeTagMenu()
       } catch (err) {
         this.tagMenuError = `标签回写失败：${err?.message || '未知错误'}`
@@ -5009,10 +5428,10 @@ export default {
       return ''
     },
 
-    collectMissingTagIds() {
+    collectMissingTagIds(items = this.items) {
       const result = []
       const seen = new Set()
-      for (const item of this.items) {
+      for (const item of (Array.isArray(items) ? items : [])) {
         if (item?.type !== 'image' || !Array.isArray(item.tags)) continue
         for (const id of item.tags) {
           if (!Number.isInteger(id)) continue
@@ -5026,18 +5445,20 @@ export default {
       return result
     },
 
-    async ensureTagLabelsLoaded(force = false) {
+    async ensureTagLabelsLoaded(force = false, items = null, refreshTagIds = []) {
       if (!force && this.selectionInfoMode !== 'tags') return
-      const missingIds = this.collectMissingTagIds()
-      if (!missingIds.length) return
+      const missingIds = this.collectMissingTagIds(items || this.items)
+      const explicitRefreshIds = normalizeFilterIntArray(refreshTagIds)
+      const requestIds = normalizeFilterIntArray([...missingIds, ...explicitRefreshIds])
+      if (!requestIds.length) return
 
       const requestSerial = ++this.tagFetchSerial
       const nextMap = { ...this.tagLookupMap }
       this.tagsLoading = true
 
       try {
-        for (let i = 0; i < missingIds.length; i += TAG_BATCH_SIZE) {
-          const chunk = missingIds.slice(i, i + TAG_BATCH_SIZE)
+        for (let i = 0; i < requestIds.length; i += TAG_BATCH_SIZE) {
+          const chunk = requestIds.slice(i, i + TAG_BATCH_SIZE)
           const res = await fetch(`${API_BASE}/api/tags?ids=${chunk.join(',')}&limit=${chunk.length}`)
           if (!res.ok) continue
           const data = await res.json()

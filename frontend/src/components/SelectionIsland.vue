@@ -73,7 +73,7 @@ export default {
   background: rgba(255, 255, 255, 0.82);
   box-shadow: 0 18px 38px rgba(15, 23, 42, 0.14);
   backdrop-filter: blur(14px);
-  overflow: hidden;
+  overflow: visible;
   transform-origin: right center;
   transition: transform 220ms ease, padding 220ms ease, gap 220ms ease, box-shadow 220ms ease, border-radius 220ms ease;
 }
@@ -121,7 +121,7 @@ export default {
   flex-wrap: nowrap;
   gap: 0.5rem;
   flex: 0 1 auto;
-  overflow: hidden;
+  overflow: visible;
   white-space: nowrap;
   max-width: calc(100vw - 5.5rem);
   transition: max-width 220ms ease, opacity 180ms ease, transform 220ms ease, visibility 0s linear 0s;
@@ -129,6 +129,7 @@ export default {
 
 .selection-island--collapsed .selection-island__body {
   max-width: 0;
+  overflow: hidden;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;

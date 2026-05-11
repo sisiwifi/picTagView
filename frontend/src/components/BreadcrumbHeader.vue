@@ -14,7 +14,7 @@
     <div
       class="breadcrumb-wrap"
       ref="breadcrumbWrap"
-      :class="{ 'bc-dragging': bcDragging }"
+      :class="{ 'bc-dragging': bcDragging, 'bc-scrollable': bcOverflowing }"
       @mousedown="onBcMousedown"
       @mouseleave="onBcMouseup"
       @mouseup="onBcMouseup"
@@ -101,9 +101,24 @@ export default {
   data() {
     return {
       bcDragging: false,
+      bcOverflowing: false,
       bcStartX: 0,
       bcScrollLeft: 0,
     }
+  },
+  mounted() {
+    this.$nextTick(() => {
+      this.updateBreadcrumbOverflow()
+    })
+    window.addEventListener('resize', this.updateBreadcrumbOverflow)
+  },
+  updated() {
+    this.$nextTick(() => {
+      this.updateBreadcrumbOverflow()
+    })
+  },
+  beforeUnmount() {
+    window.removeEventListener('resize', this.updateBreadcrumbOverflow)
   },
   computed: {
     showRight() {
@@ -127,9 +142,20 @@ export default {
     },
   },
   methods: {
+    updateBreadcrumbOverflow() {
+      const el = this.$refs.breadcrumbWrap
+      if (!el) {
+        this.bcOverflowing = false
+        return
+      }
+      this.bcOverflowing = el.scrollWidth > el.clientWidth + 1
+      if (!this.bcOverflowing) {
+        this.bcDragging = false
+      }
+    },
     onBcMousedown(e) {
       const el = this.$refs.breadcrumbWrap
-      if (!el) return
+      if (!el || !this.bcOverflowing) return
       this.bcDragging = true
       this.bcStartX = e.pageX
       this.bcScrollLeft = el.scrollLeft
@@ -165,12 +191,13 @@ export default {
   min-width: 0;
   overflow-x: auto;
   position: relative;
-  cursor: grab;
+  cursor: default;
   scrollbar-width: none;
   -ms-overflow-style: none;
   user-select: none;
 }
 .breadcrumb-wrap::-webkit-scrollbar { display: none; }
+.breadcrumb-wrap.bc-scrollable { cursor: grab; }
 .breadcrumb-wrap.bc-dragging { cursor: grabbing; }
 
 .breadcrumb {
