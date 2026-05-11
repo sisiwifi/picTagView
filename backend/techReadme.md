@@ -60,14 +60,15 @@
 2. `categories_router`
 3. `dates_router`
 4. `gallery_router`
-5. `albums_router`
-6. `images_router`
-7. `collections_router`
-8. `search_router`
-9. `system_router`
-10. `cache_router`
-11. `tags_router`
-12. `trash_router`
+5. `home_router`
+6. `albums_router`
+7. `images_router`
+8. `collections_router`
+9. `search_router`
+10. `system_router`
+11. `cache_router`
+12. `tags_router`
+13. `trash_router`
 
 这意味着当前后端已经包含：
 
@@ -110,6 +111,18 @@
   - `all/*`：图库总览的一级预览和二级混合列表
 - 一级 overview 只返回图片条目，供父页渲染方形缩略图带。
 - 二级 items 继续复用日期视图的“相册优先 + 直图随后”约定，避免单独维护一套浏览语义。
+
+### 5.1.2 首页聚合
+
+- `home.py` 为 `/` 顶层页提供专用聚合接口 `GET /api/home/overview`。
+- 主页聚合建立在现有的可见图片体系之上：
+  - 图片总数来自 `get_active_category_ids() + list_visible_assets()`
+  - Tag 墙只统计这些可见图片真正关联到的非草稿 Tag
+- 主页的统计口径被刻意拆开：
+  - `visible_image_count` 跟随显示主分类
+  - `global_tag_count` 保持全局非草稿总量
+- 代表图选择会同时考虑当前请求携带的最近展示图片 id 列表、当前分页批次内已选过的代表图 id，以及 temp/cache 预览是否可用。
+- 这使首页可以在不写数据库状态的前提下，通过前端 `localStorage` 尽量轮换每次进入主页时的 Tag 代表图。
 
 ### 5.2 浏览与可见性
 

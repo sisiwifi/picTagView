@@ -6,7 +6,7 @@
 
 | 层级 | 位置 | 当前职责 |
 | --- | --- | --- |
-| 路由聚合 | `app/api/routes.py` | 注册 `basic`、`categories`、`dates`、`gallery`、`albums`、`images`、`collections`、`search`、`system`、`cache`、`tags`、`trash` |
+| 路由聚合 | `app/api/routes.py` | 注册 `basic`、`categories`、`dates`、`gallery`、`home`、`albums`、`images`、`collections`、`search`、`system`、`cache`、`tags`、`trash` |
 | 路由实现 | `app/api/routers/*.py` | 解析请求、校验参数、组织响应、调用服务 |
 | 通用 API 工具 | `app/api/common.py` | 预览 URL 解析、路径归一化、`media_path` 选择、请求级缩略图可用性索引 |
 | 数据模型与 schema | `app/models/*.py`、`app/api/schemas.py` | 定义实体结构、请求体和响应模型 |
@@ -21,6 +21,7 @@
 | `basic.py` | `GET /` | 健康检查，返回 `{"status": "ok"}` |
 | `basic.py` | `POST /api/import` | 接收 `files`、`last_modified_json`、`created_time_json`、`category_id`、`recent_import_mode`，调用导入流水线 |
 | `basic.py` | `GET /api/images/count` | 返回库中 `ImageAsset` 总数 |
+| `home.py` | `GET /api/home/overview` | 返回主页所需的统计卡与标签墙分页数据：`visible_image_count` 按显示主分类过滤，`global_tag_count` 保持全局；标签墙按可见图片重新统计 Tag 使用量，并接受 `exclude_image_ids` 来尽量避开最近展示过的代表图 |
 | `basic.py` | `POST /api/admin/refresh` | 触发 `quick` 或 `full` 刷新；当 `mode=quick` 且请求体里 `repair_cache=true` 并带 `image_ids` 或 `trash_entry_ids` 时，会走 targeted-only 轻路径做定向预览修复，不再顺带执行全库维护 |
 
 ### 2.2 图库管理聚合
@@ -150,6 +151,20 @@
   - 直图节点在后
   - 两类节点都沿用现有日期视图的排序与详情协议
 - 日期、相册、收藏、搜索、图库 overview/item 接口现在都会把动图元数据一并返回给前端，用于统一显示 `GIF` / `WEBP` 标记。
+
+### 4.2.1 主页聚合协议
+
+- `GET /api/home/overview` 当前接收：
+  - `limit`
+  - `offset`
+  - `exclude_image_ids`，允许通过重复 query 参数传多个 image id
+- 返回体分两块：
+  - `stats.visible_image_count`：按 `Category.is_active` 过滤后的可见图片总数
+  - `stats.global_tag_count`：全局非草稿 Tag 总数
+  - `stats.visible_tag_count`：当前显示主分类范围内真正命中的 Tag 数
+  - `tag_wall.items[*]`：`tag` 元数据、`visible_usage_count` 和 `cover`
+- `tag_wall.items[*].cover` 是主页方卡直接可消费的图片结构，包含：`id`、`thumb_url`、`cache_thumb_url`、`media_rel_path`、`width/height`、`is_animated + animation_meta`。
+- 代表图选择规则：优先避开本次请求传入的 `exclude_image_ids`，其次避免同一批返回中的多个 Tag 重复使用同一张图；只有当某个 Tag 的候选图片确实不足时，才回退为重复图。
 
 ### 4.3 图片元数据编辑
 

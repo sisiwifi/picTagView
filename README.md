@@ -7,6 +7,7 @@
 | 模块 | 当前实现 |
 | --- | --- |
 | 导入与去重 | Gallery 页按文件夹分批导入，后端按 `media/YYYY-MM/` 写入；同批次内完成哈希去重、相册链维护、图片主分类写入，以及可选的文件名自动打标 |
+| 主页 | `/` 顶层页现在显示两个精确统计卡和一面连续滚动的 Tag 墙：图片总数按当前显示主分类过滤，Tag 总数保持全局；下方标签墙按显示主分类内的可见图片重新统计 Tag 使用量，并为每个 Tag 选择尽量轮换的代表图，以更简洁的居中封面卡片形式展示 |
 | 图库管理 | `/gallery` 作为父页，同时展示“最近导入”和“图库总览”两条一级缩略图预览；recent 直接读取最近一批成功导入图片全集；普通缩略图直接打开只读详情，最后一格以图片承载“查看全部”跳转 |
 | 日期与相册浏览 | `CalendarOverview` 展示月份总览；`BrowsePage` 负责月份列表与相册层级浏览，数据来自 `/api/dates/*` 与 `/api/albums/*` |
 | 标签系统 | 标签总览页支持按首字母分组、Top10 排行、草稿预占、编辑、删除、JSON 导入导出；标签二级页复用 `BrowsePage`，数据来自 `/api/tags/{tag_id}/images` |
@@ -44,7 +45,7 @@
 
 | 路由 | 组件 | 说明 |
 | --- | --- | --- |
-| `/` | `HomePage.vue` | 首页统计 |
+| `/` | `HomePage.vue` | 主页仪表板：两张精确统计卡 + 可见 Tag 连续滚动标签墙 |
 | `/search` | `SearchPage.vue` | 单输入搜索与一级预览 |
 | `/search/results` | `BrowsePage.vue` | 完整搜索结果二级浏览，`browseContract = 'search-results'` |
 | `/tags` | `TagOverviewPage.vue` | 标签总览 |
@@ -136,7 +137,7 @@ npm run serve
 
 ## 当前运行约定
 
-- 前端尚未通过环境变量或 `devServer.proxy` 统一注入后端地址；当前直连 `http://127.0.0.1:8000` 的常量分散在 `topLevelPageConvention.js`、`commonBrowsePage.js`、`pageConfig.js`、`BrowsePage.vue`、`SettingsPage.vue`、`CategorySettingsPage.vue`、`HomePage.vue`、`CalendarOverview.vue`，切换后端端口时需要一并修改。
+- 前端尚未通过环境变量或 `devServer.proxy` 统一注入后端地址；当前直连 `http://127.0.0.1:8000` 的常量分散在 `topLevelPageConvention.js`、`commonBrowsePage.js`、`pageConfig.js`、`BrowsePage.vue`、`SettingsPage.vue`、`CategorySettingsPage.vue`、`CalendarOverview.vue`，切换后端端口时需要一并修改；`HomePage.vue` 已改为复用 `topLevelPageConvention.js` 中的共享 `API_BASE`。
 - 页面配置由 `backend/data/app_settings.json` 持久化，当前包含：
   - 浏览缓存缩略图短边尺寸
   - 月份封面尺寸
@@ -151,5 +152,5 @@ npm run serve
 
 - [后端 API 与服务说明](backend/api_services.md)
 - [后端技术说明](backend/techReadme.md)
-- [前端技术说明](frontend/README.md)
+- [前端技术说明](frontend/Frontend_README.md)
 - [统一浏览页契约](frontend/commonBrowsePage.md)

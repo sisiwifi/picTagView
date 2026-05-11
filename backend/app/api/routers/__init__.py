@@ -5,6 +5,7 @@ from app.api.routers.collections import router as collections_router
 from app.api.routers.categories import router as categories_router
 from app.api.routers.dates import router as dates_router
 from app.api.routers.gallery import router as gallery_router
+from app.api.routers.home import router as home_router
 from app.api.routers.images import router as images_router
 from app.api.routers.search import router as search_router
 from app.api.routers.system import router as system_router
@@ -19,6 +20,7 @@ __all__ = [
     "categories_router",
     "dates_router",
     "gallery_router",
+    "home_router",
     "images_router",
     "search_router",
     "system_router",

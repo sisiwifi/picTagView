@@ -41,7 +41,7 @@ frontend/
 
 | 路由 | 组件 | 说明 |
 | --- | --- | --- |
-| `/` | `HomePage.vue` | 首页统计 |
+| `/` | `HomePage.vue` | 主页仪表板：精确统计卡 + 连续滚动的可见 Tag 墙 |
 | `/search` | `SearchPage.vue` | 单输入搜索、本地文件搜图、时间范围过滤与一级虚拟化预览 |
 | `/search/results` | `BrowsePage.vue` | 完整搜索结果二级浏览，`browseContract = 'search-results'`，支持复用 `q` 与 `quick_hash` |
 | `/tags` | `TagOverviewPage.vue` | 标签总览与编辑入口 |
@@ -66,6 +66,22 @@ frontend/
 - `GalleryPage.vue` 通过 `meta.keepAlive = true` 保留导入中的本地状态和队列。
 
 ## 4. 主要页面与交互
+
+### 4.0 `HomePage.vue`
+
+- 当前首页不再只是单个图片计数卡片，而是一个独立顶层仪表板。
+- 顶部两张卡片分别显示精确统计值：
+  - 按显示主分类过滤后的图片总数，点击进入 `/gallery/all`
+  - 全局非草稿 Tag 总数，点击进入 `/tags`
+- 下方标签墙通过 `GET /api/home/overview` 分页读取：
+  - 仅统计显示主分类中的可见图片
+  - 按 Tag 的可见图片数降序排列
+  - 卡片点击进入 `/tags/:tagId`
+- 标签墙使用本地虚拟化连续滚动网格，只渲染视口附近的方形卡片，并在接近底部时继续懒加载下一批 Tag。
+- Tag 卡片采用更简洁的纯封面覆盖文案布局：移除额外角标和底部信息面板，主标题放大并居中，描述保持小号文字但同样居中。
+- 当全部可见 Tag 都加载完成时，首页只显示一个会自动消失的浮动提示，而不再在底部长期占用一行状态位。
+- 首页使用 `localStorage` 维护最近展示过的封面图片 id；每次进入首页时会把这段 history 传给后端，尽量为每个 Tag 换一批代表图，只在候选确实不足时才允许重复。
+- 对于缺失 temp/cache 预览的代表图，首页会复用现有 targeted preview repair 链路：先调用 `POST /api/admin/refresh?mode=quick` 请求指定 image id 的预览修复，再通过 `GET /api/images/meta` 回填新的缩略图地址。
 
 ### 4.1 `GalleryPage.vue`
 
@@ -223,10 +239,11 @@ const API_BASE = 'http://127.0.0.1:8000'
 - `src/pages/BrowsePage.vue`
 - `src/pages/SettingsPage.vue`
 - `src/pages/CategorySettingsPage.vue`
-- `src/pages/HomePage.vue`
 - `src/pages/CalendarOverview.vue`
 
 如果后端端口变化，需要同步修改这些位置。
+
+其中 `HomePage.vue` 已改为复用 `topLevelPageConvention.js` 暴露的共享 `API_BASE`，不再单独维护一份常量。
 
 ### 7.2 页面配置
 
