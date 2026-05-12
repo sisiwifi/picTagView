@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+import re
 
 from sqlmodel import select
 
@@ -20,6 +21,7 @@ class TagMatchContext:
     drop_numeric_only: bool
     tags_by_name: dict[str, Tag]
     tags_by_id: dict[int, Tag]
+    tags_by_first_atom: dict[str, list[tuple[str, ...]]] = field(default_factory=dict)
 
 
 def now_tag_timestamp() -> str:
@@ -62,6 +64,80 @@ def extract_tokens(
     return tokens
 
 
+def _build_tag_name_atom_index(tags_by_name: dict[str, Tag]) -> dict[str, list[tuple[str, ...]]]:
+    index: dict[str, list[tuple[str, ...]]] = {}
+    for tag_name in tags_by_name:
+        atoms = tuple(part for part in str(tag_name or "").strip().lower().split("_") if part)
+        if not atoms:
+            continue
+        index.setdefault(atoms[0], []).append(atoms)
+
+    for first_atom, candidates in index.items():
+        index[first_atom] = sorted(candidates, key=lambda atoms: (-len(atoms), "_".join(atoms)))
+    return index
+
+
+def _normalize_joined_filename_payload(stem: str) -> str:
+    value = re.sub(r"\s*\(\d+\)$", "", (stem or "").strip())
+    if value.startswith("__"):
+        body, marker, _suffix = value[2:].rpartition("__")
+        if marker and body:
+            value = body
+    value = re.sub(r"[^0-9a-zA-Z_]+", "_", value.lower())
+    value = re.sub(r"_+", "_", value).strip("_")
+    return value
+
+
+def _extract_joined_filename_tokens(
+    stem: str,
+    context: TagMatchContext,
+) -> list[str]:
+    if not context.tags_by_name:
+        return []
+
+    payload = _normalize_joined_filename_payload(stem)
+    if not payload or "_" not in payload:
+        return []
+
+    atoms = [atom for atom in payload.split("_") if atom]
+    if not atoms:
+        return []
+
+    tags_by_first_atom = context.tags_by_first_atom or _build_tag_name_atom_index(context.tags_by_name)
+
+    tokens: list[str] = []
+    seen: set[str] = set()
+    index = 0
+    while index < len(atoms):
+        matched_name = ""
+        matched_length = 0
+        for candidate_atoms in tags_by_first_atom.get(atoms[index], []):
+            candidate_length = len(candidate_atoms)
+            if tuple(atoms[index:index + candidate_length]) != candidate_atoms:
+                continue
+            candidate_name = "_".join(candidate_atoms)
+            if len(candidate_name) < context.min_token_length:
+                continue
+            if context.drop_numeric_only and candidate_name.isdigit():
+                continue
+            if candidate_name in context.noise_tokens:
+                continue
+            matched_name = candidate_name
+            matched_length = candidate_length
+            break
+
+        if matched_name:
+            if matched_name not in seen:
+                seen.add(matched_name)
+                tokens.append(matched_name)
+            index += matched_length
+            continue
+
+        index += 1
+
+    return tokens
+
+
 def sanitize_tag_ids(raw_ids: object) -> list[int]:
     if not isinstance(raw_ids, list):
         return []
@@ -98,6 +174,7 @@ def load_tag_match_context(session, *, skip_tag_query_when_disabled: bool = Fals
             drop_numeric_only=False,
             tags_by_name={},
             tags_by_id={},
+            tags_by_first_atom={},
         )
 
     noise_tokens = set(setting.get("noise_tokens", [])) if enabled else set()
@@ -117,6 +194,7 @@ def load_tag_match_context(session, *, skip_tag_query_when_disabled: bool = Fals
         for tag in tags
         if tag.id is not None
     }
+    tags_by_first_atom = _build_tag_name_atom_index(tags_by_name)
     return TagMatchContext(
         enabled=enabled,
         noise_tokens=noise_tokens,
@@ -124,6 +202,7 @@ def load_tag_match_context(session, *, skip_tag_query_when_disabled: bool = Fals
         drop_numeric_only=drop_numeric_only,
         tags_by_name=tags_by_name,
         tags_by_id=tags_by_id,
+        tags_by_first_atom=tags_by_first_atom,
     )
 
 
@@ -131,12 +210,19 @@ def match_filename_tags(filename: str, context: TagMatchContext) -> tuple[list[s
     if not context.enabled:
         return [], [], {}
 
+    stem = filename_stem(filename)
     tokens = extract_tokens(
-        filename_stem(filename),
+        stem,
         noise_tokens=context.noise_tokens,
         min_token_length=context.min_token_length,
         drop_numeric_only=context.drop_numeric_only,
     )
+    has_direct_token_match = any(token in context.tags_by_name for token in tokens)
+
+    if "_" in stem:
+        joined_tokens = _extract_joined_filename_tokens(stem, context)
+        if joined_tokens and not has_direct_token_match:
+            tokens = joined_tokens
 
     if not context.tags_by_name:
         return tokens, [], {}

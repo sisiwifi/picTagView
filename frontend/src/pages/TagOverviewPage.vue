@@ -48,33 +48,61 @@
     <div v-else class="tag-overview-page__layout">
       <section class="tag-overview-page__main">
         <article
-          v-for="group in tagGroups"
+          v-for="group in displayTagGroups"
           :key="group.key"
           class="tag-overview-group"
         >
           <header class="tag-overview-group__header">
-            <div>
+            <div class="tag-overview-group__heading">
               <h3 class="tag-overview-group__title">{{ group.key }}</h3>
-              <p class="tag-overview-group__meta">{{ group.tags.length }} 个标签</p>
+              <p class="tag-overview-group__meta">
+                {{ group.hasActiveFilter ? `${group.matchedCount} / ${group.totalCount} 个标签` : `${group.totalCount} 个标签` }}
+              </p>
             </div>
-            <button
-              v-if="groupHasOverflow(group.key)"
-              class="tag-overview-group__toggle"
-              type="button"
-              @click="toggleGroup(group.key)"
-            >
-              {{ isGroupExpanded(group.key) ? '收起' : '展开更多' }}
-            </button>
+            <div class="tag-overview-group__controls">
+              <button
+                v-if="groupHasOverflow(group.key)"
+                class="tag-overview-group__toggle"
+                type="button"
+                @click="toggleGroup(group.key)"
+              >
+                {{ isGroupExpanded(group.key) ? '收起' : '展开更多' }}
+              </button>
+              <label class="tag-overview-group__filter" :for="`tag-group-filter-${group.key}`">
+                <span class="tag-overview-group__filter-icon" aria-hidden="true">⌕</span>
+                <input
+                  :id="`tag-group-filter-${group.key}`"
+                  class="tag-overview-group__filter-input"
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="按 name 筛选"
+                  :value="group.filterValue"
+                  :aria-label="`在 ${group.key} 分组内按 name 筛选标签`"
+                  @input="updateGroupFilter(group.key, $event.target.value)"
+                  @keyup.esc="clearGroupFilter(group.key)"
+                >
+              </label>
+              <button
+                v-if="group.filterValue"
+                class="tag-overview-group__filter-clear"
+                type="button"
+                @click="clearGroupFilter(group.key)"
+              >
+                清空
+              </button>
+            </div>
           </header>
 
           <div class="tag-overview-group__viewport">
             <div
+              v-if="group.matchedCount"
               :ref="`group-body-${group.key}`"
               class="tag-overview-group__chips"
               :class="{ 'tag-overview-group__chips--collapsed': !isGroupExpanded(group.key) }"
             >
               <span
-                v-for="tag in group.tags"
+                v-for="tag in group.filteredTags"
                 :key="tag.id"
                 class="tag-overview-chip-shell"
                 :style="chipStyle(tag)"
@@ -97,6 +125,7 @@
                 >x</button>
               </span>
             </div>
+            <p v-else class="tag-overview-group__empty">当前筛选下没有匹配的标签。</p>
 
             <div
               v-if="groupHasOverflow(group.key) && !isGroupExpanded(group.key)"
@@ -270,6 +299,13 @@ function booleanMapEquals(left, right) {
   return leftKeys.every(key => Boolean(left[key]) === Boolean(right[key]))
 }
 
+function stringMapEquals(left, right) {
+  const leftKeys = Object.keys(left || {})
+  const rightKeys = Object.keys(right || {})
+  if (leftKeys.length !== rightKeys.length) return false
+  return leftKeys.every(key => String(left[key] || '') === String(right[key] || ''))
+}
+
 function rankOverflowMapEquals(left, right) {
   const leftKeys = Object.keys(left || {})
   const rightKeys = Object.keys(right || {})
@@ -312,6 +348,10 @@ function compareByLastUsed(left, right) {
   return compareByUsage(left, right)
 }
 
+function normalizeGroupFilter(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
 export default {
   name: 'TagOverviewPage',
   components: {
@@ -327,6 +367,7 @@ export default {
       actionError: '',
       tags: [],
       editMode: false,
+      groupFilters: {},
       groupExpansion: {},
       groupOverflow: {},
       rankChipOverflow: {},
@@ -371,6 +412,24 @@ export default {
           if (right.key === '#') return -1
           return left.key.localeCompare(right.key)
         })
+    },
+    displayTagGroups() {
+      return this.tagGroups.map(group => {
+        const filterValue = String(this.groupFilters[group.key] || '')
+        const normalizedFilter = normalizeGroupFilter(filterValue)
+        const filteredTags = normalizedFilter
+          ? group.tags.filter(tag => String(tag?.name || '').toLowerCase().includes(normalizedFilter))
+          : group.tags
+
+        return {
+          ...group,
+          filterValue,
+          filteredTags,
+          matchedCount: filteredTags.length,
+          totalCount: group.tags.length,
+          hasActiveFilter: Boolean(normalizedFilter),
+        }
+      })
     },
     topUsageTags() {
       return [...this.tags]
@@ -454,12 +513,17 @@ export default {
     syncGroupState() {
       const nextExpansion = {}
       const nextOverflow = {}
+      const nextFilters = {}
       for (const group of this.tagGroups) {
         nextExpansion[group.key] = Boolean(this.groupExpansion[group.key])
         nextOverflow[group.key] = Boolean(this.groupOverflow[group.key])
+        nextFilters[group.key] = String(this.groupFilters[group.key] || '')
       }
       this.groupExpansion = nextExpansion
       this.groupOverflow = nextOverflow
+      if (!stringMapEquals(this.groupFilters, nextFilters)) {
+        this.groupFilters = nextFilters
+      }
     },
     measureGroupOverflow() {
       const nextOverflow = {}
@@ -750,6 +814,23 @@ export default {
       }
       this.refreshLayoutMeasurements()
     },
+    updateGroupFilter(groupKey, value) {
+      const nextValue = String(value || '')
+      if (String(this.groupFilters[groupKey] || '') === nextValue) return
+      this.groupFilters = {
+        ...this.groupFilters,
+        [groupKey]: nextValue,
+      }
+      this.refreshLayoutMeasurements()
+    },
+    clearGroupFilter(groupKey) {
+      if (!String(this.groupFilters[groupKey] || '')) return
+      this.groupFilters = {
+        ...this.groupFilters,
+        [groupKey]: '',
+      }
+      this.refreshLayoutMeasurements()
+    },
     isGroupExpanded(groupKey) {
       return Boolean(this.groupExpansion[groupKey])
     },
@@ -857,7 +938,17 @@ export default {
 }
 
 .tag-overview-group__header {
-  @apply mb-3 flex items-start justify-between gap-3;
+  @apply mb-3 flex flex-wrap items-start justify-between gap-3;
+}
+
+.tag-overview-group__heading {
+  @apply min-w-0;
+}
+
+.tag-overview-group__controls {
+  @apply flex flex-wrap items-center justify-end gap-2;
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .tag-overview-group__title {
@@ -866,6 +957,50 @@ export default {
 
 .tag-overview-group__meta {
   @apply mt-1 mb-0 text-xs font-medium uppercase tracking-[0.18em] text-slate-400;
+}
+
+.tag-overview-group__filter {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex: 0 0 11.25rem;
+  width: 11.25rem;
+  min-width: 0;
+  max-width: 11.25rem;
+  padding: 0.52rem 0.8rem;
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.tag-overview-group__filter-icon {
+  @apply text-sm leading-none text-slate-400;
+}
+
+.tag-overview-group__filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 0.84rem;
+  color: #0f172a;
+  outline: none;
+}
+
+.tag-overview-group__filter-input::placeholder {
+  color: #94a3b8;
+}
+
+.tag-overview-group__filter-clear {
+  @apply rounded-full px-3 py-1 text-xs font-semibold text-slate-500 transition-colors duration-150;
+  border: 1px solid rgba(203, 213, 225, 0.85);
+  background: rgba(248, 250, 252, 0.82);
+}
+
+.tag-overview-group__filter-clear:hover {
+  @apply border-slate-300 bg-slate-100 text-slate-900;
 }
 
 .tag-overview-group__toggle {
@@ -887,6 +1022,10 @@ export default {
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
+}
+
+.tag-overview-group__empty {
+  @apply m-0 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500;
 }
 
 .tag-overview-chip-shell {
@@ -1103,6 +1242,16 @@ export default {
 @media (max-width: 640px) {
   .tag-overview-group {
     @apply px-4 py-4;
+  }
+
+  .tag-overview-group__controls {
+    @apply w-full justify-start;
+  }
+
+  .tag-overview-group__filter {
+    width: 100%;
+    flex-basis: 100%;
+    max-width: none;
   }
 
   .tag-rank-card__button {
