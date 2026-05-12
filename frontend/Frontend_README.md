@@ -44,7 +44,7 @@ frontend/
 | `/` | `HomePage.vue` | 主页仪表板：精确统计卡 + 连续滚动的可见 Tag 墙 |
 | `/search` | `SearchPage.vue` | 单输入搜索、本地文件搜图、时间范围过滤与一级虚拟化预览 |
 | `/search/results` | `BrowsePage.vue` | 完整搜索结果二级浏览，`browseContract = 'search-results'`，支持复用 `q` 与 `quick_hash` |
-| `/tags` | `TagOverviewPage.vue` | 标签总览与编辑入口 |
+| `/tags` | `TagOverviewPage.vue` | 标签总览与编辑入口，页头固定在主滚动区顶部 |
 | `/tags/:tagId` | `BrowsePage.vue` | 标签二级浏览，`browseContract = 'tag'` |
 | `/gallery` | `GalleryPage.vue` | 图库管理父页，包含导入、刷新、最近导入预览、图库总览预览，`meta.keepAlive = true` |
 | `/gallery/recent` | `BrowsePage.vue` | 最近导入二级浏览，`browseContract = 'gallery-recent'` |
@@ -119,10 +119,13 @@ frontend/
 ### 4.3 `TagOverviewPage.vue`
 
 - 当前不是占位页，而是完整的标签总览页。
+- 页面顶栏固定在主滚动区顶部，长列表滚动时仍保留“增加标签 / 编辑标签”和统计摘要。
 - 主要能力：
   - 按 `tag.name` 首字母分组
+  - 每个字母分组支持局部 `name` 筛选，以及按内容高度折叠 / 展开
   - 侧栏展示使用次数 Top 10 和最近使用 Top 10
   - 新建标签时先调用 `/api/tags/draft`
+  - `TagFormDialog.vue` 在 `name` 为空、格式非法或与现有标签重复时，会同时显示字段错误态和提交按钮附近的禁用原因提示
   - 编辑模式下支持直接打开 Tag 表单与删除确认
 - 非编辑模式点击 Tag 会进入 `/tags/:tagId` 的二级浏览页。
 

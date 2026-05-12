@@ -1,33 +1,35 @@
 <template>
   <section class="top-level-page tag-overview-page" :style="pageVars">
-    <TopLevelPageHeader
-      title="标签总览"
-      subtitle="左侧按首字母浏览全部标签，右侧保留高频与最近使用入口。"
-    >
-      <div class="tag-overview-page__toolbar">
-        <button
-          class="tag-overview-page__toolbar-btn"
-          type="button"
-          :disabled="tagFormVisible || tagFormSaving || confirmDialogVisible || confirmDialogBusy"
-          @click="openCreateTagForm()"
-        >
-          增加标签
-        </button>
-        <button
-          class="tag-overview-page__toolbar-btn"
-          :class="{ 'tag-overview-page__toolbar-btn--active': editMode }"
-          type="button"
-          :disabled="tagFormVisible || tagFormSaving || confirmDialogVisible || confirmDialogBusy"
-          @click="toggleEditMode"
-        >
-          {{ editMode ? '完成编辑' : '编辑标签' }}
-        </button>
-      </div>
-      <div v-if="!loading && !loadError" class="tag-overview-page__summary">
-        <span class="tag-overview-page__summary-pill">{{ tags.length }} 个 Tag</span>
-        <span class="tag-overview-page__summary-pill">{{ tagGroups.length }} 个字母分组</span>
-      </div>
-    </TopLevelPageHeader>
+    <div class="tag-overview-page__header-shell">
+      <TopLevelPageHeader
+        title="标签总览"
+        subtitle="左侧按首字母浏览全部标签，右侧保留高频与最近使用入口。"
+      >
+        <div class="tag-overview-page__toolbar">
+          <button
+            class="tag-overview-page__toolbar-btn"
+            type="button"
+            :disabled="tagFormVisible || tagFormSaving || confirmDialogVisible || confirmDialogBusy"
+            @click="openCreateTagForm()"
+          >
+            增加标签
+          </button>
+          <button
+            class="tag-overview-page__toolbar-btn"
+            :class="{ 'tag-overview-page__toolbar-btn--active': editMode }"
+            type="button"
+            :disabled="tagFormVisible || tagFormSaving || confirmDialogVisible || confirmDialogBusy"
+            @click="toggleEditMode"
+          >
+            {{ editMode ? '完成编辑' : '编辑标签' }}
+          </button>
+        </div>
+        <div v-if="!loading && !loadError" class="tag-overview-page__summary">
+          <span class="tag-overview-page__summary-pill">{{ tags.length }} 个 Tag</span>
+          <span class="tag-overview-page__summary-pill">{{ tagGroups.length }} 个字母分组</span>
+        </div>
+      </TopLevelPageHeader>
+    </div>
 
     <div v-if="actionError" class="tag-overview-page__alert" role="alert">
       {{ actionError }}
@@ -863,6 +865,17 @@ export default {
 .tag-overview-page {
   @apply flex flex-col gap-6;
   min-height: 0;
+}
+
+.tag-overview-page__header-shell {
+  position: sticky;
+  top: 0;
+  z-index: 35;
+  margin: -2.5rem -2.5rem 0;
+  padding: 2.5rem 2.5rem 1rem;
+  background:
+    linear-gradient(180deg, rgba(248, 250, 252, 0.98) 0%, rgba(248, 250, 252, 0.95) 74%, rgba(248, 250, 252, 0) 100%);
+  backdrop-filter: blur(14px);
 }
 
 .tag-overview-page__summary {

@@ -10,7 +10,7 @@
 | 主页 | `/` 顶层页现在显示两个精确统计卡和一面连续滚动的 Tag 墙：图片总数按当前显示主分类过滤，Tag 总数保持全局；下方标签墙按显示主分类内的可见图片重新统计 Tag 使用量，并为每个 Tag 选择尽量轮换的代表图，以更简洁的居中封面卡片形式展示 |
 | 图库管理 | `/gallery` 作为父页，同时展示“最近导入”和“图库总览”两条一级缩略图预览；recent 直接读取最近一批成功导入图片全集；普通缩略图直接打开只读详情，最后一格以图片承载“查看全部”跳转 |
 | 日期与相册浏览 | `CalendarOverview` 展示月份总览；`BrowsePage` 负责月份列表与相册层级浏览，数据来自 `/api/dates/*` 与 `/api/albums/*` |
-| 标签系统 | 标签总览页支持按首字母分组、Top10 排行、草稿预占、编辑、删除、JSON 导入导出；标签二级页复用 `BrowsePage`，数据来自 `/api/tags/{tag_id}/images` |
+| 标签系统 | 标签总览页支持按首字母分组、分组内按 name 过滤、固定页头、Top10 排行、草稿预占、编辑、删除，以及对重复 name 等禁用提交原因的显式提示；标签二级页复用 `BrowsePage`，数据来自 `/api/tags/{tag_id}/images` |
 | 收藏夹 | 收藏总览页展示全部可见收藏夹；收藏二级页复用 `BrowsePage`，支持批量添加/移除图片与手动选择封面 |
 | 搜索 | 一级搜索页支持单输入检索、按图搜索和时间范围辅助输入，并以局部虚拟化网格预览当前视口附近结果；完整结果进入 `/search/results`，自动识别文件名、Tag、图片路径、quick hash 同图搜索以及导入/创建时间范围 |
 | 选择模式与详情 | `BrowsePage` 内支持统一筛选面板、多选、详情浮层、Tag 菜单、收藏菜单；`PATCH /api/images/metadata` 可直接修改文件名、主分类和创建时间 |
@@ -48,7 +48,7 @@
 | `/` | `HomePage.vue` | 主页仪表板：两张精确统计卡 + 可见 Tag 连续滚动标签墙 |
 | `/search` | `SearchPage.vue` | 单输入搜索与一级预览 |
 | `/search/results` | `BrowsePage.vue` | 完整搜索结果二级浏览，`browseContract = 'search-results'` |
-| `/tags` | `TagOverviewPage.vue` | 标签总览 |
+| `/tags` | `TagOverviewPage.vue` | 标签总览，页头固定在主滚动区顶部 |
 | `/tags/:tagId` | `BrowsePage.vue` | 标签二级浏览 |
 | `/gallery` | `GalleryPage.vue` | 图库管理父页：导入、刷新、最近导入预览、图库总览预览 |
 | `/gallery/recent` | `BrowsePage.vue` | 最近导入二级浏览 |
@@ -146,6 +146,7 @@ npm run serve
 - 搜索当前采用两段式交互：`/search` 只负责输入、模式识别和一级预览，完整结果列表复用 `BrowsePage.vue` 挂在 `/search/results?q=...`。
 - 文件名自动打标已经接入导入流程和手动文件名匹配接口，但当前前端设置页还没有图形化配置入口；如需调整，只能通过后端 API 或 `app_settings.json`。
 - 标签草稿通过 `POST /api/tags/draft` 预占，草稿标签会被列表、导出和打标接口过滤；保存时通过 `PATCH /api/tags/{id}` 转正。
+- 标签表单在 `name` 为空、格式非法或与现有标签重复时，会同时给出字段错误态和提交按钮附近的禁用原因提示，而不是只禁用确认按钮。
 - 多帧图片当前统一以首帧作为 temp/cache 预览来源；前端不会再把 GIF 原文件直接拿来充当主卡片预览，只会在原图查看时交给系统查看器或浏览器按既有行为打开原文件。
 
 ## 文档索引

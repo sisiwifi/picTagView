@@ -23,17 +23,19 @@
                   <span class="tag-form__label">name</span>
                   <input
                     v-model.trim="form.name"
-                    class="tag-form__input"
+                    :class="['tag-form__input', { 'tag-form__input--invalid': Boolean(nameValidationMessage) }]"
                     type="text"
                     autocomplete="off"
                     spellcheck="false"
                     placeholder="例如 asuna_yuuki"
+                    :aria-invalid="nameValidationMessage ? 'true' : 'false'"
+                    aria-describedby="tag-form-name-feedback"
                     :disabled="saving"
                   >
-                  <span v-if="nameEmpty" class="tag-form__bubble">name 不能为空</span>
-                  <span v-else-if="namePatternInvalid" class="tag-form__hint tag-form__hint--error">仅支持小写字母、数字和下划线</span>
-                  <span v-else-if="nameDuplicated" class="tag-form__hint tag-form__hint--error">该 name 已被占用</span>
-                  <span v-else class="tag-form__hint">将作为标签的唯一标准名写入数据库</span>
+                  <span
+                    id="tag-form-name-feedback"
+                    :class="nameValidationMessage ? 'tag-form__hint tag-form__hint--error' : 'tag-form__hint'"
+                  >{{ nameValidationMessage || '将作为标签的唯一标准名写入数据库' }}</span>
                 </label>
 
                 <label class="tag-form__field">
@@ -144,7 +146,8 @@
               </div>
             </div>
 
-            <p v-if="errorMessage" class="tag-form__feedback tag-form__feedback--error">{{ errorMessage }}</p>
+            <p v-if="submitBlockedReason" class="tag-form__validation-summary" role="alert">{{ submitBlockedReason }}</p>
+            <p v-if="errorMessage" class="tag-form__feedback tag-form__feedback--error" role="alert">{{ errorMessage }}</p>
 
             <footer class="tag-form__footer">
               <button class="tag-form__btn tag-form__btn--ghost" type="button" :disabled="saving" @click="$emit('close')">取消</button>
@@ -263,6 +266,12 @@ export default {
     namePatternInvalid() {
       return !this.nameEmpty && !/^[a-z0-9_]+$/.test(this.normalizedName)
     },
+    nameValidationMessage() {
+      if (this.nameEmpty) return 'name 不能为空'
+      if (this.namePatternInvalid) return 'name 仅支持小写字母、数字和下划线'
+      if (this.nameDuplicated) return `name “${this.normalizedName}” 已存在，请修改为唯一值`
+      return ''
+    },
     nameDuplicated() {
       if (this.nameEmpty || this.namePatternInvalid) return false
       const currentName = String(this.initialTag?.name || '').trim()
@@ -271,6 +280,19 @@ export default {
     },
     canSubmit() {
       return Boolean(this.form.public_id) && !this.nameEmpty && !this.namePatternInvalid && !this.nameDuplicated
+    },
+    submitBlockedReason() {
+      if (this.saving || this.canSubmit) return ''
+      if (!this.form.public_id) {
+        return '当前无法提交：标签草稿尚未准备好，请稍后再试。'
+      }
+      if (this.nameDuplicated) {
+        return `当前无法提交：name “${this.normalizedName}” 与现有标签重复。`
+      }
+      if (this.nameValidationMessage) {
+        return `当前无法提交：${this.nameValidationMessage}。`
+      }
+      return '当前无法提交：请先完成必填项。'
     },
     currentPickerValue() {
       return this.activeTarget === 'background' ? this.form.background_color : this.form.border_color
@@ -482,6 +504,12 @@ export default {
   font-size: 0.9rem;
 }
 
+.tag-form__input--invalid {
+  border-color: rgba(220, 38, 38, 0.56);
+  background: rgba(254, 242, 242, 0.98);
+  box-shadow: 0 0 0 3px rgba(254, 226, 226, 0.72);
+}
+
 .tag-form__input--readonly {
   background: rgba(241, 245, 249, 0.92);
   color: #475569;
@@ -515,6 +543,18 @@ export default {
 .tag-form__hint {
   background: rgba(241, 245, 249, 0.92);
   color: #475569;
+}
+
+.tag-form__validation-summary {
+  width: 100%;
+  margin: 0;
+  border-radius: 18px;
+  padding: 0.8rem 0.95rem;
+  background: rgba(254, 242, 242, 0.96);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #991b1b;
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .tag-form__panel {
