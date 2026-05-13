@@ -1,6 +1,6 @@
 <template>
-  <header class="top-level-header">
-    <div class="top-level-header__main">
+  <header v-if="showHeader" class="top-level-header">
+    <div v-if="!hideText" class="top-level-header__main">
       <h2 class="top-level-header__title">{{ title }}</h2>
       <p v-if="subtitle" class="top-level-header__subtitle">{{ subtitle }}</p>
     </div>
@@ -15,6 +15,10 @@
 export default {
   name: 'TopLevelPageHeader',
   props: {
+    hideText: {
+      type: Boolean,
+      default: false,
+    },
     title: {
       type: String,
       required: true,
@@ -22,6 +26,11 @@ export default {
     subtitle: {
       type: String,
       default: '',
+    },
+  },
+  computed: {
+    showHeader() {
+      return !this.hideText || Boolean(this.$slots.default)
     },
   },
 }

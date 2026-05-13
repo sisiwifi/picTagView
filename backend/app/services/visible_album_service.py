@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from sqlalchemy import or_
 from sqlmodel import Session, col, select
 
 from app.models.album import Album
 from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
-from app.services.category_service import is_category_visible
+from app.services.category_service import DEFAULT_CATEGORY_ID, is_category_visible
 from app.services.cover_service import build_asset_cover_payload, extract_cover_photo_id
 
 
@@ -24,14 +25,29 @@ def list_visible_assets(
     active_category_ids: set[int],
     date_group: str | None = None,
 ) -> list[ImageAsset]:
-    stmt = select(ImageAsset).order_by(col(ImageAsset.id))
+    visible_category_ids = {
+        int(category_id)
+        for category_id in active_category_ids
+        if isinstance(category_id, int) and category_id > 0
+    }
+    if not visible_category_ids:
+        return []
+
+    stmt = select(ImageAsset)
     if date_group is not None:
         stmt = stmt.where(ImageAsset.date_group == date_group)
-    assets = session.exec(stmt).all()
-    return [
-        asset for asset in assets
-        if is_category_visible(asset.category_id, active_category_ids)
-    ]
+
+    if DEFAULT_CATEGORY_ID in visible_category_ids:
+        stmt = stmt.where(
+            or_(
+                col(ImageAsset.category_id).in_(visible_category_ids),
+                ImageAsset.category_id.is_(None),
+            )
+        )
+    else:
+        stmt = stmt.where(col(ImageAsset.category_id).in_(visible_category_ids))
+
+    return session.exec(stmt.order_by(col(ImageAsset.id))).all()
 
 
 def build_visible_album_stats(

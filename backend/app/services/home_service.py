@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable
 
-from sqlmodel import Session, select
+from sqlalchemy import func
+from sqlmodel import Session, col, select
 
 from app.api.common import AssetPreviewResolver, build_preview_availability_index, pick_asset_media_path
 from app.models.image_asset import ImageAsset
@@ -19,7 +20,6 @@ _DRAFT_CREATED_BY = "system:draft-reserve"
 class HomeTagAggregate:
     tag: Tag
     visible_usage_count: int
-    assets: tuple[ImageAsset, ...]
 
 
 @dataclass(frozen=True)
@@ -162,35 +162,57 @@ def _normalize_recent_excluded_ids(values: Iterable[int] | None) -> set[int]:
     return normalized
 
 
-def _build_tag_aggregates(session: Session, visible_assets: list[ImageAsset]) -> list[HomeTagAggregate]:
+def _build_tag_usage_counts(visible_assets: list[ImageAsset]) -> tuple[list[ImageAsset], dict[int, int]]:
+    sorted_visible_assets = sorted(visible_assets, key=_asset_sort_key, reverse=True)
+    counts_by_tag_id: dict[int, int] = {}
+    for asset in sorted_visible_assets:
+        for tag_id in (asset.tags or []):
+            if not isinstance(tag_id, int):
+                continue
+            counts_by_tag_id[tag_id] = counts_by_tag_id.get(tag_id, 0) + 1
+
+    return sorted_visible_assets, counts_by_tag_id
+
+
+def _build_tag_aggregates(session: Session, counts_by_tag_id: dict[int, int]) -> list[HomeTagAggregate]:
+    if not counts_by_tag_id:
+        return []
+
     tags = session.exec(
         select(Tag)
         .where(Tag.created_by != _DRAFT_CREATED_BY)  # type: ignore[attr-defined]
+        .where(col(Tag.id).in_(counts_by_tag_id.keys()))
     ).all()
-    tags_by_id = {
-        int(tag.id): tag
-        for tag in tags
-        if tag.id is not None
-    }
-
-    assets_by_tag_id: dict[int, list[ImageAsset]] = {}
-    counts_by_tag_id: dict[int, int] = {}
-    for asset in sorted(visible_assets, key=_asset_sort_key, reverse=True):
-        for tag_id in (asset.tags or []):
-            if not isinstance(tag_id, int) or tag_id not in tags_by_id:
-                continue
-            counts_by_tag_id[tag_id] = counts_by_tag_id.get(tag_id, 0) + 1
-            assets_by_tag_id.setdefault(tag_id, []).append(asset)
 
     aggregates = [
         HomeTagAggregate(
-            tag=tags_by_id[tag_id],
-            visible_usage_count=counts_by_tag_id[tag_id],
-            assets=tuple(assets_by_tag_id.get(tag_id, [])),
+            tag=tag,
+            visible_usage_count=counts_by_tag_id[int(tag.id)],
         )
-        for tag_id in counts_by_tag_id.keys()
+        for tag in tags
+        if tag.id is not None and counts_by_tag_id.get(int(tag.id), 0) > 0
     ]
     return sorted(aggregates, key=_tag_sort_key)
+
+
+def _collect_page_assets_by_tag(
+    sorted_visible_assets: list[ImageAsset],
+    page_tag_ids: set[int],
+) -> dict[int, tuple[ImageAsset, ...]]:
+    if not page_tag_ids:
+        return {}
+
+    assets_by_tag_id: dict[int, list[ImageAsset]] = {}
+    for asset in sorted_visible_assets:
+        for tag_id in (asset.tags or []):
+            if not isinstance(tag_id, int) or tag_id not in page_tag_ids:
+                continue
+            assets_by_tag_id.setdefault(tag_id, []).append(asset)
+
+    return {
+        tag_id: tuple(items)
+        for tag_id, items in assets_by_tag_id.items()
+    }
 
 
 def build_home_overview(
@@ -204,23 +226,33 @@ def build_home_overview(
     visible_assets = list_visible_assets(session, active_category_ids)
     visible_image_count = len(visible_assets)
 
-    all_tags = session.exec(
-        select(Tag)
+    global_tag_count = int(session.exec(
+        select(func.count())
+        .select_from(Tag)
         .where(Tag.created_by != _DRAFT_CREATED_BY)  # type: ignore[attr-defined]
-    ).all()
-    global_tag_count = len(all_tags)
+    ).one() or 0)
 
     recent_excluded_ids = _normalize_recent_excluded_ids(exclude_image_ids)
-    tag_aggregates = _build_tag_aggregates(session, visible_assets)
+    sorted_visible_assets, counts_by_tag_id = _build_tag_usage_counts(visible_assets)
+    tag_aggregates = _build_tag_aggregates(session, counts_by_tag_id)
     total_visible_tags = len(tag_aggregates)
     page_aggregates = tag_aggregates[offset:offset + limit]
+    page_assets_by_tag_id = _collect_page_assets_by_tag(
+        sorted_visible_assets,
+        {
+            int(aggregate.tag.id)
+            for aggregate in page_aggregates
+            if aggregate.tag.id is not None
+        },
+    )
 
     preview_resolver = AssetPreviewResolver(build_preview_availability_index())
     selected_cover_ids: set[int] = set()
     items: list[dict] = []
     for aggregate in page_aggregates:
+        tag_id = int(aggregate.tag.id) if aggregate.tag.id is not None else 0
         cover_candidate = _pick_cover_candidate(
-            aggregate.assets,
+            page_assets_by_tag_id.get(tag_id, ()),
             preview_resolver,
             selected_cover_ids=selected_cover_ids,
             recent_excluded_ids=recent_excluded_ids,

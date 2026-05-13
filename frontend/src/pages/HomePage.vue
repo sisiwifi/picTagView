@@ -3,6 +3,7 @@
     <div class="home-page__shell">
       <div class="home-page__top-shell">
         <TopLevelPageHeader
+          hide-text
           title="主页"
           subtitle="按显示主分类统计图片概览，并为当前可见 Tag 连续加载代表图。"
         />
