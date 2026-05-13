@@ -126,7 +126,7 @@ frontend/
   - 侧栏展示使用次数 Top 10 和最近使用 Top 10
   - 新建标签时先调用 `/api/tags/draft`
   - `TagFormDialog.vue` 在 `name` 为空、格式非法或与现有标签重复时，会同时显示字段错误态和提交按钮附近的禁用原因提示
-  - 编辑模式下支持直接打开 Tag 表单与删除确认
+  - 编辑模式下支持直接打开 Tag 表单与删除确认；删除提示会明确说明“同步解除图片关联”，实际删除由后端统一事务完成
 - 非编辑模式点击 Tag 会进入 `/tags/:tagId` 的二级浏览页。
 
 ### 4.4 `FavoritesPage.vue`
@@ -142,13 +142,16 @@ frontend/
   - 月份封面尺寸
   - 页面浏览模式与滚动窗口范围
   - Tag JSON 导入导出
+  - 内部“管理标签”二级面板：表格查看 `序号 / id / name / display_name / description / type / 样式预览`，支持列筛选、勾选、Shift 连选、Ctrl/Cmd + A 全选当前视图、分页切换、行末编辑、批量新增与批量删除
   - 图片查看器偏好
   - 主分类管理入口
   - 回收站入口
   - 夜间模式占位按钮
 - 当前仍是占位的入口：
   - 夜间模式
-- `SettingsPage.vue` 内部仍保留 `activePanel = 'tag-filter'` 的占位子面板结构，但入口按钮当前被注释，用户界面里不会显示。
+- `SettingsPage.vue` 内部当前有两个二级面板状态：
+  - `activePanel = 'tag-manager'`：标签管理面板，默认全量加载全部 Tag，也可切到分页模式；支持按列筛选、样式预览与行末编辑；批量删除需输入 8 位随机确认码；批量新增使用固定尺寸的三级弹窗表格，逐行填写 `name / display_name / description / type`，并按 7 组 chip 样式预设自动轮换默认值
+  - `activePanel = 'tag-filter'`：保留的占位子面板，入口按钮当前仍被注释，不会在用户界面里显示
 - 注意：后端已有 `/api/system/tag-match-setting`，但设置页目前没有实际 UI 去编辑它。
 
 ### 4.6 `BrowsePage.vue`

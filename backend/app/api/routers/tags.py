@@ -1,7 +1,6 @@
 """Tag CRUD, batch-query, import and export endpoints."""
 from __future__ import annotations
 
-import json
 import re
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
@@ -20,6 +19,7 @@ from app.db.session import get_session
 from app.models.image_asset import ImageAsset
 from app.models.tag import Tag
 from app.services.category_service import DEFAULT_CATEGORY_ID, get_active_category_ids
+from app.services.tag_match_service import sanitize_tag_ids
 from app.services.visible_album_service import list_visible_assets
 
 router = APIRouter(prefix="/api/tags", tags=["tags"])
@@ -190,6 +190,74 @@ def _write_public_id(tag: Tag) -> None:
     tag.public_id = f"tag_{tag.id}"
 
 
+def _tag_row_error(row_index: int, field: str, message: str) -> dict:
+    return {
+        "row_index": row_index,
+        "row_number": row_index + 1,
+        "field": field,
+        "message": message,
+    }
+
+
+def _delete_tags_and_detach_assets(session, raw_tag_ids: object) -> dict:
+    requested_tag_ids = sanitize_tag_ids(raw_tag_ids)
+    if not requested_tag_ids:
+        return {
+            "requested_ids": [],
+            "deleted_tag_ids": [],
+            "deleted_public_ids": [],
+            "deleted_names": [],
+            "deleted_count": 0,
+            "detached_image_count": 0,
+            "detached_reference_count": 0,
+            "missing_ids": [],
+        }
+
+    tags = session.exec(
+        select(Tag).where(Tag.id.in_(requested_tag_ids))  # type: ignore[attr-defined]
+    ).all()
+    tags_by_id = {
+        int(tag.id): tag
+        for tag in tags
+        if tag.id is not None
+    }
+    missing_ids = [tag_id for tag_id in requested_tag_ids if tag_id not in tags_by_id]
+    deleted_tags = [tags_by_id[tag_id] for tag_id in requested_tag_ids if tag_id in tags_by_id]
+
+    detached_image_count = 0
+    detached_reference_count = 0
+    if deleted_tags:
+        remove_tag_id_set = {int(tag.id) for tag in deleted_tags if tag.id is not None}
+        assets = session.exec(select(ImageAsset)).all()
+        for asset in assets:
+            before_tag_ids = sanitize_tag_ids(asset.tags or [])
+            if not before_tag_ids:
+                continue
+
+            after_tag_ids = [tag_id for tag_id in before_tag_ids if tag_id not in remove_tag_id_set]
+            if after_tag_ids == before_tag_ids:
+                continue
+
+            detached_image_count += 1
+            detached_reference_count += len(before_tag_ids) - len(after_tag_ids)
+            asset.tags = after_tag_ids
+            session.add(asset)
+
+        for tag in deleted_tags:
+            session.delete(tag)
+
+    return {
+        "requested_ids": requested_tag_ids,
+        "deleted_tag_ids": [int(tag.id) for tag in deleted_tags if tag.id is not None],
+        "deleted_public_ids": [str(tag.public_id or "") for tag in deleted_tags if tag.id is not None],
+        "deleted_names": [str(tag.name or "") for tag in deleted_tags],
+        "deleted_count": len(deleted_tags),
+        "detached_image_count": detached_image_count,
+        "detached_reference_count": detached_reference_count,
+        "missing_ids": missing_ids,
+    }
+
+
 def _to_unix_ts(dt: datetime | None) -> int | None:
     if dt is None:
         return None
@@ -261,6 +329,22 @@ class TagUpdate(BaseModel):
 class TagDraftReserveBody(BaseModel):
     type: Literal["normal", "artist", "copyright", "character", "series"] = "normal"
     metadata: TagMetadata = Field(default_factory=TagMetadata)
+
+
+class TagBulkDeleteBody(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+
+
+class TagBulkCreateRow(BaseModel):
+    name: str = ""
+    display_name: str = ""
+    description: str = ""
+    type: str = "normal"
+    metadata: TagMetadata = Field(default_factory=TagMetadata)
+
+
+class TagBulkCreateBody(BaseModel):
+    tags: list[TagBulkCreateRow] = Field(default_factory=list)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -365,6 +449,135 @@ def reserve_tag_draft(body: TagDraftReserveBody | None = None) -> dict:
         return payload
 
 
+@router.post("/bulk-delete")
+def bulk_delete_tags(body: TagBulkDeleteBody) -> dict:
+    requested_tag_ids = sanitize_tag_ids(body.ids)
+    if not requested_tag_ids:
+        raise HTTPException(status_code=400, detail="ids 不能为空")
+
+    with get_session() as session:
+        summary = _delete_tags_and_detach_assets(session, requested_tag_ids)
+        if summary["deleted_count"]:
+            session.commit()
+        return summary
+
+
+@router.post("/bulk-create", status_code=201)
+def bulk_create_tags(body: TagBulkCreateBody):
+    if not body.tags:
+        raise HTTPException(status_code=400, detail="tags 不能为空")
+
+    row_errors: list[dict] = []
+    normalized_rows: list[dict] = []
+    row_index_by_name: dict[str, int] = {}
+
+    for row_index, row in enumerate(body.tags):
+        row_has_error = False
+        normalized_name = ""
+        normalized_type = "normal"
+        normalized_metadata: dict | None = None
+
+        try:
+            normalized_name = _normalize_tag_name(row.name)
+        except HTTPException as exc:
+            row_errors.append(_tag_row_error(row_index, "name", str(exc.detail)))
+            row_has_error = True
+
+        if normalized_name:
+            duplicate_row_index = row_index_by_name.get(normalized_name)
+            if duplicate_row_index is not None:
+                row_errors.append(
+                    _tag_row_error(
+                        row_index,
+                        "name",
+                        f"name “{normalized_name}” 与第 {duplicate_row_index + 1} 行重复",
+                    )
+                )
+                row_has_error = True
+            else:
+                row_index_by_name[normalized_name] = row_index
+
+        try:
+            normalized_metadata = _normalize_tag_metadata(row.metadata, fallback_created_via="manual")
+        except HTTPException as exc:
+            row_errors.append(_tag_row_error(row_index, "style", str(exc.detail)))
+            row_has_error = True
+
+        raw_type = str(row.type or "").strip().lower() or "normal"
+        if raw_type not in _VALID_TAG_TYPES:
+            row_errors.append(_tag_row_error(row_index, "type", f"type “{raw_type}” 无效"))
+            row_has_error = True
+        else:
+            normalized_type = raw_type
+
+        if row_has_error:
+            continue
+
+        normalized_rows.append({
+            "row_index": row_index,
+            "name": normalized_name,
+            "display_name": str(row.display_name or "").strip() or normalized_name,
+            "description": str(row.description or "").strip(),
+            "type": normalized_type,
+            "metadata": normalized_metadata or {},
+        })
+
+    with get_session() as session:
+        if normalized_rows:
+            candidate_names = [row["name"] for row in normalized_rows]
+            existing_tags = session.exec(
+                select(Tag).where(Tag.name.in_(candidate_names))  # type: ignore[attr-defined]
+            ).all()
+            existing_names = {
+                str(tag.name or "")
+                for tag in existing_tags
+            }
+            for row in normalized_rows:
+                if row["name"] not in existing_names:
+                    continue
+                row_errors.append(
+                    _tag_row_error(row["row_index"], "name", f"name “{row['name']}” 已存在")
+                )
+
+        if row_errors:
+            row_errors.sort(key=lambda item: (item["row_index"], item["field"], item["message"]))
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "detail": "批量新增校验失败",
+                    "row_errors": row_errors,
+                },
+            )
+
+        created_tags: list[Tag] = []
+        for row in normalized_rows:
+            now = datetime.utcnow()
+            tag = Tag(
+                name=row["name"],
+                display_name=row["display_name"],
+                type=row["type"],
+                description=row["description"],
+                created_by="admin",
+                metadata_=row["metadata"],
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(tag)
+            session.flush()
+            _write_public_id(tag)
+            session.add(tag)
+            created_tags.append(tag)
+
+        session.commit()
+        for tag in created_tags:
+            session.refresh(tag)
+
+        return {
+            "created": len(created_tags),
+            "items": [_tag_to_dict(tag) for tag in created_tags],
+        }
+
+
 @router.get("/{tag_id}")
 def get_tag(tag_id: int) -> dict:
     with get_session() as session:
@@ -436,10 +649,9 @@ def update_tag(tag_id: int, body: TagUpdate) -> dict:
 @router.delete("/{tag_id}")
 def delete_tag(tag_id: int) -> Response:
     with get_session() as session:
-        tag = session.get(Tag, tag_id)
-        if not tag:
+        summary = _delete_tags_and_detach_assets(session, [tag_id])
+        if not summary["deleted_count"]:
             raise HTTPException(status_code=404, detail=f"Tag {tag_id} 不存在")
-        session.delete(tag)
         session.commit()
     return Response(status_code=204)
 

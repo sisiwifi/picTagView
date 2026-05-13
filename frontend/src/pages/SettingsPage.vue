@@ -8,7 +8,11 @@
       {{ floatingMessage.text }}
     </div>
 
-    <template v-if="activePanel === 'tag-filter'">
+    <template v-if="activePanel === 'tag-manager'">
+      <TagManagerPanel :api-base="API_BASE" @back="closeTagManagerPanel" />
+    </template>
+
+    <template v-else-if="activePanel === 'tag-filter'">
       <BreadcrumbHeader
         :show-back="true"
         :crumbs="tagFilterCrumbs"
@@ -239,21 +243,24 @@
 
         <div class="setting-row setting-row--compact">
           <div class="setting-info">
-            <span class="setting-label">标签数据</span>
+            <span class="setting-label">标签数据与管理</span>
             <span v-if="tagImportResult" class="setting-desc">
               已导入 {{ tagImportResult.imported }}，更新 {{ tagImportResult.updated }}，跳过 {{ tagImportResult.skipped }}
               <span v-if="tagImportResult.errors && tagImportResult.errors.length" class="text-red-500">
                 · {{ tagImportResult.errors.length }} 条错误
               </span>
             </span>
-            <span v-else class="setting-desc">导出全部标签，或在弹窗中选择 JSON 文件批量导入。</span>
+            <span v-else class="setting-desc">导出全部标签、导入 JSON，或进入标签管理二级页进行筛选、编辑、批量新增和批量删除；删除时会同步解除图片上的标签关联。</span>
           </div>
-          <div class="setting-actions">
+          <div class="setting-actions setting-actions--stacked">
             <button class="btn btn--primary" :disabled="tagExporting" @click="exportTags">
-              {{ tagExporting ? '导出中…' : '导出 JSON' }}
+              {{ tagExporting ? '导出中…' : '导出标签' }}
             </button>
             <button class="btn btn--outline" :disabled="tagImporting" @click="openTagImportDialog">
-              {{ tagImporting ? '导入中…' : '导入 JSON' }}
+              {{ tagImporting ? '导入中…' : '导入标签' }}
+            </button>
+            <button class="btn btn--secondary" type="button" @click="openTagManagerPanel">
+              管理标签
             </button>
           </div>
         </div>
@@ -384,6 +391,7 @@
 
 <script>
 import BreadcrumbHeader from '../components/BreadcrumbHeader.vue'
+import TagManagerPanel from '../components/TagManagerPanel.vue'
 import TopLevelPageHeader from './TopLevelPageHeader.vue'
 import TagImportDialog from '../components/TagImportDialog.vue'
 import {
@@ -411,6 +419,7 @@ export default {
   name: 'SettingsPage',
   components: {
     BreadcrumbHeader,
+    TagManagerPanel,
     TopLevelPageHeader,
     TagImportDialog,
   },
@@ -520,6 +529,14 @@ export default {
   },
 
   methods: {
+    openTagManagerPanel() {
+      this.activePanel = 'tag-manager'
+    },
+
+    closeTagManagerPanel() {
+      this.activePanel = ''
+    },
+
     openTagFilterPlaceholder() {
       this.activePanel = 'tag-filter'
     },
@@ -1209,6 +1226,14 @@ export default {
 
 .setting-actions {
   @apply flex items-center gap-1.5 flex-wrap justify-end;
+}
+
+.setting-actions--stacked {
+  @apply flex-col items-stretch gap-2 min-w-[8rem];
+}
+
+.setting-actions--stacked .btn {
+  @apply justify-center;
 }
 
 .thumb-size-group {

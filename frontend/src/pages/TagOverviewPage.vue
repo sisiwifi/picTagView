@@ -447,7 +447,7 @@ export default {
     confirmDialogMessage() {
       const tag = this.confirmDialogTarget
       if (!tag) return ''
-      return `此操作会永久删除标签“${tag.display_name || tag.name || ''}”。\n请输入其 name 完成二次确认。`
+      return `此操作会永久删除标签“${tag.display_name || tag.name || ''}”，并从所有已关联图片中移除该标签引用。\n请输入其 name 完成二次确认。`
     },
     confirmDialogHint() {
       if (this.confirmDialogError) {

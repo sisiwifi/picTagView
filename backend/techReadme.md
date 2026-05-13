@@ -134,7 +134,10 @@
 ### 5.3 Tag 与搜索
 
 - `tags.py` 负责 Tag CRUD、草稿占位、导入导出和 Tag 二级浏览。
+- `tags.py` 现在还提供批量新增与批量删除接口，供设置页内部的标签管理面板使用。
 - 草稿 Tag 使用 `created_by = system:draft-reserve` 标记，并在查询与导出时过滤。
+- 删除正式 Tag 的实现已经统一到同一条事务路径：无论是总览页单删、设置页批删，还是取消草稿后的清理，后端都会在一次数据库事务里先扫描 `ImageAsset.tags` 并移除目标 id，再删除 Tag 记录；不会逐个 Tag 做多次提交，也不会删除图片本身。
+- 批量新增采用整批校验、整批写入：先校验 `name`、`type`、同批重复、数据库重复和颜色元数据，再统一 `flush -> public_id -> commit`；如果任一行失败则整批回滚，并把 `row_errors` 返回给前端高亮对应行。
 - `tag_match_service.py` 封装文件名分词、Tag 匹配、Tag 排序和计数更新；导入流程与图片页“自动标签”共用这一套逻辑。
 - `search.py` 现在支持 `filename`、`tag`、`path`、`file`、`imported_at`、`file_created_at` 六类显式搜索，以及 `auto -> mixed/path` 解析；其中 `file` 通过 `quick_hash` 找到同图图片，时间模式通过 `start_at/end_at` 做区间过滤。
 - 搜索响应当前同时服务 `SearchPage.vue` 一级虚拟化预览和 `/search/results` 完整列表，返回体包含 `requested_mode`、`resolved_mode`、`included_tags`、`matched_by`、`matched_tags` 等前端渲染所需元数据；前端顶层页提供“按图搜索”和“时间范围”两个辅助入口来生成对应查询。

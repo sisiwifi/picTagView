@@ -164,24 +164,8 @@
 import TagChipList from './TagChipList.vue'
 import TagColorPicker from './TagColorPicker.vue'
 import { isSameRgb, normalizeHex8, normalizeTagColors, withAlpha } from '../utils/tagColors'
-
-const TAG_TYPE_OPTIONS = [
-  { value: 'normal', label: 'normal / 普通标签' },
-  { value: 'artist', label: 'artist / 作者标签' },
-  { value: 'copyright', label: 'copyright / 作品标签' },
-  { value: 'character', label: 'character / 角色标签' },
-  { value: 'series', label: 'series / 系列标签' },
-]
-
-const TAG_STYLE_PRESETS = [
-  { id: 'preset-red', label: '红色', borderColor: '#FF0000FF', backgroundColor: '#FF000066' },
-  { id: 'preset-orange', label: '橙色', borderColor: '#FF6600FF', backgroundColor: '#FF660066' },
-  { id: 'preset-yellow', label: '金黄', borderColor: '#C9A600FF', backgroundColor: '#FFFF0024' },
-  { id: 'preset-green', label: '绿色', borderColor: '#00B84AFF', backgroundColor: '#00FF0029' },
-  { id: 'preset-blue', label: '蓝色', borderColor: '#1E90FFFF', backgroundColor: '#1E90FF66' },
-  { id: 'preset-purple', label: '紫色', borderColor: '#8A2BE2FF', backgroundColor: '#8A2BE266' },
-  { id: 'preset-pink', label: '粉色', borderColor: '#FF1493FF', backgroundColor: '#FF149366' },
-]
+import { TAG_STYLE_PRESETS } from '../utils/tagStylePresets'
+import { TAG_TYPE_OPTIONS } from '../utils/tagTypes'
 
 function createMetadataBase(metadata = null) {
   return {

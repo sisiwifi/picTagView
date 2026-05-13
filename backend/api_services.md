@@ -56,8 +56,10 @@
 | `tags.py` | `GET /api/tags/{tag_id}/images` | 返回该 Tag 下的可见图片列表，供标签二级页使用 |
 | `tags.py` | `POST /api/tags/draft` | 预占隐藏草稿 Tag |
 | `tags.py` | `POST /api/tags` | 新建正式 Tag |
+| `tags.py` | `POST /api/tags/bulk-create` | 批量新增正式 Tag；整批校验 `name / type / 重复 / 颜色元数据`，任一行失败则整批回滚，并返回 `row_errors` |
 | `tags.py` | `PATCH /api/tags/{tag_id}` | 更新 Tag；如果目标是草稿，会在这里转正 |
-| `tags.py` | `DELETE /api/tags/{tag_id}` | 删除 Tag；草稿与正式 Tag 都走这个接口 |
+| `tags.py` | `DELETE /api/tags/{tag_id}` | 删除单个 Tag；草稿与正式 Tag 都走这个接口，正式 Tag 删除时会同步解除图片关联 |
+| `tags.py` | `POST /api/tags/bulk-delete` | 批量删除 Tag，并在同一事务里从图片 `tags` 列表中移除对应 id |
 | `tags.py` | `GET /api/tags/export/json` | 导出 JSON |
 | `tags.py` | `POST /api/tags/import/json` | 导入 JSON，支持 `skip` / `overwrite` 冲突策略 |
 | `images.py` | `POST /api/images/tags/filename-match` | 按文件名匹配 Tag，可只预览或直接回写 |
@@ -189,6 +191,14 @@
   2. 弹窗编辑
   3. `PATCH /api/tags/{id}` 保存并转正
   4. 取消时 `DELETE /api/tags/{id}` 删除草稿
+- 正式 Tag 删除协议现在统一为“删标签 + 解关联”：
+  - `DELETE /api/tags/{id}` 与 `POST /api/tags/bulk-delete` 都会在同一事务中单次扫描 `ImageAsset`，从 `ImageAsset.tags` 中移除目标 tag id，再删除 Tag 记录。
+  - 删除响应不会删除图片本身，只会清理 Tag 实体和图片上的标签引用。
+  - 批量删除返回 `deleted_tag_ids`、`deleted_count`、`detached_image_count`、`detached_reference_count`、`missing_ids`，供设置页表格管理面板使用。
+- `POST /api/tags/bulk-create` 约定：
+  - 请求体使用 `tags` 数组，每行当前接收 `name`、`display_name`、`description`、`type`、`metadata`
+  - 后端会逐行校验 `type ∈ {normal, artist, copyright, character, series}`，并在写入后自动补全 `public_id`
+  - 任一行 `name` 非法、`type` 非法、同批重复、与数据库重复，或 `metadata` 颜色非法时，整批返回 `400`，并通过 `row_errors[*].row_index/field/message` 描述错误
 
 ### 4.5 收藏夹协议
 
