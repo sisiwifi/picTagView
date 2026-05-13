@@ -21,7 +21,7 @@
             <span class="home-stat-card__icon">🏷️</span>
             <div class="home-stat-card__body">
               <span class="home-stat-card__num">{{ formatExactCount(stats.global_tag_count) }}</span>
-              <span class="home-stat-card__label">Tag 总数</span>
+              <span class="home-stat-card__label">标签总数</span>
             </div>
           </button>
         </div>
@@ -30,10 +30,8 @@
       <section class="home-page__wall-shell">
         <header class="home-page__wall-header">
           <div class="home-page__wall-header-main">
-            <h3 class="home-page__wall-title">当前活动图库 Tag 墙</h3>
-            <p class="home-page__wall-subtitle">方形卡片连续滚动加载，点击任意 Tag 进入对应二级浏览页。</p>
+            <h3 class="home-page__wall-title">当前活动图库</h3>
           </div>
-
           <button
             class="home-page__wall-action"
             type="button"
@@ -247,6 +245,7 @@ export default {
       wallViewportHeight: 0,
       wallViewportScrollTop: 0,
       wallResizeObserver: null,
+      wallResizeFrame: null,
       coverRepairQueue: [],
       coverRepairTimer: null,
       coverRepairInFlight: false,
@@ -378,6 +377,10 @@ export default {
     if (this.completionToastTimer) {
       window.clearTimeout(this.completionToastTimer)
       this.completionToastTimer = null
+    }
+    if (this.wallResizeFrame) {
+      window.cancelAnimationFrame(this.wallResizeFrame)
+      this.wallResizeFrame = null
     }
     this.wallResizeObserver?.disconnect?.()
     window.removeEventListener('library-refreshed', this.onLibraryRefreshed)
@@ -548,18 +551,36 @@ export default {
       if (!viewport || typeof ResizeObserver === 'undefined') return
       if (!this.wallResizeObserver) {
         this.wallResizeObserver = new ResizeObserver(() => {
-          this.refreshWallViewportMetrics()
-          this.maybeLoadMoreIfNeeded()
+          this.scheduleWallViewportRefresh()
         })
       }
       this.wallResizeObserver.disconnect()
       this.wallResizeObserver.observe(viewport)
-      this.refreshWallViewportMetrics()
+      this.scheduleWallViewportRefresh()
+    },
+    scheduleWallViewportRefresh() {
+      if (typeof window === 'undefined') {
+        this.refreshWallViewportMetrics()
+        this.maybeLoadMoreIfNeeded()
+        return
+      }
+      if (this.wallResizeFrame) return
+      this.wallResizeFrame = window.requestAnimationFrame(() => {
+        this.wallResizeFrame = null
+        this.refreshWallViewportMetrics()
+        this.maybeLoadMoreIfNeeded()
+      })
     },
     refreshWallViewportMetrics() {
       const viewport = this.$refs.wallViewport
-      this.wallViewportWidth = viewport?.clientWidth || 0
-      this.wallViewportHeight = viewport?.clientHeight || 0
+      const nextWidth = viewport?.clientWidth || 0
+      const nextHeight = viewport?.clientHeight || 0
+      if (nextWidth !== this.wallViewportWidth) {
+        this.wallViewportWidth = nextWidth
+      }
+      if (nextHeight !== this.wallViewportHeight) {
+        this.wallViewportHeight = nextHeight
+      }
     },
     resetWallViewportScroll() {
       const viewport = this.$refs.wallViewport
@@ -826,6 +847,11 @@ export default {
   @apply rounded-full border px-4 py-2 text-sm font-semibold transition;
 }
 
+.home-page__wall-action {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .home-page__wall-action,
 .home-page__state-action {
   border-color: rgba(14, 116, 144, 0.16);
@@ -1006,12 +1032,38 @@ export default {
 }
 
 @media (max-width: 900px) {
-  .stats-row {
-    grid-template-columns: 1fr;
+  .home-page__shell,
+  .home-page__top-shell,
+  .stats-row,
+  .home-page__wall-shell {
+    gap: 0.75rem;
+  }
+
+  .home-stat-card {
+    gap: 0.85rem;
+    padding: 1.05rem 1.1rem;
+  }
+
+  .home-stat-card__icon {
+    font-size: 2rem;
+  }
+
+  .home-stat-card__num {
+    font-size: 2.3rem;
+  }
+
+  .home-stat-card__label {
+    font-size: 0.95rem;
   }
 
   .home-page__wall-header {
-    flex-direction: column;
+    align-items: center;
+    flex-direction: row;
+    gap: 0.75rem;
+  }
+
+  .home-page__wall-shell {
+    padding: 0.85rem;
   }
 }
 
@@ -1026,13 +1078,39 @@ export default {
     border-radius: 1.45rem;
   }
 
+  .stats-row {
+    gap: 0.65rem;
+  }
+
   .home-stat-card,
   .home-page__wall-shell {
     border-radius: 1.35rem;
   }
 
   .home-stat-card {
-    padding: 1.1rem 1.15rem;
+    gap: 0.7rem;
+    padding: 0.92rem 0.95rem;
+  }
+
+  .home-stat-card__icon {
+    font-size: 1.7rem;
+  }
+
+  .home-stat-card__num {
+    font-size: 1.95rem;
+  }
+
+  .home-stat-card__label,
+  .home-page__wall-action {
+    font-size: 0.875rem;
+  }
+
+  .home-page__wall-shell {
+    padding: 0.75rem;
+  }
+
+  .home-page__wall-header {
+    gap: 0.65rem;
   }
 }
 </style>
