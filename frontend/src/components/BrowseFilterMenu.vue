@@ -27,38 +27,63 @@
                 <button class="browse-filter-menu__clear-link" type="button" @click="clearTagSelection">清空</button>
               </div>
 
-              <div class="browse-filter-menu__chip-toolbar">
-                <button
-                  class="browse-filter-menu__choice-chip"
-                  :class="{ 'browse-filter-menu__choice-chip--active': allTagsSelected && tags.length }"
-                  type="button"
-                  @click="selectAllTags"
-                >
-                  全选
-                </button>
-                <button
-                  class="browse-filter-menu__choice-chip"
-                  :class="{ 'browse-filter-menu__choice-chip--active': localFilter.includeUntagged }"
-                  type="button"
-                  @click="toggleIncludeUntagged"
-                >
-                  无标签
-                </button>
+              <div class="browse-filter-menu__tag-controls">
+                <div class="browse-filter-menu__chip-toolbar">
+                  <button
+                    class="browse-filter-menu__choice-chip"
+                    :class="{ 'browse-filter-menu__choice-chip--active': allTagsSelected && tags.length }"
+                    type="button"
+                    @click="selectAllTags"
+                  >
+                    全选
+                  </button>
+                  <button
+                    class="browse-filter-menu__choice-chip"
+                    :class="{ 'browse-filter-menu__choice-chip--active': localFilter.includeUntagged }"
+                    type="button"
+                    @click="toggleIncludeUntagged"
+                  >
+                    无标签
+                  </button>
+                </div>
+
+                <div class="browse-filter-menu__tag-search">
+                  <input
+                    v-model="tagSearchQuery"
+                    class="browse-filter-menu__input browse-filter-menu__tag-search-input"
+                    type="text"
+                    maxlength="80"
+                    placeholder="筛选标签"
+                    aria-label="筛选标签"
+                  >
+                  <button
+                    v-if="tagSearchQuery"
+                    class="browse-filter-menu__tag-search-clear"
+                    type="button"
+                    aria-label="清空标签筛选输入"
+                    @click="clearTagSearch"
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
 
-              <div v-if="tags.length" class="browse-filter-menu__tag-list">
-                <button
-                  v-for="tag in tags"
-                  :key="tag.id"
-                  class="tag-chip tag-chip--interactive browse-filter-menu__tag-chip"
-                  :class="{ 'browse-filter-menu__tag-chip--muted': !isTagSelected(tag.id) }"
-                  :style="tagChipStyle(tag, isTagSelected(tag.id))"
-                  :title="tag.description || ''"
-                  type="button"
-                  @click="toggleTag(tag.id)"
-                >
-                  {{ tag.display_name || tag.name || `#${tag.id}` }}
-                </button>
+              <div v-if="tags.length">
+                <div v-if="filteredTags.length" class="browse-filter-menu__tag-list">
+                  <button
+                    v-for="tag in filteredTags"
+                    :key="tag.id"
+                    class="tag-chip tag-chip--interactive browse-filter-menu__tag-chip"
+                    :class="{ 'browse-filter-menu__tag-chip--muted': !isTagSelected(tag.id) }"
+                    :style="tagChipStyle(tag, isTagSelected(tag.id))"
+                    :title="tag.description || ''"
+                    type="button"
+                    @click="toggleTag(tag.id)"
+                  >
+                    {{ tag.display_name || tag.name || `#${tag.id}` }}
+                  </button>
+                </div>
+                <p v-else class="browse-filter-menu__empty">没有匹配的标签。</p>
               </div>
               <p v-else class="browse-filter-menu__empty">当前视图没有可用标签。</p>
             </section>
@@ -378,6 +403,22 @@ function normalizeFilter(rawFilter) {
   return nextFilter
 }
 
+function normalizeTagSearchText(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLocaleLowerCase('zh-CN')
+}
+
+function tagSearchText(tag) {
+  const parts = [
+    tag?.display_name,
+    tag?.name,
+    tag?.description,
+  ]
+  return normalizeTagSearchText(parts.filter(Boolean).join(' '))
+}
+
 function viewportWidth() {
   return typeof window !== 'undefined' ? window.innerWidth : 1280
 }
@@ -417,6 +458,7 @@ export default {
   data() {
     return {
       localFilter: createEmptyFilter(),
+      tagSearchQuery: '',
     }
   },
   computed: {
@@ -453,6 +495,11 @@ export default {
       const selectedSet = new Set(this.localFilter.fileTypes)
       return this.fileTypes.every(fileType => selectedSet.has(fileType))
     },
+    filteredTags() {
+      const query = normalizeTagSearchText(this.tagSearchQuery)
+      if (!query) return this.tags
+      return this.tags.filter(tag => tagSearchText(tag).includes(query))
+    },
   },
   watch: {
     visible(nextValue) {
@@ -472,6 +519,7 @@ export default {
   methods: {
     seedFromProps() {
       this.localFilter = normalizeFilter(this.filter)
+      this.tagSearchQuery = ''
     },
     isCategorySelected(categoryId) {
       return this.localFilter.categoryIds.includes(Number(categoryId))
@@ -532,6 +580,9 @@ export default {
     clearTagSelection() {
       this.localFilter.tagIds = []
       this.localFilter.includeUntagged = false
+    },
+    clearTagSearch() {
+      this.tagSearchQuery = ''
     },
     toggleIncludeUntagged() {
       this.localFilter.includeUntagged = !this.localFilter.includeUntagged
@@ -728,6 +779,14 @@ export default {
   line-height: 1.45;
 }
 
+.browse-filter-menu__tag-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
 .browse-filter-menu__chip-toolbar,
 .browse-filter-menu__choice-grid,
 .browse-filter-menu__tag-list {
@@ -764,6 +823,46 @@ export default {
   min-height: 1.68rem;
   padding-inline: 0.7rem;
   font-size: 0.78rem;
+}
+
+.browse-filter-menu__tag-search {
+  position: relative;
+  flex: 0 1 210px;
+  min-width: 0;
+}
+
+.browse-filter-menu__tag-search-input {
+  min-height: 2rem;
+  padding-top: 0.36rem;
+  padding-right: 1.9rem;
+  padding-bottom: 0.36rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+}
+
+.browse-filter-menu__tag-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 0.42rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748b;
+  font-size: 0.92rem;
+  line-height: 1;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.browse-filter-menu__tag-search-clear:hover {
+  color: #0f172a;
+  background: rgba(226, 232, 240, 0.78);
 }
 
 .browse-filter-menu__tag-chip--muted {
@@ -913,6 +1012,10 @@ export default {
 
   .browse-filter-menu__field--compact {
     flex-basis: auto;
+  }
+
+  .browse-filter-menu__tag-search {
+    flex-basis: 100%;
   }
 }
 </style>
