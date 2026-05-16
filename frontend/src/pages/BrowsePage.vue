@@ -494,6 +494,7 @@ import TagFormDialog from '../components/TagFormDialog.vue'
 import { normalizeAnimatedFields, resolveAnimatedBadgeLabel } from '../utils/animatedMedia'
 import { normalizeTagColors } from '../utils/tagColors'
 import { getCommonBrowsePageContract } from '../utils/commonBrowsePage'
+import { API_BASE } from './topLevelPageConvention'
 import {
   DEFAULT_PAGE_CONFIG,
   PAGE_BROWSE_MODE_PAGED,
@@ -502,8 +503,6 @@ import {
   fetchPageConfig,
   getCachedPageConfig,
 } from '../utils/pageConfig'
-
-const API_BASE = 'http://127.0.0.1:8000'
 const POLL_MS = 180
 const DEBOUNCE_MS = 300
 const LONG_PRESS_MS = 220

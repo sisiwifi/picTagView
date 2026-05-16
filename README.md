@@ -135,9 +135,31 @@ npm run serve
 - 后端：`http://127.0.0.1:8000`
 - 前端：`http://localhost:8080`
 
+## 便携打包
+
+仓库内提供了一个 Windows 便携打包脚本：[build/package_portable.py](build/package_portable.py)。它会先构建前端，再把后端代码、前端静态产物和便携 Python 运行时组装成一个可搬运的 ZIP。
+
+这个 ZIP 只包含程序本身，不包含 `media`、`backend/temp`、`backend/data/cache`、数据库等运行内容；用户解压后首次启动时，程序会自动创建这些运行目录。
+
+打包脚本默认直接使用当前项目 `.venv` 对应的 Python 基座和已安装依赖生成便携运行时；如果你已经准备好了现成的便携 Python 运行时目录，也可以放到 `build\runtime\python` 或通过 `PORTABLE_PYTHON_DIR` 指定，然后执行：
+
+```powershell
+build\package_portable.bat
+```
+
+也可以直接调用：
+
+```powershell
+python build\package_portable.py --runtime-python-dir D:\path\to\portable-python
+```
+
+打包后的目录会包含 `start.vbs` 和 `start.bat`。推荐双击 `start.vbs` 进行静默启动；`start.bat` 作为兼容入口会转调到同一个静默启动器。启动后会以独立管理窗口打开前端界面，不再弹出前后端 CLI 窗口。
+
+解压后的根目录还会包含 `config.json`，当前可通过 `backend_port` 配置后端端口。关闭这个独立管理窗口后，启动器会同步停止后端服务。
+
 ## 当前运行约定
 
-- 前端尚未通过环境变量或 `devServer.proxy` 统一注入后端地址；当前直连 `http://127.0.0.1:8000` 的常量分散在 `topLevelPageConvention.js`、`commonBrowsePage.js`、`pageConfig.js`、`BrowsePage.vue`、`SettingsPage.vue`、`CategorySettingsPage.vue`、`CalendarOverview.vue`，切换后端端口时需要一并修改；`HomePage.vue` 已改为复用 `topLevelPageConvention.js` 中的共享 `API_BASE`。
+- 前端的 API 基址现在统一从 `runtime-config.js` 读取：开发环境默认指向 `http://127.0.0.1:8000`，便携包在启动时会把它改成同源地址；`HomePage.vue`、`BrowsePage.vue`、`SettingsPage.vue`、`CategorySettingsPage.vue`、`CalendarOverview.vue` 等页面都已经收口到 `topLevelPageConvention.js` 暴露的共享 `API_BASE`。
 - 页面配置由 `backend/data/app_settings.json` 持久化，当前包含：
   - 浏览缓存缩略图短边尺寸
   - 月份封面尺寸

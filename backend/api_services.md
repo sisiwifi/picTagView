@@ -18,7 +18,7 @@
 
 | 文件 | 端点 | 当前行为 |
 | --- | --- | --- |
-| `basic.py` | `GET /` | 健康检查，返回 `{"status": "ok"}` |
+| `basic.py` | `GET /api/health` | 健康检查，返回 `{"status": "ok"}` |
 | `basic.py` | `POST /api/import` | 接收 `files`、`last_modified_json`、`created_time_json`、`category_id`、`recent_import_mode`，调用导入流水线 |
 | `basic.py` | `GET /api/images/count` | 返回库中 `ImageAsset` 总数 |
 | `home.py` | `GET /api/home/overview` | 返回主页所需的统计卡与标签墙分页数据：`visible_image_count` 按显示主分类过滤，`global_tag_count` 保持全局；标签墙按可见图片重新统计 Tag 使用量，并接受 `exclude_image_ids` 来尽量避开最近展示过的代表图 |

@@ -8,6 +8,7 @@ CACHE_DIR = DATA_DIR / "cache"
 VIEWER_ICON_DIR = DATA_DIR / "viewer_icons"
 MEDIA_DIR = PROJECT_ROOT / "media"
 TRASH_DIR = PROJECT_ROOT / "trash"
+FRONTEND_DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
 
 DB_PATH = DATA_DIR / "app.db"
 

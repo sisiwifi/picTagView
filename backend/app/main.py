@@ -1,9 +1,12 @@
-from fastapi import FastAPI
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router as api_router
-from app.core.config import CACHE_DIR, MEDIA_DIR, TEMP_DIR, TRASH_DIR, VIEWER_ICON_DIR
+from app.core.config import CACHE_DIR, FRONTEND_DIST_DIR, MEDIA_DIR, TEMP_DIR, TRASH_DIR, VIEWER_ICON_DIR
 from app.db.session import init_db
 
 
@@ -34,6 +37,29 @@ def create_app() -> FastAPI:
     app.mount("/viewer-icons", StaticFiles(directory=str(VIEWER_ICON_DIR)), name="viewer_icons")
 
     app.include_router(api_router)
+
+    if FRONTEND_DIST_DIR.is_dir():
+        frontend_index = FRONTEND_DIST_DIR / "index.html"
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        def serve_frontend(full_path: str):
+            if not frontend_index.is_file():
+                raise HTTPException(status_code=404, detail="Frontend bundle not found")
+
+            if not full_path:
+                return FileResponse(frontend_index)
+
+            requested_path = (FRONTEND_DIST_DIR / Path(full_path)).resolve()
+            try:
+                requested_path.relative_to(FRONTEND_DIST_DIR.resolve())
+            except ValueError:
+                return FileResponse(frontend_index)
+
+            if requested_path.is_file():
+                return FileResponse(requested_path)
+
+            return FileResponse(frontend_index)
+
     return app
 
 

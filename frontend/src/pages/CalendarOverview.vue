@@ -46,9 +46,8 @@
 import ThumbCard from '../components/ThumbCard.vue'
 import LoadingSpinner from '../components/LoadingSpinner.vue'
 import { resolveAnimatedBadgeLabel } from '../utils/animatedMedia'
+import { API_BASE } from './topLevelPageConvention'
 import TopLevelPageHeader from './TopLevelPageHeader.vue'
-
-const API_BASE = 'http://127.0.0.1:8000'
 
 export default {
   name: 'CalendarOverview',

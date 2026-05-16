@@ -14,8 +14,8 @@ start "picTagView-backend" cmd /k "cd /d %~dp0..\backend && %BACKEND_PY% -m uvic
 echo Waiting for backend to initialize...
 timeout /t 2 /nobreak >nul
 
-echo Checking backend health: http://127.0.0.1:8000/
-curl -s http://127.0.0.1:8000/ >nul 2>&1
+echo Checking backend health: http://127.0.0.1:8000/api/health
+curl -s http://127.0.0.1:8000/api/health >nul 2>&1
 if %errorlevel%==0 (
   echo Backend is running.
 ) else (

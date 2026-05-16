@@ -13,8 +13,8 @@ from app.services.import_service import import_files, refresh_library
 router = APIRouter()
 
 
-@router.get("/")
-def root() -> dict:
+@router.get("/api/health")
+def health() -> dict:
     return {"status": "ok"}
 
 

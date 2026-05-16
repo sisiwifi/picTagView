@@ -361,6 +361,7 @@ import PagePaginationBar from './PagePaginationBar.vue'
 import SelectionIsland from './SelectionIsland.vue'
 import TagBatchCreateDialog from './TagBatchCreateDialog.vue'
 import TagFormDialog from './TagFormDialog.vue'
+import { API_BASE } from '../pages/topLevelPageConvention'
 import { normalizeTagColors } from '../utils/tagColors'
 import { getTagTypeLabel, TAG_TYPE_OPTIONS } from '../utils/tagTypes'
 
@@ -427,7 +428,7 @@ export default {
   props: {
     apiBase: {
       type: String,
-      default: 'http://127.0.0.1:8000',
+      default: API_BASE,
     },
   },
   emits: ['back'],

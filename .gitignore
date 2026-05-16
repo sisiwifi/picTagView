@@ -21,3 +21,8 @@ __pycache__/
 *.heic
 *.heif
 *.raw
+
+# 便携打包产物
+build/portable_staging/
+build/picTagView-portable.zip
+build/runtime/
