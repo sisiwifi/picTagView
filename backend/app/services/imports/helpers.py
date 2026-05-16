@@ -3,6 +3,7 @@ import datetime
 import hashlib
 import mimetypes
 import os
+import shutil
 from ctypes import wintypes
 from pathlib import Path
 from typing import Optional
@@ -317,5 +318,23 @@ def save_to_media(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = unique_dest(dest_dir, filename)
     dest.write_bytes(content)
+    apply_file_times(dest, source_time_ms)
+    return dest
+
+
+def move_to_media(
+    source_path: Path,
+    filename: str,
+    date_group: str,
+    subdir_chain: list[str],
+    source_time_ms: Optional[int] = None,
+) -> Path:
+    dest_dir = MEDIA_DIR / date_group
+    for subdir in subdir_chain:
+        dest_dir = dest_dir / subdir
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = unique_dest(dest_dir, filename)
+    shutil.move(str(source_path), str(dest))
     apply_file_times(dest, source_time_ms)
     return dest

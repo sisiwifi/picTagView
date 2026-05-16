@@ -9,7 +9,7 @@
       <h3 class="card-title">导入新图片</h3>
       <p class="card-hint">
         选择文件夹后，图片将按文件修改时间自动归入
-        <code class="inline-code">media/YYYY-M/</code>。
+        <code class="inline-code">media/YYYY-MM/</code>。
         子文件夹将作为整体单元处理。
       </p>
 
@@ -24,7 +24,7 @@
         <button
           class="btn btn--secondary"
           :disabled="importing || refreshing"
-          title="全量扫描媒体库：修复记录并收编新文件"
+          title="全量扫描媒体库：修复记录并收编孤立图片/相册"
           @click="runRefresh"
         >
           <span :class="['btn__icon', { spinning: refreshing }]">🔄</span>
@@ -39,6 +39,10 @@
           {{ stopRequested ? '停止中…' : '停止导入' }}
         </button>
       </div>
+
+      <p v-if="orphanMediaStatus.hasOrphans" class="orphan-warning">
+        {{ orphanWarningText }}
+      </p>
 
       <input
         ref="folderInput"
@@ -268,6 +272,12 @@ export default {
       allOverviewLoading: false,
       recentOverviewError: '',
       allOverviewError: '',
+      orphanMediaStatus: {
+        hasOrphans: false,
+        orphanAlbumCount: 0,
+        orphanImageCount: 0,
+        orphanFileCount: 0,
+      },
       viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 0,
       viewportHeight: typeof window !== 'undefined' ? window.innerHeight : 0,
       detailOverlayVisible: false,
@@ -292,6 +302,15 @@ export default {
     },
     overviewSlotCount() {
       return this.isPortrait ? 3 : 5
+    },
+    orphanWarningText() {
+      const albumCount = Number(this.orphanMediaStatus?.orphanAlbumCount || 0)
+      const imageCount = Number(this.orphanMediaStatus?.orphanImageCount || 0)
+      const parts = []
+      if (albumCount > 0) parts.push(`${albumCount} 个孤立相册`)
+      if (imageCount > 0) parts.push(`${imageCount} 张孤立图片`)
+      if (!parts.length) return '媒体库存在孤立文件，请刷新媒体库。'
+      return `媒体库存在${parts.join('、')}，请刷新媒体库。`
     },
     overviewSections() {
       return [
@@ -395,6 +414,7 @@ export default {
   created() {
     this._activeImportController = null
     this.fetchGalleryOverviews()
+    this.fetchOrphanMediaStatus()
     this.loadCategoryDisplayLabels()
     this._checkMissingThumbs()
     if (typeof window !== 'undefined') {
@@ -413,6 +433,7 @@ export default {
 
   activated() {
     this.fetchGalleryOverviews()
+    this.fetchOrphanMediaStatus()
     this.loadCategoryDisplayLabels()
     this._checkMissingThumbs()
   },
@@ -458,6 +479,23 @@ export default {
 
     onLibraryRefreshed() {
       this.fetchGalleryOverviews()
+      this.fetchOrphanMediaStatus()
+    },
+
+    async fetchOrphanMediaStatus() {
+      try {
+        const response = await fetch(`${API_BASE}/api/admin/orphan-media-status`)
+        if (!response.ok) return
+        const payload = await response.json()
+        this.orphanMediaStatus = {
+          hasOrphans: Boolean(payload?.has_orphans),
+          orphanAlbumCount: Number(payload?.orphan_album_count || 0),
+          orphanImageCount: Number(payload?.orphan_image_count || 0),
+          orphanFileCount: Number(payload?.orphan_file_count || 0),
+        }
+      } catch {
+        // Keep this prompt best-effort so gallery overview still loads without the admin helper.
+      }
     },
 
     async loadCategoryDisplayLabels(force = false) {
@@ -1047,12 +1085,27 @@ export default {
         const res = await fetch(`${API_BASE}/api/admin/refresh?mode=full`, { method: 'POST' })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
+        const noticeLines = []
+        if (Number(data.orphan_files_migrated || 0) > 0) {
+          const migratedParts = []
+          if (Number(data.orphan_albums_migrated || 0) > 0) {
+            migratedParts.push(`${data.orphan_albums_migrated} 个孤立相册`)
+          }
+          if (Number(data.orphan_images_migrated || 0) > 0) {
+            migratedParts.push(`${data.orphan_images_migrated} 张孤立图片`)
+          }
+          noticeLines.push(`已收编：${migratedParts.join('、') || `${data.orphan_files_migrated} 个孤立媒体文件`}。`)
+        }
+        if (data.pruned) {
+          noticeLines.push(`已删除失效记录：${data.pruned} 条`)
+        }
         this.showNotice({
           type: 'success',
           title: `刷新完成，当前共 ${data.total_images} 张图片`,
-          lines: data.pruned ? [`🗑 已删除失效记录：${data.pruned} 条`] : [],
+          lines: noticeLines,
         })
         await this.fetchGalleryOverviews()
+        await this.fetchOrphanMediaStatus()
         this.status = ''
       } catch (err) {
         this.showNotice({ type: 'error', title: '刷新失败', lines: [`${err.message}`] })
@@ -1102,6 +1155,9 @@ export default {
 
 /* Buttons */
 .action-row { @apply flex gap-2 flex-wrap items-center; }
+.orphan-warning {
+  @apply mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800;
+}
 .btn {
   @apply inline-flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium
          cursor-pointer border-0 transition-all duration-150;

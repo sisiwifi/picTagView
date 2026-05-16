@@ -8,6 +8,7 @@ from app.api.schemas import AdminRefreshRequest, ImportResponse
 from app.db.session import get_session
 from app.models.image_asset import ImageAsset
 from app.services.category_service import require_category
+from app.services.imports.maintenance import get_orphan_media_status
 from app.services.import_service import import_files, refresh_library
 
 router = APIRouter()
@@ -76,3 +77,8 @@ def refresh(mode: str = "quick", body: AdminRefreshRequest | None = None) -> dic
         repair_cache_image_ids=request_body.image_ids if request_body.repair_cache else None,
         repair_cache_trash_entry_ids=request_body.trash_entry_ids if request_body.repair_cache else None,
     )
+
+
+@router.get("/api/admin/orphan-media-status")
+def orphan_media_status() -> dict:
+    return get_orphan_media_status()

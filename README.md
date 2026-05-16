@@ -8,7 +8,7 @@
 | --- | --- |
 | 导入与去重 | Gallery 页按文件夹分批导入，后端按 `media/YYYY-MM/` 写入；同批次内完成哈希去重、相册链维护、图片主分类写入，以及可选的文件名自动打标 |
 | 主页 | `/` 顶层页现在显示两个精确统计卡和一面连续滚动的 Tag 墙：图片总数按当前显示主分类过滤，Tag 总数保持全局；下方标签墙按显示主分类内的可见图片重新统计 Tag 使用量，并为每个 Tag 选择尽量轮换的代表图，以更简洁的居中封面卡片形式展示 |
-| 图库管理 | `/gallery` 作为父页，同时展示“最近导入”和“图库总览”两条一级缩略图预览；recent 直接读取最近一批成功导入图片全集；普通缩略图直接打开只读详情，最后一格以图片承载“查看全部”跳转 |
+| 图库管理 | `/gallery` 作为父页，同时展示“最近导入”和“图库总览”两条一级缩略图预览；recent 直接读取最近一批成功导入图片全集；普通缩略图直接打开只读详情，最后一格以图片承载“查看全部”跳转；当 `media` 根目录存在孤立图片或孤立相册时，导入卡片会提示刷新媒体库 |
 | 日期与相册浏览 | `CalendarOverview` 展示月份总览；`BrowsePage` 负责月份列表与相册层级浏览，数据来自 `/api/dates/*` 与 `/api/albums/*` |
 | 标签系统 | 标签总览页支持按首字母分组、分组内按 name 过滤、固定页头、Top10 排行、草稿预占、编辑与删除；删除正式 Tag 时会在同一事务里同步解除图片关联。设置页还提供内部“管理标签”二级面板，支持列筛选、表格勾选、Shift 连选、样式预览、行内编辑、分页、批量新增和批量删除；标签二级页复用 `BrowsePage`，数据来自 `/api/tags/{tag_id}/images` |
 | 收藏夹 | 收藏总览页展示全部可见收藏夹；收藏二级页复用 `BrowsePage`，支持批量添加/移除图片与手动选择封面 |
@@ -141,6 +141,8 @@ npm run serve
 
 这个 ZIP 只包含程序本身，不包含 `media`、`backend/temp`、`backend/data/cache`、数据库等运行内容；用户解压后首次启动时，程序会自动创建这些运行目录。
 
+便携包现在会额外带入 `build/tags_export.json` 的副本到 `backend/data/initial_tags_export.json`。当数据库里还没有正式标签时，后端启动阶段会自动把这份 seed 文件导入为初始 tag。
+
 打包脚本默认直接使用当前项目 `.venv` 对应的 Python 基座和已安装依赖生成便携运行时；如果你已经准备好了现成的便携 Python 运行时目录，也可以放到 `build\runtime\python` 或通过 `PORTABLE_PYTHON_DIR` 指定，然后执行：
 
 ```powershell
@@ -160,6 +162,7 @@ python build\package_portable.py --runtime-python-dir D:\path\to\portable-python
 ## 当前运行约定
 
 - 前端的 API 基址现在统一从 `runtime-config.js` 读取：开发环境默认指向 `http://127.0.0.1:8000`，便携包在启动时会把它改成同源地址；`HomePage.vue`、`BrowsePage.vue`、`SettingsPage.vue`、`CategorySettingsPage.vue`、`CalendarOverview.vue` 等页面都已经收口到 `topLevelPageConvention.js` 暴露的共享 `API_BASE`。
+- `POST /api/admin/refresh?mode=full` 现在会先扫描并收编 `media` 根目录下不符合 `media/YYYY-MM/...` 结构的孤立图片和孤立相册，再做全库路径对账与补元数据；图库管理页通过 `GET /api/admin/orphan-media-status` 决定是否提示“媒体库存在孤立文件，请刷新媒体库”。
 - 页面配置由 `backend/data/app_settings.json` 持久化，当前包含：
   - 浏览缓存缩略图短边尺寸
   - 月份封面尺寸

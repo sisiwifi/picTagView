@@ -89,6 +89,8 @@ frontend/
 - 每一行导入任务都可以单独指定主分类。
 - 当前按 `50` 张图片分块上传到 `POST /api/import`，并用 `recent_import_mode = replace/append` 把同一次前端导入重新聚合成 recent 快照；recent 一级页优先读取后端快照中的 `successful_image_ids`。
 - 导入过程中支持“停止导入”，通过 `AbortController` 中止当前请求并停止后续批次。
+- 页面会额外请求 `GET /api/admin/orphan-media-status`。如果 `media` 根目录下存在孤立图片或孤立相册，会在“导入新图片”按钮区下方显示“媒体库存在孤立文件，请刷新媒体库”的提示。
+- 点击“刷新”会调用 `POST /api/admin/refresh?mode=full`；后端会先把孤立图片/孤立相册按正常导入规则归档到 `media/YYYY-MM/...`，刷新成功后提示会立即消失，结果框也会显示本次收编的孤立相册/图片数量。
 - `/gallery` 父页会在导入卡片下方展示“最近导入”和“图库总览”两条一级预览带：
   - 普通缩略图只显示图片本身，不叠加名称，也不额外加暗色遮罩
   - 如果总数超过当前展示容量，最后一格会复用顺序中的下一张图片作为跳转卡，而不是空白占位块

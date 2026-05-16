@@ -52,6 +52,8 @@
    - `/viewer-icons` -> `VIEWER_ICON_DIR`
 5. 注册 `app/api/routes.py` 聚合出的全部 API 路由
 
+`init_db()` 现在还会在数据库中还没有正式 Tag 时，尝试从 `backend/data/initial_tags_export.json` 自动导入初始标签；这个 seed 文件主要由便携打包流程带入。
+
 ## 4. 路由结构
 
 `app/api/routes.py` 当前注册的 router 顺序如下：
@@ -90,9 +92,10 @@
 - `services/import_service.py` 是兼容门面。
 - 真正的导入和维护逻辑位于 `services/imports/`：
   - `pipeline.py`：导入批处理、哈希去重、相册链维护、图片主分类赋值、导入期文件名自动打标
-  - `maintenance.py`：`quick/full` 刷新、路径对账、缺失预览修复、未入库媒体收编
+  - `maintenance.py`：`quick/full` 刷新、路径对账、缺失预览修复、未入库媒体收编，以及 `media` 根目录孤立图片/孤立相册的标准化归档
   - `hash_index.py`：哈希索引缓存
   - `helpers.py`：文件时间、路径与缩略图辅助工具
+- `services/tag_seed_service.py`：数据库为空时的初始 Tag seed 导入
 - `services/image_frame_service.py` 负责统一识别多帧图片，并把 GIF、动态 WEBP 等文件的首帧转换为后续 temp/cache 预览使用的 OpenCV 图像。
 
 当前导入规则的关键点：
@@ -101,6 +104,7 @@
 - 子目录会创建树形 `Album`
 - 图片只保留一个主分类，优先使用导入请求给出的 `category_id`
 - 同批次导入会在一个事务内完成写库、关联和自动打标
+- full-refresh 现在只把真正满足 `YYYY-MM` 的第二层目录视为标准月份目录；`media` 根目录下的孤立图片会按“直接图片导入”规则归档到对应月份，孤立相册会按“文件夹导入”规则整体归档到对应月份，并保留其相册目录链
 - 前端一次导入会被拆成多个上传批次；后端通过 `RecentImportOperation` 快照与 `recent_import_mode = replace/append` 把这些批次重新聚合成一次“最近导入操作”，并在 `successful_image_ids` 中保存整批成功导入图片全集；recent 一级页优先读取这一字段，旧的 `preview_image_ids` 仅保留兼容用途。
 - 多帧图片不会再把原始动图直接交给缩略图链路处理，而是统一提取首帧，写入 `ImageAsset.is_animated + animation_meta`；其中 `animation_meta` 只在动图时保存 `frame_count / format`，供 overview、BrowsePage 和详情浮层显示状态标记。
 
@@ -233,6 +237,7 @@ python -m venv ..\.venv
 
 - 前端默认直连 `http://127.0.0.1:8000`，后端端口变化时需要同步更新前端代码。
 - `backend/data/app.db` 是当前默认数据库文件，仓库运行期间会持续变化。
+- 便携包现在会把 `build/tags_export.json` 复制为 `backend/data/initial_tags_export.json`；如果你在源码环境也想复现首次启动 seed 行为，可以手工放置同名文件。
 - 图片元数据编辑里的“多选不能改文件名”不是只靠前端收敛交互，而是 `/api/images/metadata` 的后端硬校验；多选请求如果同时带 `name` 会直接返回 `400`。
 - 文件名自动打标配置 API 已存在，但前端设置页尚未接入对应 UI；设置页内部虽然保留了 `Tag过滤` 占位子面板结构，但入口按钮当前未开放。
 - 草稿 Tag 属于正常数据库记录，只是通过 `created_by` 被隐藏；调试数据库时要注意区分。

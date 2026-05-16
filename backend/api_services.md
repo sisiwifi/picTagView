@@ -22,7 +22,8 @@
 | `basic.py` | `POST /api/import` | 接收 `files`、`last_modified_json`、`created_time_json`、`category_id`、`recent_import_mode`，调用导入流水线 |
 | `basic.py` | `GET /api/images/count` | 返回库中 `ImageAsset` 总数 |
 | `home.py` | `GET /api/home/overview` | 返回主页所需的统计卡与标签墙分页数据：`visible_image_count` 按显示主分类过滤，`global_tag_count` 保持全局；标签墙按可见图片重新统计 Tag 使用量，并接受 `exclude_image_ids` 来尽量避开最近展示过的代表图 |
-| `basic.py` | `POST /api/admin/refresh` | 触发 `quick` 或 `full` 刷新；当 `mode=quick` 且请求体里 `repair_cache=true` 并带 `image_ids` 或 `trash_entry_ids` 时，会走 targeted-only 轻路径做定向预览修复，不再顺带执行全库维护 |
+| `basic.py` | `POST /api/admin/refresh` | 触发 `quick` 或 `full` 刷新；`mode=full` 会先收编 `media` 根目录下不符合 `media/YYYY-MM/...` 结构的孤立图片和孤立相册，再做路径对账、缺失预览修复与未入库媒体收编；当 `mode=quick` 且请求体里 `repair_cache=true` 并带 `image_ids` 或 `trash_entry_ids` 时，会走 targeted-only 轻路径做定向预览修复，不再顺带执行全库维护 |
+| `basic.py` | `GET /api/admin/orphan-media-status` | 返回 `media` 根目录下当前孤立相册数、孤立图片数与孤立媒体文件数，供图库管理页决定是否提示用户刷新媒体库 |
 
 ### 2.2 图库管理聚合
 
@@ -109,6 +110,7 @@
 | `services/imports/maintenance.py` | `quick/full` 刷新、路径对账、缺失预览修复、未入库图片收编 |
 | `services/imports/hash_index.py` | `.hash_index.json` 的加载、查询和重建 |
 | `services/imports/helpers.py` | 路径归一化、文件时间回写、缩略图条目更新等辅助函数 |
+| `services/tag_seed_service.py` | 当数据库中还没有正式标签时，从 `backend/data/initial_tags_export.json` 导入初始 tag |
 | `services/image_frame_service.py` | 多帧图片首帧提取、动图识别、尺寸与帧数元数据归一化 |
 | `services/recent_import_service.py` | 维护“最近一批成功导入图片”的快照，支持按 replace/append 聚合同一前端导入会话 |
 | `services/parallel_processor.py` | 并行哈希、尺寸识别与月份封面生成 |
@@ -143,6 +145,24 @@
 - 如果 `tag_match_setting.enabled=true`，导入批次会在同一数据库事务内按文件名自动匹配 Tag，并以 `append_unique` 方式追加到图片 `tags`。
 - 导入期只会为本批次真正新增关联的 Tag 刷新 `last_used_at` 并增量同步 `usage_count`。
 - GIF、动态 WEBP 等多帧图片会在导入阶段统一抽取首帧生成 temp 缩略图与尺寸元数据，同时写入 `ImageAsset.is_animated + animation_meta`；其中 `animation_meta` 只在动图时保存 `frame_count / format`。
+
+### 4.1.1 刷新与孤立媒体收编协议
+
+- `POST /api/admin/refresh?mode=full` 现在把“月份目录”严格定义为 `media/YYYY-MM/...`。
+- `media` 根目录下的孤立图片，例如 `media/loose.jpg`，刷新时会按正常导入的直接图片规则，使用文件修改时间计算目标月份并移动到 `media/YYYY-MM/loose.jpg`。
+- `media` 根目录下的孤立相册，例如 `media/trip/...`，刷新时会按正常导入的相册规则处理：
+  - 顶层孤立文件夹名会作为相册根目录名保留
+  - 同一顶层孤立相册下的全部图片共用一个月份目录
+  - 月份取该顶层相册内图片修改时间的最早值
+- `GET /api/admin/orphan-media-status` 返回：
+  - `has_orphans`
+  - `orphan_album_count`
+  - `orphan_image_count`
+  - `orphan_file_count`
+- `POST /api/admin/refresh?mode=full` 的返回体额外包含：
+  - `orphan_albums_migrated`
+  - `orphan_images_migrated`
+  - `orphan_files_migrated`
 
 ### 4.2 图库管理聚合协议
 

@@ -1,4 +1,5 @@
 import datetime
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -20,10 +21,13 @@ from app.services.parallel_processor import process_from_paths, process_hash_onl
 from .hash_index import add_to_hash_index, load_hash_index, rebuild_hash_index, save_hash_index
 from .helpers import (
     apply_animation_metadata,
+    date_group_from_ts,
     has_required_thumb,
     image_dimensions_from_file,
     image_metadata_from_file,
+    min_source_ts_ms,
     mime_from_name,
+    move_to_media,
     quick_hash_from_bytes,
     required_thumb_entry,
     resolve_stored_path,
@@ -33,10 +37,15 @@ from .helpers import (
 
 
 _REFRESH_DB_COMMIT_BATCH_SIZE = 50
+_DATE_GROUP_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 def _normalize_rel_path(path: str) -> str:
     return path.replace("\\", "/").strip()
+
+
+def _is_standard_date_group(value: str) -> bool:
+    return bool(_DATE_GROUP_RE.fullmatch(str(value or "").strip()))
 
 
 def _media_rel_parts(rel_path: str) -> Optional[tuple[str, list[str], str]]:
@@ -46,9 +55,139 @@ def _media_rel_parts(rel_path: str) -> Optional[tuple[str, list[str], str]]:
     if parts[0] != "media":
         return None
     date_group = parts[1]
+    if not _is_standard_date_group(date_group):
+        return None
     filename = parts[-1]
     subdir_chain = parts[2:-1]
     return date_group, subdir_chain, filename
+
+
+def _cleanup_empty_parent_dirs(start_dir: Path, stop_dir: Path) -> None:
+    current = start_dir
+    stop = stop_dir.resolve()
+    while True:
+        try:
+            resolved = current.resolve()
+        except Exception:
+            break
+        if resolved == stop or stop not in resolved.parents:
+            break
+        if not current.exists() or any(current.iterdir()):
+            break
+        current.rmdir()
+        current = current.parent
+
+
+def _media_root_parts(path: Path) -> Optional[list[str]]:
+    try:
+        relative = path.resolve().relative_to(MEDIA_DIR.resolve()).as_posix()
+    except Exception:
+        return None
+    parts = [part for part in relative.split("/") if part]
+    return parts or None
+
+
+def _collect_orphan_media_entries() -> list[dict[str, object]]:
+    now_ms = int(datetime.datetime.now().timestamp() * 1000)
+    entries: list[dict[str, object]] = []
+
+    for path in list_image_files(MEDIA_DIR):
+        if not path.is_file():
+            continue
+        rel_path = _normalize_rel_path(to_project_relative(path))
+        if _media_rel_parts(rel_path):
+            continue
+
+        parts = _media_root_parts(path)
+        if not parts:
+            continue
+
+        stat = path.stat()
+        modified_ts_ms = int(stat.st_mtime * 1000)
+        created_ts_ms = int(stat.st_ctime * 1000)
+        entries.append({
+            "path": path,
+            "rel_path": rel_path,
+            "filename": parts[-1],
+            "subdir_chain": parts[:-1],
+            "ts_ms": modified_ts_ms if modified_ts_ms > 0 else now_ms,
+            "source_time_ms": min_source_ts_ms(created_ts_ms, modified_ts_ms),
+        })
+
+    return entries
+
+
+def get_orphan_media_status() -> dict[str, int | bool]:
+    orphan_entries = _collect_orphan_media_entries()
+    orphan_albums: set[str] = set()
+    orphan_images = 0
+
+    for entry in orphan_entries:
+        subdir_chain = [str(part) for part in (entry.get("subdir_chain") or [])]
+        if subdir_chain:
+            orphan_albums.add(subdir_chain[0])
+        else:
+            orphan_images += 1
+
+    return {
+        "has_orphans": bool(orphan_entries),
+        "orphan_album_count": len(orphan_albums),
+        "orphan_image_count": orphan_images,
+        "orphan_file_count": len(orphan_entries),
+    }
+
+
+def _relocate_orphan_media_entries_full() -> dict[str, int]:
+    orphan_entries = _collect_orphan_media_entries()
+    if not orphan_entries:
+        return {
+            "orphan_albums_migrated": 0,
+            "orphan_images_migrated": 0,
+            "orphan_files_migrated": 0,
+        }
+
+    subdir_min_ts: dict[str, int] = {}
+    orphan_albums: set[str] = set()
+    orphan_images_migrated = 0
+
+    for entry in orphan_entries:
+        subdir_chain = [str(part) for part in (entry.get("subdir_chain") or [])]
+        if not subdir_chain:
+            orphan_images_migrated += 1
+            continue
+        top_subdir = subdir_chain[0]
+        orphan_albums.add(top_subdir)
+        ts_ms = int(entry.get("ts_ms") or 0)
+        if top_subdir not in subdir_min_ts or ts_ms < subdir_min_ts[top_subdir]:
+            subdir_min_ts[top_subdir] = ts_ms
+
+    for entry in orphan_entries:
+        source_path = entry.get("path")
+        if not isinstance(source_path, Path) or not source_path.exists():
+            continue
+
+        subdir_chain = [str(part) for part in (entry.get("subdir_chain") or [])]
+        if subdir_chain:
+            date_group = date_group_from_ts(subdir_min_ts.get(subdir_chain[0]))
+        else:
+            direct_ts = entry.get("ts_ms") if isinstance(entry.get("ts_ms"), int) else None
+            date_group = date_group_from_ts(direct_ts)
+
+        original_parent = source_path.parent
+        move_to_media(
+            source_path,
+            str(entry.get("filename") or source_path.name),
+            date_group,
+            subdir_chain,
+            entry.get("source_time_ms") if isinstance(entry.get("source_time_ms"), int) else None,
+        )
+        _cleanup_empty_parent_dirs(original_parent, MEDIA_DIR)
+
+    return {
+        "orphan_albums_migrated": len(orphan_albums),
+        "orphan_images_migrated": orphan_images_migrated,
+        "orphan_files_migrated": len(orphan_entries),
+    }
 
 
 def _is_album_media_path(rel_path: str) -> bool:
@@ -666,6 +805,14 @@ def refresh_library(
     hash_conflicts = 0
     non_album_deduped = 0
     cleaned_paths = 0
+    orphan_refresh_result = {
+        "orphan_albums_migrated": 0,
+        "orphan_images_migrated": 0,
+        "orphan_files_migrated": 0,
+    }
+
+    if mode == "full":
+        orphan_refresh_result = _relocate_orphan_media_entries_full()
 
     pruned, non_album_deduped, cleaned_paths, active_album_paths = reconcile_library_paths()
 
@@ -839,5 +986,6 @@ def refresh_library(
         "hash_conflicts": hash_conflicts,
         "non_album_deduped": non_album_deduped,
         "cleaned_paths": cleaned_paths,
+        **orphan_refresh_result,
         **targeted_cache_result,
     }

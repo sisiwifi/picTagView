@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BUILD_DIR = REPO_ROOT / "build"
 FRONTEND_DIR = REPO_ROOT / "frontend"
 BACKEND_DIR = REPO_ROOT / "backend"
+INITIAL_TAG_EXPORT = BUILD_DIR / "tags_export.json"
 CURRENT_ENV_DIR = Path(sys.prefix)
 CURRENT_BASE_PYTHON_DIR = Path(sys.base_prefix)
 CURRENT_SITE_PACKAGES_DIR = CURRENT_ENV_DIR / "Lib" / "site-packages"
@@ -130,9 +131,13 @@ def stage_package(staging_root: Path, runtime_source: Path | None) -> Path:
     package_root = staging_root / "picTagView-portable"
     ensure_empty_dir(package_root)
 
+    if not INITIAL_TAG_EXPORT.is_file():
+        raise FileNotFoundError(f"Initial tag export not found: {INITIAL_TAG_EXPORT}")
+
     log("Copying backend application...")
     copy_tree(BACKEND_DIR / "app", package_root / "backend" / "app")
     shutil.copy2(BACKEND_DIR / "requirements.txt", package_root / "backend" / "requirements.txt")
+    copy_file(INITIAL_TAG_EXPORT, package_root / "backend" / "data" / "initial_tags_export.json")
 
     frontend_dist = FRONTEND_DIR / "dist"
     if not frontend_dist.is_dir():
@@ -388,6 +393,7 @@ def stage_package(staging_root: Path, runtime_source: Path | None) -> Path:
         "picTagView portable package\r\n"
         "\r\n"
         "使用方法\r\n"
+        "本项目可识别文件名格式为yande.re和danbooru.donmai.us的文件。 \r\n"
         "1. 如需修改后端端口，请先编辑根目录的 config.json，把 backend_port 改成目标端口。\r\n"
         "2. 推荐双击 start.vbs 静默启动程序；如果需要兼容批处理入口，也可以双击 start.bat。\r\n"
         "3. 启动器会读取 config.json，并在后端启动成功后打开独立管理窗口。\r\n"
@@ -395,7 +401,7 @@ def stage_package(staging_root: Path, runtime_source: Path | None) -> Path:
         "5. 首次运行时，程序会自动创建 backend/data、backend/temp、backend/data/cache、media、trash 等运行目录。\r\n"
         "6. 如果关闭管理窗口，启动器会同步停止后端服务。\r\n"
         "7. 如果端口被占用，请关闭占用该端口的程序，或修改 config.json 后重新启动。\r\n"
-        "8. 初始tag可通过“设置”页面的导入标签功能，导入tags_export.json，也可自行在标签管理页面批量添加。\r\n"
+        "8. 便携包内已包含 backend/data/initial_tags_export.json；当数据库中还没有正式标签时，首次启动会自动将其作为初始 tag 导入。\r\n"
         "\r\n"
         "配置文件示例\r\n"
         "{\r\n"
