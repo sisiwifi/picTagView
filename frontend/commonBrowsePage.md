@@ -102,19 +102,20 @@
 | `afterPreviewRepair(vm, repairIds)` | 预览修复后的收尾逻辑 |
 | `autoRepairMissingPreview` | 是否在主卡片缺预览时自动批量加入 targeted repair |
 | `allowOriginalPreviewFallback` | targeted repair 结束后，是否允许主卡片回退到卡片内原图 |
+| `allowSelectionExport` | 是否允许共享选择按钮岛显示“导出”动作 |
 | `updateCover(vm, item)` | 可选，仅日历相册和收藏夹支持 |
 
 ## 5. 当前七个契约
 
-| 契约 | 数据源 | 默认排序 | 页头动作 | 主动作 / 次动作 | 预览修复 key |
-| --- | --- | --- | --- | --- | --- |
-| `calendar` | `/api/dates/{group}/items` 或 `/api/albums/by-path/{path}` | 月份页 `date asc`；相册页 `alpha asc` | 相册模式下可进入“选择封面” | `查看原图/查看相册` + `移入回收站` | `image_ids` |
-| `search-results` | `/api/search/images?...&limit=0`，由统一搜索参数生成器补齐 `mode`，必要时带 `quick_hash/start_at/end_at` | `alpha asc` | 无 | `查看原图` + `移入回收站` | `image_ids` |
-| `gallery-recent` | `/api/gallery/recent/items` | `date asc` | 无 | 图片 `查看原图`、相册 `打开目录` + `移入回收站` | `image_ids` |
-| `gallery-all` | `/api/gallery/all/items` | `date asc` | 无 | 图片 `查看原图`、相册 `打开目录` + `移入回收站` | `image_ids` |
-| `collection` | `/api/collections/{collectionPublicId}` | `date asc` | 可进入“选择封面” | `查看原图` + `移入回收站` | `image_ids` |
-| `tag` | `/api/tags/{tagId}/images` | `date desc` | `编辑标签` | `查看原图` + `移入回收站` | `image_ids` |
-| `trash` | `/api/trash/items` | `date desc` | `清空回收站` | `还原` + `删除` | `trash_entry_ids` |
+| 契约 | 数据源 | 默认排序 | 页头动作 | 选择态动作 | 主动作 / 次动作 | 预览修复 key |
+| --- | --- | --- | --- | --- | --- | --- |
+| `calendar` | `/api/dates/{group}/items` 或 `/api/albums/by-path/{path}` | 月份页 `date asc`；相册页 `alpha asc` | 相册模式下可进入“选择封面” | `详情`、`收藏`、`导出` | `查看原图/查看相册` + `移入回收站` | `image_ids` |
+| `search-results` | `/api/search/images?...&limit=0`，由统一搜索参数生成器补齐 `mode`，必要时带 `quick_hash/start_at/end_at` | `alpha asc` | 无 | `详情`、`收藏`、`导出` | `查看原图` + `移入回收站` | `image_ids` |
+| `gallery-recent` | `/api/gallery/recent/items` | `date asc` | 无 | `详情`、`收藏`、`导出` | 图片 `查看原图`、相册 `打开目录` + `移入回收站` | `image_ids` |
+| `gallery-all` | `/api/gallery/all/items` | `date asc` | 无 | `详情`、`收藏`、`导出` | 图片 `查看原图`、相册 `打开目录` + `移入回收站` | `image_ids` |
+| `collection` | `/api/collections/{collectionPublicId}` | `date asc` | 可进入“选择封面” | `详情`、`收藏`、`导出` | `查看原图` + `移入回收站` | `image_ids` |
+| `tag` | `/api/tags/{tagId}/images` | `date desc` | `编辑标签` | `详情`、`收藏`、`导出` | `查看原图` + `移入回收站` | `image_ids` |
+| `trash` | `/api/trash/items` | `date desc` | `清空回收站` | `详情`、`还原`、`删除` | `还原` + `删除` | `trash_entry_ids` |
 
 ## 6. 各契约的当前行为细节
 
@@ -125,6 +126,7 @@
 - 点击图片会调用 `/api/images/{id}/open?path=...`。
 - 相册详情层的主动作不是打开图片，而是调用 `/api/albums/open-by-path/{album_path}` 打开磁盘目录。
 - 在相册模式下，页头会显示“选择封面”按钮，并通过 `/api/albums/{public_id}/cover` 保存封面。
+- 选择态按钮岛支持“导出”；图片会调用 `/api/images/export` 导出到用户通过 `/api/system/select-directory` 选中的目录，相册则会递归导出整个 `album_path` 对应目录。
 
 ### 6.2 `search-results`
 
@@ -195,6 +197,7 @@
 - `collection` 与 `tag` 复用了 `normalizeCalendarItem()`，因此它们和普通月页的图片条目字段保持一致。
 - `search-results` 复用了 `normalizeCalendarItem()` 的图片字段，但额外保留了搜索匹配元数据，并使用路由查询参数而不是路径参数驱动数据加载。
 - `trash` 使用独立的 `normalizeTrashItem()`，因为回收站的预览和主动作逻辑与普通浏览完全不同。
+- 共享浏览壳把“导出”做成契约开关；当前除 `trash` 外的所有 Browse 契约都开启，避免在 `BrowsePage.vue` 里按页面名硬编码按钮显示逻辑。
 - 所有 `BrowsePage.vue` 契约页都会在默认 header 右侧额外挂出统一的“筛选”按钮；它不是 contract 自定义动作，而是共享浏览壳自带能力。
 - 当前筛选完全在前端本地完成，作用于每个契约加载到页面后的完整数据集；筛选状态只保留在当前页面实例内，不写回路由 query，也不落本地缓存。
 - 筛选维度固定为：标签、主分类、文件名、文件类型、导入时间、创建时间、文件大小。其中标签块永远排在最上方，并使用 Tag chip 展示当前视图中出现过的全部标签；description 通过悬停提示显示。

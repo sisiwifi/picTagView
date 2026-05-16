@@ -253,11 +253,13 @@ def min_source_ts_ms(created_ts_ms: Optional[int], modified_ts_ms: Optional[int]
 
 def set_windows_creation_time(path: Path, ts_seconds: float) -> None:
     file_write_attributes = 0x0100
+    file_flag_backup_semantics = 0x02000000
     open_existing = 3
     file_share_read = 0x1
     file_share_write = 0x2
     file_share_delete = 0x4
     invalid_handle_value = ctypes.c_void_p(-1).value
+    flags_and_attributes = file_flag_backup_semantics if path.is_dir() else 0
 
     kernel32 = ctypes.windll.kernel32
     handle = kernel32.CreateFileW(
@@ -266,7 +268,7 @@ def set_windows_creation_time(path: Path, ts_seconds: float) -> None:
         file_share_read | file_share_write | file_share_delete,
         None,
         open_existing,
-        0,
+        flags_and_attributes,
         None,
     )
     if handle == invalid_handle_value:

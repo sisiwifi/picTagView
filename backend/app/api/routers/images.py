@@ -11,8 +11,11 @@ from sqlmodel import select
 
 from app.api.common import cache_thumb_url, normalize_stored_path, resolve_stored_path, thumb_url
 from app.api.schemas import (
+    ExportTargetRef,
     ImageMetaItem,
     ImageMetaResponse,
+    ImageExportRequest,
+    ImageExportResponse,
     ImageMetadataUpdateItem,
     ImageMetadataUpdateRequest,
     ImageMetadataUpdateResponse,
@@ -29,6 +32,12 @@ from app.models.album_image import AlbumImage
 from app.models.image_asset import ImageAsset
 from app.models.tag import Tag
 from app.services.category_service import DEFAULT_CATEGORY_ID, require_category
+from app.services.export_service import (
+    export_album_directory,
+    export_image_file,
+    normalize_export_album_path,
+    normalize_export_media_rel_path,
+)
 from app.services.imports.helpers import apply_file_times, to_project_relative
 from app.services.imports.maintenance import _ensure_album_chain, recalculate_album_counts
 from app.services.tag_match_service import (
@@ -473,6 +482,137 @@ def update_image_metadata(body: ImageMetadataUpdateRequest) -> ImageMetadataUpda
         updated_count=len({item.image_id for item in response_items}),
         renamed_count=sum(1 for item in response_items if item.renamed),
         moved_count=sum(1 for item in response_items if item.moved),
+    )
+
+
+@router.post("/api/images/export", response_model=ImageExportResponse)
+def export_images(body: ImageExportRequest) -> ImageExportResponse:
+    raw_target_dir = str(body.target_dir or '').strip()
+    if not raw_target_dir:
+        raise HTTPException(status_code=400, detail='target_dir 不能为空')
+
+    target_dir = Path(raw_target_dir).expanduser().resolve()
+    if not target_dir.exists() or not target_dir.is_dir():
+        raise HTTPException(status_code=400, detail='target_dir 必须是已存在的文件夹')
+
+    image_targets: list[tuple[int, str | None]] = []
+    seen_image_targets: set[tuple[int, str | None]] = set()
+    album_targets: list[str] = []
+    seen_album_paths: set[str] = set()
+
+    for item in body.items:
+        item_type = str(item.type or '').strip().lower()
+        if item_type == 'image':
+            image_id = int(item.image_id) if isinstance(item.image_id, int) else None
+            if image_id is None:
+                raise HTTPException(status_code=400, detail='图片导出目标缺少 image_id')
+            normalized_path = None
+            if item.media_rel_path:
+                try:
+                    normalized_path = normalize_export_media_rel_path(item.media_rel_path)
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+            key = (image_id, normalized_path)
+            if key in seen_image_targets:
+                continue
+            seen_image_targets.add(key)
+            image_targets.append(key)
+            continue
+
+        if item_type == 'album':
+            try:
+                normalized_album_path = normalize_export_album_path(item.album_path or '')
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if normalized_album_path in seen_album_paths:
+                continue
+            seen_album_paths.add(normalized_album_path)
+            album_targets.append(normalized_album_path)
+            continue
+
+        raise HTTPException(status_code=400, detail='导出目标 type 必须为 image 或 album')
+
+    if not image_targets and not album_targets:
+        raise HTTPException(status_code=400, detail='至少提供一个导出目标')
+
+    exported_files = 0
+    exported_albums = 0
+    skipped: list[str] = []
+    errors: list[str] = []
+    reserved_file_targets: set[str] = set()
+
+    with get_session() as session:
+        image_ids = sorted({image_id for image_id, _ in image_targets})
+        assets = session.exec(
+            select(ImageAsset).where(ImageAsset.id.in_(image_ids))  # type: ignore[arg-type]
+        ).all() if image_ids else []
+        assets_by_id = {
+            int(asset.id): asset
+            for asset in assets
+            if asset.id is not None
+        }
+
+        for image_id, requested_media_rel_path in image_targets:
+            asset = assets_by_id.get(image_id)
+            if not asset:
+                errors.append(f'图片不存在：{image_id}')
+                continue
+
+            known_paths = [
+                normalize_stored_path(path)
+                for path in (asset.media_path or [])
+                if isinstance(path, str) and path
+            ]
+            source_media_rel_path = requested_media_rel_path or (known_paths[0] if known_paths else None)
+            if not source_media_rel_path:
+                errors.append(f'图片路径不存在：{image_id}')
+                continue
+            if source_media_rel_path not in known_paths:
+                errors.append(f'图片路径不存在：{source_media_rel_path}')
+                continue
+
+            source_path = resolve_stored_path(source_media_rel_path)
+            if not source_path or not source_path.exists() or not source_path.is_file():
+                errors.append(f'磁盘文件不存在：{source_media_rel_path}')
+                continue
+
+            try:
+                export_image_file(source_path, source_media_rel_path, target_dir, reserved_file_targets)
+                exported_files += 1
+            except ValueError as exc:
+                errors.append(str(exc))
+            except Exception as exc:
+                errors.append(f'导出图片失败：{source_media_rel_path}（{exc}）')
+
+        media_root = resolve_stored_path('media')
+        for album_path in album_targets:
+            source_dir = resolve_stored_path(f'media/{album_path}')
+            if not source_dir or not media_root:
+                errors.append(f'相册路径无效：{album_path}')
+                continue
+            try:
+                source_dir.resolve().relative_to(media_root.resolve())
+            except ValueError:
+                errors.append(f'相册路径无效：{album_path}')
+                continue
+            if not source_dir.exists() or not source_dir.is_dir():
+                errors.append(f'相册目录不存在：{album_path}')
+                continue
+
+            try:
+                export_album_directory(source_dir, album_path, target_dir)
+                exported_albums += 1
+            except ValueError as exc:
+                errors.append(str(exc))
+            except Exception as exc:
+                errors.append(f'导出相册失败：{album_path}（{exc}）')
+
+    return ImageExportResponse(
+        exported_files=exported_files,
+        exported_albums=exported_albums,
+        skipped=skipped,
+        skipped_count=len(skipped),
+        errors=errors,
     )
 
 

@@ -7,10 +7,13 @@ from app.api.schemas import (
     MonthCoverSettingResponse,
     PageConfigRequest,
     PageConfigResponse,
+    SelectDirectoryRequest,
+    SelectDirectoryResponse,
     TagMatchSettingRequest,
     TagMatchSettingResponse,
     ViewerPreferenceRequest,
 )
+from app.services.export_service import select_directory_path
 from app.services.app_settings_service import (
     DEFAULT_CACHE_SHORT_SIDE_PX,
     DEFAULT_MONTH_COVER_SIZE_PX,
@@ -220,3 +223,19 @@ def set_viewer_preference(body: ViewerPreferenceRequest) -> dict:
         "viewer_id": viewer_id,
         "viewer_name": get_viewer_name_by_id(viewer_id),
     }
+
+
+@router.post("/api/system/select-directory", response_model=SelectDirectoryResponse)
+def select_directory(body: SelectDirectoryRequest) -> SelectDirectoryResponse:
+    title = (body.title or '').strip() or '选择导出文件夹'
+    initial_dir = (body.initial_dir or '').strip() or None
+
+    try:
+        selected_path = select_directory_path(initial_dir=initial_dir, title=title)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return SelectDirectoryResponse(
+        cancelled=not bool(selected_path),
+        selected_path=selected_path or '',
+    )

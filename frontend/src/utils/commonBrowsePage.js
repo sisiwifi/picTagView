@@ -134,7 +134,7 @@ function buildCoverHeaderAction(vm) {
 }
 
 function buildCalendarLikeSelectionActions(vm) {
-  return [
+  const actions = [
     buildSelectionAction('details', '详情', 'openSelectionDetailsFromIsland', {
       disabled: !vm.selectedCount || vm.actionBusy,
     }),
@@ -142,6 +142,14 @@ function buildCalendarLikeSelectionActions(vm) {
       disabled: !vm.canOpenCollectionMenu || vm.actionBusy,
     }),
   ]
+
+  if (vm.pageContract?.allowSelectionExport) {
+    actions.push(buildSelectionAction('export', '导出', 'exportSelection', {
+      disabled: !vm.canExportSelection || vm.actionBusy,
+    }))
+  }
+
+  return actions
 }
 
 function buildCalendarLikeDetailPolicy(vm) {
@@ -368,6 +376,7 @@ const calendarContract = {
   name: 'calendar',
   autoRepairMissingPreview: true,
   allowOriginalPreviewFallback: true,
+  allowSelectionExport: true,
   emptyState: {
     icon: '📂',
     text: '此页面尚无内容。',
@@ -479,6 +488,7 @@ const collectionContract = {
   name: 'collection',
   autoRepairMissingPreview: true,
   allowOriginalPreviewFallback: true,
+  allowSelectionExport: true,
   emptyState: {
     icon: '☆',
     text: '当前收藏夹暂无可见图片。',
@@ -559,6 +569,7 @@ const tagContract = {
   name: 'tag',
   autoRepairMissingPreview: true,
   allowOriginalPreviewFallback: true,
+  allowSelectionExport: true,
   emptyState: {
     icon: '🏷',
     text: '当前标签下暂无可见图片。',
@@ -629,6 +640,7 @@ const galleryRecentContract = {
   name: 'gallery-recent',
   autoRepairMissingPreview: true,
   allowOriginalPreviewFallback: true,
+  allowSelectionExport: true,
   emptyState: {
     icon: '🕘',
     text: '最近导入为空。',
@@ -695,6 +707,7 @@ const galleryRecentContract = {
 const searchResultsContract = {
   name: 'search-results',
   autoRepairMissingPreview: true,
+  allowSelectionExport: true,
   emptyState: {
     icon: '🔎',
     text: '当前搜索暂无结果。',
@@ -799,6 +812,7 @@ const galleryAllContract = {
   name: 'gallery-all',
   autoRepairMissingPreview: true,
   allowOriginalPreviewFallback: true,
+  allowSelectionExport: true,
   emptyState: {
     icon: '🖼',
     text: '图库中暂无可见内容。',
@@ -864,6 +878,7 @@ const galleryAllContract = {
 
 const trashContract = {
   name: 'trash',
+  allowSelectionExport: false,
   emptyState: {
     icon: '🗑',
     text: '回收站为空。',

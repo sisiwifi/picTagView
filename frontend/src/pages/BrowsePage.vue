@@ -1640,6 +1640,24 @@ export default {
         .filter(item => item?.type === 'image' && Number.isInteger(item?.id))
         .map(item => item.id)
     },
+    selectedAlbumPaths() {
+      return this.selectedEntries
+        .map(({ item }) => item)
+        .filter(item => item?.type === 'album' && typeof item?.album_path === 'string' && item.album_path.length > 0)
+        .map(item => item.album_path)
+    },
+    canExportSelection() {
+      if (this.actionBusy || this.metadataEditBusy) return false
+      if (!this.pageContract?.allowSelectionExport) return false
+      if (!this.selectedCount) return false
+      if (this.selectionTypeLock === 'image') {
+        return this.selectedImageIds.length > 0
+      }
+      if (this.selectionTypeLock === 'album') {
+        return this.selectedAlbumPaths.length > 0
+      }
+      return false
+    },
     canEditSelectionName() {
       if (this.actionBusy || this.metadataEditBusy) return false
       if (this.selectedEntries.length !== 1) return false
@@ -2910,6 +2928,82 @@ export default {
     openSelectionDetailsFromIsland() {
       if (!this.selectedCount) return
       this.openSelectionDetails()
+    },
+
+    async exportSelection() {
+      if (!this.canExportSelection || this.actionBusy) return
+
+      this.actionBusy = true
+      this.actionBusyTitle = '准备导出中'
+      this.actionBusyText = '正在打开导出目录选择框，请稍候…'
+
+      try {
+        const directoryRes = await fetch(`${API_BASE}/api/system/select-directory`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ purpose: 'export-selection' }),
+        })
+        const directoryPayload = await directoryRes.json().catch(() => ({}))
+        if (!directoryRes.ok) {
+          throw new Error(directoryPayload.detail || `HTTP ${directoryRes.status}`)
+        }
+        if (directoryPayload.cancelled || !directoryPayload.selected_path) {
+          return
+        }
+
+        const exportPayload = {
+          target_dir: directoryPayload.selected_path,
+          items: this.selectedEntries.map(({ item }) => (
+            item.type === 'album'
+              ? { type: 'album', album_path: item.album_path }
+              : { type: 'image', image_id: item.id, media_rel_path: item.media_rel_path }
+          )),
+        }
+
+        this.actionBusyTitle = '导出中'
+        this.actionBusyText = this.selectionTypeLock === 'album'
+          ? '正在导出所选相册，请稍候…'
+          : '正在导出所选图片，请稍候…'
+
+        const exportRes = await fetch(`${API_BASE}/api/images/export`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(exportPayload),
+        })
+        const exportResult = await exportRes.json().catch(() => ({}))
+        if (!exportRes.ok) {
+          throw new Error(exportResult.detail || `HTTP ${exportRes.status}`)
+        }
+
+        const exportedFiles = Number(exportResult.exported_files || 0) || 0
+        const exportedAlbums = Number(exportResult.exported_albums || 0) || 0
+        const skippedCount = Number(exportResult.skipped_count || 0) || 0
+        const exportErrors = Array.isArray(exportResult.errors)
+          ? exportResult.errors.filter(message => typeof message === 'string' && message.trim())
+          : []
+        const summary = []
+        if (exportedAlbums > 0) {
+          summary.push(`相册 ${exportedAlbums} 个`)
+        }
+        if (exportedFiles > 0) {
+          summary.push(`文件 ${exportedFiles} 个`)
+        }
+        if (skippedCount > 0) {
+          summary.push(`跳过 ${skippedCount} 个`)
+        }
+        if (exportErrors.length) {
+          const baseMessage = summary.length ? `导出部分完成：${summary.join('，')}。` : '导出失败。'
+          this.showMessage('error', `${baseMessage}${exportErrors.join('；')}`)
+          return
+        }
+        this.showMessage('success', summary.length ? `导出完成：${summary.join('，')}。` : '导出完成。')
+      } catch (err) {
+        this.showMessage('error', `导出失败：${err?.message || '未知错误'}`)
+      } finally {
+        this.actionBusy = false
+        this.actionBusyTitle = ''
+        this.actionBusyText = ''
+      }
     },
 
     openSelectionDetails() {

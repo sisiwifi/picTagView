@@ -395,6 +395,7 @@ def stage_package(staging_root: Path, runtime_source: Path | None) -> Path:
         "5. 首次运行时，程序会自动创建 backend/data、backend/temp、backend/data/cache、media、trash 等运行目录。\r\n"
         "6. 如果关闭管理窗口，启动器会同步停止后端服务。\r\n"
         "7. 如果端口被占用，请关闭占用该端口的程序，或修改 config.json 后重新启动。\r\n"
+        "8. 初始tag可通过“设置”页面的导入标签功能，导入tags_export.json，也可自行在标签管理页面批量添加。\r\n"
         "\r\n"
         "配置文件示例\r\n"
         "{\r\n"

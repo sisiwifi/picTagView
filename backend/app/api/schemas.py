@@ -447,6 +447,37 @@ class CollectionApplyResponse(BaseModel):
     kept_count: int = 0
 
 
+class SelectDirectoryRequest(BaseModel):
+    title: str = ""
+    initial_dir: str = ""
+    purpose: str = ""
+
+
+class SelectDirectoryResponse(BaseModel):
+    cancelled: bool = False
+    selected_path: str = ""
+
+
+class ExportTargetRef(BaseModel):
+    type: str
+    image_id: Optional[int] = None
+    media_rel_path: Optional[str] = None
+    album_path: Optional[str] = None
+
+
+class ImageExportRequest(BaseModel):
+    target_dir: str
+    items: List[ExportTargetRef] = Field(default_factory=list)
+
+
+class ImageExportResponse(BaseModel):
+    exported_files: int = 0
+    exported_albums: int = 0
+    skipped: List[str] = Field(default_factory=list)
+    skipped_count: int = 0
+    errors: List[str] = Field(default_factory=list)
+
+
 # ── Trash views ───────────────────────────────────────────────────────────────
 
 class TrashTargetRef(BaseModel):

@@ -45,6 +45,7 @@
 | `albums.py` | `POST /api/albums/{album_id}/cover` | 设置手动相册封面 |
 | `images.py` | `GET /api/images/meta` | 批量读取图片元数据与 `media_paths` |
 | `images.py` | `PATCH /api/images/metadata` | 修改文件名、主分类、创建时间；必要时移动文件到新的月份目录 |
+| `images.py` | `POST /api/images/export` | 把所选图片或相册导出到用户指定目录；保留 `media` 下的相对层级并尽量保持文件与目录时间 |
 | `images.py` | `GET /api/images/{image_id}/open` | 打开图片；可用 `path` 精确指定某个 `media_path` 实例 |
 
 ### 2.4 Tag、收藏与搜索
@@ -88,6 +89,7 @@
 | `system.py` | `GET/POST /api/system/month-cover-setting` | 月份封面尺寸配置 |
 | `system.py` | `GET/POST /api/system/page-config` | 浏览模式与滚动窗口范围配置 |
 | `system.py` | `GET/POST /api/system/tag-match-setting` | 文件名自动打标配置 |
+| `system.py` | `POST /api/system/select-directory` | 打开系统文件夹选择对话框，返回用户所选目录 |
 | `system.py` | `GET /api/system/viewer-info` | 当前系统默认查看器与应用内偏好 |
 | `system.py` | `GET /api/system/image-viewers` | 枚举可用查看器并返回图标 |
 | `system.py` | `GET/POST /api/system/viewer-preference` | 读取与设置应用内默认查看器 |
@@ -118,6 +120,7 @@
 | `services/cover_service.py` | 相册/收藏手动封面 payload 读写 |
 | `services/visible_album_service.py` | 依据当前可见图片推导相册可见性、封面与计数 |
 | `services/trash_service.py` | 回收站列表、移入、还原、硬删除、清空、对账 |
+| `services/export_service.py` | 系统目录选择、图片/相册导出、冲突补号与文件/目录时间同步 |
 | `services/viewer_service.py` | Windows 查看器枚举、图标提取、应用内默认查看器启动 |
 | `services/app_settings_service.py` | `app_settings.json` 读写，持久化页面、缩略图和自动打标配置 |
 
