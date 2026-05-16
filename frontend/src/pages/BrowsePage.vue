@@ -372,6 +372,7 @@
       :can-open-collection-menu="canOpenCollectionMenu"
       :collection-menu-disabled="collectionMenuBusy || actionBusy"
       :can-edit-tags="canOpenTagMenu"
+      :can-sync-tags-to-filename="canSyncSelectionTagsToFilename"
       :tag-menu-disabled="tagMenuBusy || actionBusy"
       :can-edit-name="canEditSelectionName"
       :can-edit-category="canEditSelectionCategory"
@@ -382,6 +383,7 @@
       @close="closeSelectionDetails"
       @open-collection-menu="openCollectionMenu"
       @open-tag-menu="openTagMenu"
+      @sync-tags-to-filename="syncSelectionTagsToFilename"
       @tag-click="openBrowseTagFromSelectionDetails"
       @open-primary="openPrimaryFromDetails"
       @secondary-action="onSelectionDetailSecondaryAction"
@@ -786,6 +788,10 @@ export default {
       selectionDetailsHostHeight: 0,
       scrollLockState: null,
       selectionDetailFetchSerial: 0,
+      selectionDetailTargets: [],
+      selectionDetailItems: [],
+      selectionDetailsDirty: false,
+      selectionDetailsReloadInFlight: false,
       collectionMenuVisible: false,
       collectionMenuBusy: false,
       collectionMenuSearchBusy: false,
@@ -1439,6 +1445,9 @@ export default {
       return this.paginationHostHeight + PAGE_SECTION_GAP_PX
     },
     selectedCount() {
+      if (this.selectionDetailsOpen && (this.selectionDetailItems.length || this.selectionDetailTargets.length)) {
+        return this.selectionActionEntries.length
+      }
       return Object.keys(this.selectedMap).length
     },
     selectionSummaryText() {
@@ -1460,17 +1469,65 @@ export default {
       return this.availableSelectionTypes.includes('album') && this.availableSelectionTypes.includes('image')
     },
     selectedEntries() {
+      const selectedKeys = Object.keys(this.selectedMap)
+      if (!selectedKeys.length) return []
+
+      const remainingKeys = new Set(selectedKeys)
       const entries = []
       for (let index = 0; index < this.items.length; index++) {
         const item = this.items[index]
-        if (this.isItemSelected(item, index)) {
-          entries.push({ item, index })
-        }
+        const key = this.itemKey(item, index)
+        if (!remainingKeys.has(key)) continue
+        entries.push({ item, index })
+        remainingKeys.delete(key)
+      }
+
+      if (!remainingKeys.size) {
+        return entries
+      }
+
+      for (let index = 0; index < this.sourceItems.length; index++) {
+        const item = this.sourceItems[index]
+        const key = this.itemKey(item, index)
+        if (!remainingKeys.has(key)) continue
+        entries.push({ item, index })
+        remainingKeys.delete(key)
+        if (!remainingKeys.size) break
       }
       return entries
     },
+    selectionDetailEntries() {
+      if (this.selectionDetailsOpen && this.selectionDetailItems.length) {
+        return this.selectionDetailItems.map((item, index) => ({ item, index }))
+      }
+
+      const targetEntries = this.selectionDetailsOpen && this.selectionDetailTargets.length
+        ? this.selectionDetailTargets
+        : this.selectedEntries.map(({ item }) => this.selectionSnapshotToken(item)).filter(Boolean)
+
+      if (!targetEntries.length) return []
+
+      const entries = []
+      const seenKeys = new Set()
+      for (const target of targetEntries) {
+        const matched = this.findSelectionSnapshotMatch(target)
+        if (!matched || seenKeys.has(matched.key)) continue
+        seenKeys.add(matched.key)
+        entries.push({
+          item: matched.item,
+          index: matched.index,
+        })
+      }
+      return entries
+    },
+    selectionActionEntries() {
+      if (this.selectionDetailsOpen && (this.selectionDetailItems.length || this.selectionDetailTargets.length)) {
+        return this.selectionDetailEntries
+      }
+      return this.selectedEntries
+    },
     selectionDetailPreviewItems() {
-      return this.selectedEntries.map(({ item, index }) => ({
+      return this.selectionDetailEntries.map(({ item, index }) => ({
         key: this.itemKey(item, index),
         name: this.detailNameText(item),
         type: item?.type || 'image',
@@ -1526,18 +1583,18 @@ export default {
       }
     },
     selectionDetailNameField() {
-      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailNameText(item)))
+      return this.buildDetailField(this.selectionDetailEntries.map(({ item }) => this.detailNameText(item)))
     },
     selectionDetailRawName() {
-      const item = this.selectedEntries[0]?.item
+      const item = this.selectionDetailEntries[0]?.item
       if (item?.type !== 'image') return ''
       return this.detailNameText(item)
     },
     selectionDetailCategoryField() {
-      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailCategoryText(item)))
+      return this.buildDetailField(this.selectionDetailEntries.map(({ item }) => this.detailCategoryText(item)))
     },
     selectionDetailRawCategoryId() {
-      const item = this.selectedEntries[0]?.item
+      const item = this.selectionDetailEntries[0]?.item
       const categoryId = Number(item?.category_id)
       if (item?.type !== 'image' || !Number.isInteger(categoryId) || categoryId <= 0) return null
       return categoryId
@@ -1552,7 +1609,7 @@ export default {
         .sort((left, right) => left.value - right.value)
     },
     selectionDetailTagsField() {
-      const imageEntries = this.selectedEntries.filter(({ item }) => item?.type === 'image')
+      const imageEntries = this.selectionDetailEntries.filter(({ item }) => item?.type === 'image')
       if (!imageEntries.length) {
         return {
           text: '',
@@ -1601,24 +1658,24 @@ export default {
       }
     },
     selectionDetailSizeField() {
-      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailSizeText(item)))
+      return this.buildDetailField(this.selectionDetailEntries.map(({ item }) => this.detailSizeText(item)))
     },
     selectionDetailSizeLabel() {
       return this.selectionDetailType === 'album' ? '图片数量' : '尺寸'
     },
     selectionDetailImportedField() {
-      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailImportedText(item)))
+      return this.buildDetailField(this.selectionDetailEntries.map(({ item }) => this.detailImportedText(item)))
     },
     selectionDetailCreatedField() {
-      return this.buildDetailField(this.selectedEntries.map(({ item }) => this.detailCreatedText(item)))
+      return this.buildDetailField(this.selectionDetailEntries.map(({ item }) => this.detailCreatedText(item)))
     },
     selectionDetailRawCreatedAt() {
-      const item = this.selectedEntries[0]?.item
+      const item = this.selectionDetailEntries[0]?.item
       if (item?.type !== 'image') return null
       return item?.file_created_at || null
     },
     selectionDetailType() {
-      return this.selectedEntries[0]?.item?.type || null
+      return this.selectionDetailEntries[0]?.item?.type || null
     },
     selectionDetailPrimaryActionLabel() {
       return this.selectionDetailType === 'album' ? '查看相册' : '查看原图'
@@ -1627,21 +1684,21 @@ export default {
       return this.pageContract.buildDetailPolicy(this)
     },
     canOpenPrimaryActionFromDetails() {
-      if (this.selectedEntries.length !== 1) return false
-      const entry = this.selectedEntries[0]
+      if (this.selectionDetailEntries.length !== 1) return false
+      const entry = this.selectionDetailEntries[0]
       if (entry?.item?.type === 'image') {
         return Number.isInteger(entry?.item?.id)
       }
       return entry?.item?.type === 'album' && typeof entry?.item?.album_path === 'string' && entry.item.album_path.length > 0
     },
     selectedImageIds() {
-      return this.selectedEntries
+      return this.selectionActionEntries
         .map(({ item }) => item)
         .filter(item => item?.type === 'image' && Number.isInteger(item?.id))
         .map(item => item.id)
     },
     selectedAlbumPaths() {
-      return this.selectedEntries
+      return this.selectionActionEntries
         .map(({ item }) => item)
         .filter(item => item?.type === 'album' && typeof item?.album_path === 'string' && item.album_path.length > 0)
         .map(item => item.album_path)
@@ -1660,8 +1717,8 @@ export default {
     },
     canEditSelectionName() {
       if (this.actionBusy || this.metadataEditBusy) return false
-      if (this.selectedEntries.length !== 1) return false
-      return this.selectedEntries[0]?.item?.type === 'image' && Number.isInteger(this.selectedEntries[0]?.item?.id)
+      if (this.selectionDetailEntries.length !== 1) return false
+      return this.selectionDetailEntries[0]?.item?.type === 'image' && Number.isInteger(this.selectionDetailEntries[0]?.item?.id)
     },
     canEditSelectionCategory() {
       if (this.actionBusy || this.metadataEditBusy) return false
@@ -1675,6 +1732,10 @@ export default {
       if (this.isTrashMode || this.actionBusy) return false
       return this.selectedImageIds.length > 0
     },
+    canSyncSelectionTagsToFilename() {
+      if (this.actionBusy || this.metadataEditBusy) return false
+      return this.canOpenTagMenu
+    },
     containerImageItems() {
       return this.items.filter(item => item?.type === 'image' && Number.isInteger(item?.id))
     },
@@ -1687,7 +1748,7 @@ export default {
       return this.selectedImageIds.length > 0
     },
     collectionMenuSelectionItems() {
-      return this.selectedEntries
+      return this.selectionActionEntries
         .map(({ item, index }) => ({ item, index }))
         .filter(({ item }) => item?.type === 'image' && Number.isInteger(item?.id))
         .map(({ item, index }) => ({
@@ -1770,14 +1831,14 @@ export default {
         this.coverPickerMode = false
       }
       if (!nextValue) {
-        this.closeSelectionDetails()
+        this.closeSelectionDetails({ preserveSelection: false })
         this.closeCollectionMenu()
         this.closeSelectAllMenu()
       }
     },
     selectedCount(nextValue) {
       if (!nextValue) {
-        this.closeSelectionDetails()
+        this.closeSelectionDetails({ preserveSelection: false })
         this.closeCollectionMenu()
         this.closeSelectAllMenu()
       }
@@ -2364,7 +2425,7 @@ export default {
       this.closeFilterMenu()
       this.closeCollectionMenu()
       this.closeTagMenu()
-      this.closeSelectionDetails()
+      this.closeSelectionDetails({ preserveSelection: false })
       this.closeSelectAllMenu()
       this.clearSelection()
       this.photoPageIndex = 0
@@ -2423,7 +2484,7 @@ export default {
       if (preserveSelection) {
         this.closeSelectAllMenu()
       } else {
-        this.closeSelectionDetails()
+        this.closeSelectionDetails({ reloadDirty: false, preserveSelection: false })
         this.closeSelectAllMenu()
         this.clearSelection()
       }
@@ -2686,25 +2747,62 @@ export default {
       return false
     },
 
-    findSelectionSnapshotIndex(target) {
-      if (!target) return -1
-      return this.items.findIndex(item => this.matchesSelectionSnapshotItem(item, target))
+    findSelectionSnapshotMatch(target) {
+      if (!target) return null
+
+      const visibleIndex = this.items.findIndex(item => this.matchesSelectionSnapshotItem(item, target))
+      if (visibleIndex >= 0) {
+        const item = this.items[visibleIndex]
+        return {
+          item,
+          index: visibleIndex,
+          visibleIndex,
+          key: this.itemKey(item, visibleIndex),
+        }
+      }
+
+      const sourceIndex = this.sourceItems.findIndex(item => this.matchesSelectionSnapshotItem(item, target))
+      if (sourceIndex >= 0) {
+        const item = this.sourceItems[sourceIndex]
+        return {
+          item,
+          index: sourceIndex,
+          visibleIndex: -1,
+          key: this.itemKey(item, sourceIndex),
+        }
+      }
+
+      return null
     },
 
-    captureSelectionSnapshot() {
-      const selectedItems = this.selectedEntries
-        .map(({ item }) => this.selectionSnapshotToken(item))
-        .filter(Boolean)
+    findSelectionSnapshotIndex(target) {
+      const matched = this.findSelectionSnapshotMatch(target)
+      return matched?.visibleIndex ?? -1
+    },
+
+    buildSelectionSnapshot(selectedItems, options = {}) {
       const anchorItem = Number.isInteger(this.selectionAnchorIndex)
         ? this.selectionSnapshotToken(this.items[this.selectionAnchorIndex])
         : null
 
       return {
-        selectedItems,
+        selectedItems: Array.isArray(selectedItems) ? selectedItems.filter(Boolean) : [],
         anchorItem,
+        selectionTypeLock: Object.prototype.hasOwnProperty.call(options, 'selectionTypeLock')
+          ? options.selectionTypeLock
+          : this.selectionTypeLock,
+        detailsOpen: Boolean(options?.detailsOpen),
+      }
+    },
+
+    captureSelectionSnapshot() {
+      const selectedItems = this.selectionActionEntries
+        .map(({ item }) => this.selectionSnapshotToken(item))
+        .filter(Boolean)
+      return this.buildSelectionSnapshot(selectedItems, {
         selectionTypeLock: this.selectionTypeLock,
         detailsOpen: this.selectionDetailsOpen,
-      }
+      })
     },
 
     restoreSelectionSnapshot(snapshot) {
@@ -2712,12 +2810,16 @@ export default {
 
       const nextSelectedMap = {}
       let firstMatchedIndex = null
+      let firstMatchedType = null
       for (const target of (snapshot.selectedItems || [])) {
-        const matchedIndex = this.findSelectionSnapshotIndex(target)
-        if (matchedIndex < 0) continue
-        nextSelectedMap[this.itemKey(this.items[matchedIndex], matchedIndex)] = true
-        if (firstMatchedIndex === null) {
-          firstMatchedIndex = matchedIndex
+        const matched = this.findSelectionSnapshotMatch(target)
+        if (!matched) continue
+        nextSelectedMap[matched.key] = true
+        if (firstMatchedType === null) {
+          firstMatchedType = matched.item?.type || null
+        }
+        if (firstMatchedIndex === null && matched.visibleIndex >= 0) {
+          firstMatchedIndex = matched.visibleIndex
         }
       }
 
@@ -2726,16 +2828,19 @@ export default {
       if (!matchedKeys.length) {
         this.selectionTypeLock = null
         this.selectionAnchorIndex = null
-        this.closeSelectionDetails()
+        this.selectionDetailTargets = []
+        this.closeSelectionDetails({ reloadDirty: false, preserveSelection: false })
         return
       }
 
       const anchorIndex = this.findSelectionSnapshotIndex(snapshot.anchorItem)
-      this.selectionTypeLock = snapshot.selectionTypeLock || this.items[firstMatchedIndex]?.type || null
+      this.selectionTypeLock = snapshot.selectionTypeLock || firstMatchedType || null
       this.selectionAnchorIndex = anchorIndex >= 0 ? anchorIndex : firstMatchedIndex
+      this.selectionDetailTargets = snapshot.detailsOpen ? [...(snapshot.selectedItems || [])] : []
 
       if (snapshot.detailsOpen) {
         if (this.selectionDetailsOpen) {
+          this.setSelectionDetailItems(this.selectedEntries.map(({ item }) => item))
           this.$nextTick(() => {
             this.updateSelectionDetailsBounds()
           })
@@ -2744,8 +2849,26 @@ export default {
           this.openSelectionDetails()
         }
       } else if (this.selectionDetailsOpen) {
-        this.closeSelectionDetails()
+        this.closeSelectionDetails({ reloadDirty: false, preserveSelection: false })
       }
+    },
+
+    cloneSelectionDetailItem(item) {
+      if (!item || typeof item !== 'object') return item
+      return {
+        ...item,
+        tags: Array.isArray(item.tags) ? [...item.tags] : item.tags,
+      }
+    },
+
+    setSelectionDetailItems(items) {
+      const nextItems = Array.isArray(items)
+        ? items.filter(Boolean).map(item => this.cloneSelectionDetailItem(item))
+        : []
+      this.selectionDetailItems = nextItems
+      this.selectionDetailTargets = nextItems
+        .map(item => this.selectionSnapshotToken(item))
+        .filter(Boolean)
     },
 
     isPrimaryPreviewSuppressed(item) {
@@ -2901,7 +3024,7 @@ export default {
     },
 
     openPrimaryFromDetails() {
-      const target = this.selectedEntries[0]?.item
+      const target = this.selectionDetailEntries[0]?.item
       if (!target) return
       this.pageContract.openPrimary(this, target)
     },
@@ -2914,7 +3037,7 @@ export default {
       const tagId = Number(tag?.id)
       if (!Number.isInteger(tagId) || tagId <= 0) return
 
-      this.closeSelectionDetails()
+      this.closeSelectionDetails({ reloadDirty: false, preserveSelection: false })
       if (this.$route?.name === 'browse-tag' && Number(this.$route?.params?.tagId) === tagId) {
         return
       }
@@ -2953,7 +3076,7 @@ export default {
 
         const exportPayload = {
           target_dir: directoryPayload.selected_path,
-          items: this.selectedEntries.map(({ item }) => (
+          items: this.selectionActionEntries.map(({ item }) => (
             item.type === 'album'
               ? { type: 'album', album_path: item.album_path }
               : { type: 'image', image_id: item.id, media_rel_path: item.media_rel_path }
@@ -3008,6 +3131,8 @@ export default {
 
     openSelectionDetails() {
       if (!this.selectedCount) return
+      this.selectionDetailsDirty = false
+      this.setSelectionDetailItems(this.selectedEntries.map(({ item }) => item))
       this.updateSelectionDetailsBounds()
       this.selectionDetailsOpen = true
       this.lockPageScroll()
@@ -3019,9 +3144,47 @@ export default {
       this.fetchSelectionDetailMetadata()
     },
 
-    closeSelectionDetails() {
+    async closeSelectionDetails(options = {}) {
+      const reloadDirty = Object.prototype.hasOwnProperty.call(options, 'reloadDirty')
+        ? Boolean(options.reloadDirty)
+        : true
+      const preserveSelection = Object.prototype.hasOwnProperty.call(options, 'preserveSelection')
+        ? Boolean(options.preserveSelection)
+        : true
+      const canPreserveSelection = preserveSelection && this.selectionActionEntries.length > 0
+      const shouldReload = reloadDirty && this.selectionDetailsDirty && !this.selectionDetailsReloadInFlight
+      const selectionSnapshot = shouldReload && canPreserveSelection
+        ? this.buildSelectionSnapshot(
+          this.selectionActionEntries
+            .map(({ item }) => this.selectionSnapshotToken(item))
+            .filter(Boolean),
+          {
+            selectionTypeLock: this.selectionTypeLock,
+            detailsOpen: false,
+          }
+        )
+        : null
+
       this.selectionDetailsOpen = false
+      this.selectionDetailTargets = []
+      this.selectionDetailItems = []
+      this.selectionDetailsDirty = false
+      this.selectionDetailFetchSerial += 1
       this.unlockPageScroll()
+
+      if (!shouldReload) return
+
+      this.selectionDetailsReloadInFlight = true
+      try {
+        await this.reloadContractItemsPreservingAnchor({
+          preserveSelection: canPreserveSelection,
+          reopenDetails: false,
+          runAfterLoad: true,
+          selectionSnapshot,
+        })
+      } finally {
+        this.selectionDetailsReloadInFlight = false
+      }
     },
 
     updateSelectionDetailsBounds() {
@@ -3147,7 +3310,7 @@ export default {
     },
 
     onSelectionDetailPreviewError(preview) {
-      const matchedEntry = this.selectedEntries.find(entry => this.itemKey(entry.item, entry.index) === preview?.key)
+      const matchedEntry = this.selectionDetailEntries.find(entry => this.itemKey(entry.item, entry.index) === preview?.key)
       const item = matchedEntry?.item
       if (!item) return
 
@@ -3311,7 +3474,7 @@ export default {
 
     async fetchSelectionDetailMetadata() {
       if (this.isTrashMode) return
-      const imageIds = this.selectedEntries
+      const imageIds = this.selectionDetailEntries
         .map(({ item }) => item)
         .filter(item => item?.type === 'image' && Number.isInteger(item?.id) && !this.itemHasDetailMetadata(item))
         .map(item => item.id)
@@ -3332,10 +3495,12 @@ export default {
         )
         if (!metaMap.size) return
 
-        const nextItems = this.sourceItems.map(item => {
+        let changed = false
+        const nextItems = this.selectionDetailItems.map(item => {
           if (item?.type !== 'image' || !Number.isInteger(item?.id)) return item
           const meta = metaMap.get(item.id)
           if (!meta) return item
+          changed = true
           return {
             ...item,
             ...meta,
@@ -3343,7 +3508,8 @@ export default {
             name: meta.name || item.name,
           }
         })
-        this.applySourceItems(nextItems)
+        if (!changed) return
+        this.setSelectionDetailItems(nextItems)
         this.ensureCategoryLabelsLoaded()
       } catch {
         // ignore metadata hydration failures and keep current values visible
@@ -3369,7 +3535,7 @@ export default {
 
     selectedImageMetadataTargets() {
       const seen = new Set()
-      return this.selectedEntries
+      return this.selectionActionEntries
         .map(({ item }) => item)
         .filter(item => item?.type === 'image' && Number.isInteger(item?.id))
         .map(item => ({
@@ -3455,6 +3621,7 @@ export default {
 
       const shouldReorder = typeof payload?.name === 'string'
         || Object.prototype.hasOwnProperty.call(payload, 'file_created_at')
+        || updates.some(update => Boolean(update?.renamed))
         || updates.some(update => Boolean(update?.moved))
 
       let changed = false
@@ -3511,6 +3678,73 @@ export default {
       }
     },
 
+    applySelectionImageMetadataResponseToDetails(responseItems) {
+      const updates = Array.isArray(responseItems) ? responseItems : []
+      if (!updates.length || !this.selectionDetailItems.length) return
+
+      const updatesBySourcePath = new Map()
+      const updatesByImageId = new Map()
+      let shouldRefreshCategoryLabels = false
+
+      for (const update of updates) {
+        const sourcePath = String(update?.source_media_rel_path || '').trim()
+        if (sourcePath) {
+          updatesBySourcePath.set(sourcePath, update)
+        }
+
+        const imageId = Number(update?.image_id)
+        if (Number.isInteger(imageId) && imageId > 0) {
+          updatesByImageId.set(imageId, update)
+        }
+
+        const categoryId = Number(update?.category_id)
+        if (
+          Number.isInteger(categoryId)
+          && categoryId > 0
+          && !Object.prototype.hasOwnProperty.call(this.categoryDisplayMap, categoryId)
+        ) {
+          shouldRefreshCategoryLabels = true
+        }
+      }
+
+      let changed = false
+      const nextItems = this.selectionDetailItems.map((item) => {
+        if (item?.type !== 'image' || !Number.isInteger(item?.id)) return item
+
+        const currentPath = String(item.media_rel_path || '').trim()
+        const update = (currentPath && updatesBySourcePath.get(currentPath)) || updatesByImageId.get(item.id)
+        if (!update) return item
+
+        changed = true
+        const hasCreatedAt = Object.prototype.hasOwnProperty.call(update, 'file_created_at')
+        const nextFileCreatedAt = hasCreatedAt ? (update.file_created_at || null) : item.file_created_at
+        const nextCategoryId = Number(update?.category_id)
+        const nextItem = {
+          ...item,
+          name: update?.name || item.name,
+          media_rel_path: update?.media_rel_path || item.media_rel_path,
+          category_id: Number.isInteger(nextCategoryId) && nextCategoryId > 0 ? nextCategoryId : item.category_id,
+          file_created_at: nextFileCreatedAt,
+        }
+
+        const nextSortTs = this.deriveImageSortTimestamp(nextItem, nextFileCreatedAt)
+        if (nextSortTs != null) {
+          nextItem.sort_ts = nextSortTs
+        }
+
+        return nextItem
+      })
+
+      if (!changed) return
+
+      this.setSelectionDetailItems(nextItems)
+      this.selectionDetailsDirty = true
+
+      if (shouldRefreshCategoryLabels) {
+        this.ensureCategoryLabelsLoaded(true)
+      }
+    },
+
     async applySelectionImageMetadata(payload) {
       if (this.metadataEditBusy) return
 
@@ -3536,7 +3770,11 @@ export default {
           return
         }
 
-        this.applySelectionImageMetadataResponse(data?.items, payload)
+        if (this.selectionDetailsOpen && this.selectionDetailItems.length) {
+          this.applySelectionImageMetadataResponseToDetails(data?.items, payload)
+        } else {
+          this.applySelectionImageMetadataResponse(data?.items, payload)
+        }
       } catch (err) {
         this.openMetadataEditErrorDialog(err?.message || '修改失败，请稍后重试。')
       } finally {
@@ -3560,6 +3798,53 @@ export default {
       const normalizedValue = String(localDateTime || '').trim()
       if (!normalizedValue) return
       await this.applySelectionImageMetadata({ file_created_at: normalizedValue })
+    },
+
+    async syncSelectionTagsToFilename() {
+      if (this.metadataEditBusy) return
+
+      const targets = this.selectedImageMetadataTargets()
+      if (!targets.length) return
+
+      this.metadataEditBusy = true
+      try {
+        const res = await fetch(`${API_BASE}/api/images/tags/sync-filename`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: targets }),
+        })
+
+        const data = await res.json().catch(() => null)
+        if (!res.ok) {
+          this.openMetadataEditErrorDialog(
+            data?.detail || `请求未成功完成，服务器返回 HTTP ${res.status}。`,
+            '同步失败'
+          )
+          return
+        }
+
+        if (this.selectionDetailsOpen && this.selectionDetailItems.length) {
+          this.applySelectionImageMetadataResponseToDetails(data?.items, { sync_tags_to_filename: true })
+        } else {
+          this.applySelectionImageMetadataResponse(data?.items, { sync_tags_to_filename: true })
+        }
+
+        const renamedCount = Number(data?.renamed_count || 0) || 0
+        const totalCount = Number(data?.updated_count || 0) || 0
+        if (!totalCount) {
+          this.showMessage('success', '没有可同步的文件。')
+        } else if (!renamedCount) {
+          this.showMessage('success', totalCount === 1 ? '文件名已包含当前标签，无需补充。' : '选中文件名均已包含当前标签，无需补充。')
+        } else if (renamedCount === totalCount) {
+          this.showMessage('success', totalCount === 1 ? '已将文件名与标签同步。' : `已同步 ${renamedCount} 个文件名。`)
+        } else {
+          this.showMessage('success', `已同步 ${renamedCount} 个文件名，${totalCount - renamedCount} 个无需补充。`)
+        }
+      } catch (err) {
+        this.openMetadataEditErrorDialog(err?.message || '同步失败，请稍后重试。', '同步失败')
+      } finally {
+        this.metadataEditBusy = false
+      }
     },
 
     buildDetailField(values, options = {}) {
@@ -4325,7 +4610,7 @@ export default {
       this.selectedMap = {}
       this.selectionTypeLock = null
       this.selectionAnchorIndex = null
-      this.closeSelectionDetails()
+      this.closeSelectionDetails({ preserveSelection: false })
       this.closeSelectAllMenu()
     },
 
@@ -4780,7 +5065,11 @@ export default {
     },
 
     tagIdsForImage(imageId) {
-      const item = this.items.find(candidate => candidate?.type === 'image' && candidate?.id === imageId)
+      const item = this.selectionActionEntries
+        .map(({ item }) => item)
+        .find(candidate => candidate?.type === 'image' && candidate?.id === imageId)
+        || this.items.find(candidate => candidate?.type === 'image' && candidate?.id === imageId)
+        || this.sourceItems.find(candidate => candidate?.type === 'image' && candidate?.id === imageId)
       const ids = Array.isArray(item?.tags) ? item.tags.filter(id => Number.isInteger(id)) : []
       return this.sortTagIdsByName([...new Set(ids)])
     },
@@ -5377,18 +5666,34 @@ export default {
 
         if (changedImageIds.length) {
           const changedIdSet = new Set(changedImageIds)
-          const nextItems = this.sourceItems.map((item) => {
-            if (item?.type !== 'image' || !Number.isInteger(item?.id)) return item
-            if (!changedIdSet.has(item.id)) return item
-            return {
-              ...item,
-              tags: this.sortTagIdsByName([...(this.tagMenuDraftByImageId[item.id] || [])]),
-            }
-          })
-          this.applySourceItems(nextItems)
+          if (this.selectionDetailsOpen && this.selectionDetailItems.length) {
+            const nextItems = this.selectionDetailItems.map((item) => {
+              if (item?.type !== 'image' || !Number.isInteger(item?.id)) return item
+              if (!changedIdSet.has(item.id)) return item
+              return {
+                ...item,
+                tags: this.sortTagIdsByName([...(this.tagMenuDraftByImageId[item.id] || [])]),
+              }
+            })
+            this.setSelectionDetailItems(nextItems)
+            this.selectionDetailsDirty = true
+          } else {
+            const nextItems = this.sourceItems.map((item) => {
+              if (item?.type !== 'image' || !Number.isInteger(item?.id)) return item
+              if (!changedIdSet.has(item.id)) return item
+              return {
+                ...item,
+                tags: this.sortTagIdsByName([...(this.tagMenuDraftByImageId[item.id] || [])]),
+              }
+            })
+            this.applySourceItems(nextItems)
+          }
         }
 
-        await this.ensureTagLabelsLoaded(true, this.sourceItems, Array.from(changedTagIds))
+        const tagLabelItems = this.selectionDetailsOpen && this.selectionDetailItems.length
+          ? this.selectionDetailItems
+          : this.sourceItems
+        await this.ensureTagLabelsLoaded(true, tagLabelItems, Array.from(changedTagIds))
         this.closeTagMenu()
       } catch (err) {
         this.tagMenuError = `标签回写失败：${err?.message || '未知错误'}`
@@ -5672,7 +5977,7 @@ export default {
       this.actionBusyText = '正在移动所选内容到回收站，请稍候…'
 
       const payload = {
-        items: this.selectedEntries.map(({ item }) => (
+        items: this.selectionActionEntries.map(({ item }) => (
           item.type === 'album'
             ? { type: 'album', album_path: item.album_path }
             : { type: 'image', image_id: item.id, media_rel_path: item.media_rel_path }
@@ -5749,7 +6054,7 @@ export default {
         const res = await fetch(`${API_BASE}/api/trash/restore`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entry_ids: this.selectedEntries.map(({ item }) => item.id) }),
+          body: JSON.stringify({ entry_ids: this.selectionActionEntries.map(({ item }) => item.id) }),
         })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
@@ -5793,7 +6098,7 @@ export default {
         const res = await fetch(`${API_BASE}/api/trash/hard-delete`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entry_ids: this.selectedEntries.map(({ item }) => item.id) }),
+          body: JSON.stringify({ entry_ids: this.selectionActionEntries.map(({ item }) => item.id) }),
         })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
@@ -5854,9 +6159,11 @@ export default {
       }
     },
 
-    async reloadContractItemsPreservingAnchor({ preserveSelection = true, reopenDetails = false, runAfterLoad = true } = {}) {
+    async reloadContractItemsPreservingAnchor({ preserveSelection = true, reopenDetails = false, runAfterLoad = true, selectionSnapshot = null } = {}) {
       const anchor = this.captureViewportAnchor()
-      const selectionSnapshot = preserveSelection ? this.captureSelectionSnapshot() : null
+      const effectiveSelectionSnapshot = preserveSelection
+        ? (selectionSnapshot || this.captureSelectionSnapshot())
+        : null
 
       try {
         const payload = await this.pageContract.loadItems(this)
@@ -5864,7 +6171,7 @@ export default {
         this.applyFetchedItems(payload?.items || [])
         this.lastPreviewRepairSignature = ''
         if (preserveSelection) {
-          this.restoreSelectionSnapshot(selectionSnapshot)
+          this.restoreSelectionSnapshot(effectiveSelectionSnapshot)
         }
         if (anchor) {
           this.pendingViewAnchor = anchor

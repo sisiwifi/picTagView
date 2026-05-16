@@ -171,7 +171,13 @@
                       :compact="true"
                       :show-add-button="resolvedCanEditTags"
                       :add-disabled="tagMenuDisabled"
+                      :show-extra-button="showTagSyncButton"
+                      extra-button-label="↺"
+                      extra-button-title="将文件名与标签同步"
+                      extra-button-aria-label="将文件名与标签同步"
+                      :extra-button-disabled="tagMenuDisabled || editBusy"
                       @add-click="$emit('open-tag-menu')"
+                      @extra-button-click="$emit('sync-tags-to-filename')"
                       @tag-click="$emit('tag-click', $event)"
                     />
                   </div>
@@ -391,6 +397,7 @@ export default {
     secondaryActionTone: { type: String, default: '' },
     secondaryActionDisabled: { type: Boolean, default: null },
     canEditTags: { type: Boolean, default: false },
+    canSyncTagsToFilename: { type: Boolean, default: false },
     canOpenCollectionMenu: { type: Boolean, default: false },
     collectionMenuDisabled: { type: Boolean, default: false },
     tagMenuDisabled: { type: Boolean, default: false },
@@ -411,6 +418,7 @@ export default {
     'open-primary',
     'open-collection-menu',
     'open-tag-menu',
+    'sync-tags-to-filename',
     'tag-click',
     'preview-error',
     'secondary-action',
@@ -477,6 +485,9 @@ export default {
         return this.metadataPermissions.tags
       }
       return this.canEditTags
+    },
+    showTagSyncButton() {
+      return this.resolvedCanEditTags && this.canSyncTagsToFilename
     },
     resolvedCanEditCreatedAt() {
       if (typeof this.metadataPermissions?.createdAt === 'boolean') {
@@ -1178,6 +1189,7 @@ export default {
 .detail-field__tag-row--single {
   grid-template-columns: minmax(0, 1fr);
 }
+
 
 .detail-panel__actions {
   display: flex;

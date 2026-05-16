@@ -384,7 +384,7 @@ const calendarContract = {
   defaultSort(vm) {
     return {
       sortBy: vm.isAlbumMode ? 'alpha' : 'date',
-      sortDir: 'asc',
+      sortDir: vm.isAlbumMode ? 'asc' : 'desc',
     }
   },
   buildCrumbs(vm) {
@@ -648,7 +648,7 @@ const galleryRecentContract = {
   defaultSort(vm) {
     return {
       sortBy: vm.isAlbumMode ? 'alpha' : 'date',
-      sortDir: 'asc',
+      sortDir: vm.isAlbumMode ? 'asc' : 'desc',
     }
   },
   buildCrumbs(vm) {

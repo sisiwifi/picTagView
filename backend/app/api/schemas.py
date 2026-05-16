@@ -142,6 +142,10 @@ class ImageMetadataUpdateRequest(BaseModel):
     file_created_at: Optional[datetime] = None
 
 
+class ImageTagFilenameSyncRequest(BaseModel):
+    items: List[ImageMetadataUpdateTarget] = Field(default_factory=list)
+
+
 class ImageMetadataUpdateItem(BaseModel):
     image_id: int
     source_media_rel_path: Optional[str] = None

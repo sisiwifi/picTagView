@@ -238,6 +238,49 @@ def match_filename_tags(filename: str, context: TagMatchContext) -> tuple[list[s
     return tokens, matched_tag_ids, matched_tags_by_id
 
 
+def build_filename_with_missing_tags(filename: str, current_tag_ids: list[int], context: TagMatchContext) -> str:
+    normalized_filename = str(filename or "").strip()
+    if not normalized_filename:
+        return ""
+
+    valid_tag_ids = [
+        tag_id
+        for tag_id in sort_tag_ids_by_name(sanitize_tag_ids(current_tag_ids), context.tags_by_id)
+        if tag_id in context.tags_by_id and str(context.tags_by_id[tag_id].name or "").strip()
+    ]
+    if not valid_tag_ids:
+        return normalized_filename
+
+    match_context = context
+    if not match_context.enabled:
+        match_context = TagMatchContext(
+            enabled=True,
+            noise_tokens=context.noise_tokens,
+            min_token_length=context.min_token_length,
+            drop_numeric_only=context.drop_numeric_only,
+            tags_by_name=context.tags_by_name,
+            tags_by_id=context.tags_by_id,
+            tags_by_first_atom=context.tags_by_first_atom,
+        )
+
+    _tokens, matched_tag_ids, _matched_tags_by_id = match_filename_tags(normalized_filename, match_context)
+    matched_tag_id_set = set(matched_tag_ids)
+    missing_tag_names = [
+        str(context.tags_by_id[tag_id].name).strip()
+        for tag_id in valid_tag_ids
+        if tag_id not in matched_tag_id_set
+    ]
+    if not missing_tag_names:
+        return normalized_filename
+
+    filename_path = Path(normalized_filename)
+    next_stem = " ".join(part for part in [filename_path.stem.strip(), *missing_tag_names] if part)
+    if not next_stem:
+        return normalized_filename
+
+    return f"{next_stem}{filename_path.suffix}" if filename_path.suffix else next_stem
+
+
 def merge_matched_tag_ids(
     before_tag_ids: list[int],
     matched_tag_ids: list[int],

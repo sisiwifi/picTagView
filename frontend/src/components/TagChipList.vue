@@ -23,6 +23,17 @@
     >
       +
     </button>
+    <button
+      v-if="showExtraButton"
+      class="tag-chip tag-chip--add tag-chip--extra-action"
+      type="button"
+      :disabled="extraButtonDisabled"
+      :title="extraButtonTitle"
+      :aria-label="extraButtonAriaLabel || extraButtonTitle"
+      @click="$emit('extra-button-click')"
+    >
+      {{ extraButtonLabel }}
+    </button>
   </div>
 </template>
 
@@ -31,7 +42,7 @@ import { normalizeTagColors } from '../utils/tagColors'
 
 export default {
   name: 'TagChipList',
-  emits: ['add-click', 'tag-click'],
+  emits: ['add-click', 'extra-button-click', 'tag-click'],
   props: {
     tags: {
       type: Array,
@@ -50,6 +61,26 @@ export default {
       default: false,
     },
     addDisabled: {
+      type: Boolean,
+      default: false,
+    },
+    showExtraButton: {
+      type: Boolean,
+      default: false,
+    },
+    extraButtonLabel: {
+      type: String,
+      default: '',
+    },
+    extraButtonTitle: {
+      type: String,
+      default: '',
+    },
+    extraButtonAriaLabel: {
+      type: String,
+      default: '',
+    },
+    extraButtonDisabled: {
       type: Boolean,
       default: false,
     },

@@ -413,18 +413,26 @@ export default {
 
   created() {
     this._activeImportController = null
+    this._recentOverviewPollTimer = null
+    this._recentOverviewPollingBusy = false
     this.fetchGalleryOverviews()
     this.fetchOrphanMediaStatus()
     this.loadCategoryDisplayLabels()
     this._checkMissingThumbs()
+    this.syncRecentOverviewPolling()
     if (typeof window !== 'undefined') {
       window.addEventListener('resize', this.onResize)
       window.addEventListener('library-refreshed', this.onLibraryRefreshed)
     }
   },
 
+  deactivated() {
+    this.stopRecentOverviewPolling()
+  },
+
   beforeUnmount() {
     this.abortActiveImportRequest()
+    this.stopRecentOverviewPolling()
     if (typeof window !== 'undefined') {
       window.removeEventListener('resize', this.onResize)
       window.removeEventListener('library-refreshed', this.onLibraryRefreshed)
@@ -436,6 +444,7 @@ export default {
     this.fetchOrphanMediaStatus()
     this.loadCategoryDisplayLabels()
     this._checkMissingThumbs()
+    this.syncRecentOverviewPolling()
   },
 
   methods: {
@@ -482,6 +491,39 @@ export default {
       this.fetchOrphanMediaStatus()
     },
 
+    syncRecentOverviewPolling() {
+      if (this.importing || this.refreshing) {
+        this.startRecentOverviewPolling()
+        return
+      }
+      this.stopRecentOverviewPolling()
+    },
+
+    startRecentOverviewPolling() {
+      if (typeof window === 'undefined' || this._recentOverviewPollTimer) return
+      this._recentOverviewPollTimer = window.setInterval(() => {
+        this.pollRecentOverview()
+      }, 2000)
+    },
+
+    stopRecentOverviewPolling() {
+      if (typeof window !== 'undefined' && this._recentOverviewPollTimer) {
+        window.clearInterval(this._recentOverviewPollTimer)
+      }
+      this._recentOverviewPollTimer = null
+      this._recentOverviewPollingBusy = false
+    },
+
+    async pollRecentOverview() {
+      if (!(this.importing || this.refreshing) || this._recentOverviewPollingBusy) return
+      this._recentOverviewPollingBusy = true
+      try {
+        await this.fetchGalleryOverview('recent', { silent: true })
+      } finally {
+        this._recentOverviewPollingBusy = false
+      }
+    },
+
     async fetchOrphanMediaStatus() {
       try {
         const response = await fetch(`${API_BASE}/api/admin/orphan-media-status`)
@@ -519,13 +561,16 @@ export default {
       ])
     },
 
-    async fetchGalleryOverview(scope) {
+    async fetchGalleryOverview(scope, options = {}) {
+      const silent = Boolean(options?.silent)
       const loadingKey = scope === 'recent' ? 'recentOverviewLoading' : 'allOverviewLoading'
       const errorKey = scope === 'recent' ? 'recentOverviewError' : 'allOverviewError'
       const overviewKey = scope === 'recent' ? 'recentOverview' : 'allOverview'
 
-      this[loadingKey] = true
-      this[errorKey] = ''
+      if (!silent) {
+        this[loadingKey] = true
+        this[errorKey] = ''
+      }
       try {
         const params = new URLSearchParams({ limit: '12' })
         const response = await fetch(`${API_BASE}/api/gallery/${scope}/overview?${params.toString()}`)
@@ -536,10 +581,14 @@ export default {
           ...payload,
         }
       } catch {
-        this[overviewKey] = createEmptyOverview(scope)
-        this[errorKey] = '预览接口不可用，请确认前后端服务均已启动。'
+        if (!silent) {
+          this[overviewKey] = createEmptyOverview(scope)
+          this[errorKey] = '预览接口不可用，请确认前后端服务均已启动。'
+        }
       } finally {
-        this[loadingKey] = false
+        if (!silent) {
+          this[loadingKey] = false
+        }
       }
     },
 
@@ -1002,6 +1051,7 @@ export default {
       this.importing = true
       this.stopRequested = false
       window.__ptvImporting = true
+      this.syncRecentOverviewPolling()
       this.clearNotice()
       this.importDialogError = ''
       this.importDialogOpen = false
@@ -1064,6 +1114,7 @@ export default {
         this.stopRequested = false
         this.abortActiveImportRequest()
         window.__ptvImporting = false
+        this.syncRecentOverviewPolling()
         this.currentFolderLabel = ''
         this.currentItem = ''
         this.totalFiles = 0
@@ -1079,6 +1130,7 @@ export default {
 
     async runRefresh() {
       this.refreshing    = true
+      this.syncRecentOverviewPolling()
       this.clearNotice()
       this.status        = '正在全量刷新媒体库…'
       try {
@@ -1112,6 +1164,7 @@ export default {
         this.status = ''
       } finally {
         this.refreshing = false
+        this.syncRecentOverviewPolling()
       }
     },
 

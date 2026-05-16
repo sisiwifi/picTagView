@@ -29,7 +29,7 @@
 
 | 文件 | 端点 | 当前行为 |
 | --- | --- | --- |
-| `gallery.py` | `GET /api/gallery/recent/overview` | 返回 recent 快照中“最近一批成功导入图片全集”的一级预览列表与总数 |
+| `gallery.py` | `GET /api/gallery/recent/overview` | 返回 recent 快照中最近一次导入或 full-refresh 收编得到的成功图片全集的一级预览列表与总数，图片按最新优先 |
 | `gallery.py` | `GET /api/gallery/all/overview` | 返回全部可见图片拉平后的一级预览列表与总数 |
 | `gallery.py` | `GET /api/gallery/recent/items` | 返回最近导入二级页所需的“相册在前 + 直图在后”混合列表 |
 | `gallery.py` | `GET /api/gallery/all/items` | 返回图库总览二级页所需的“相册在前 + 直图在后”混合列表 |
@@ -46,6 +46,7 @@
 | `albums.py` | `POST /api/albums/{album_id}/cover` | 设置手动相册封面 |
 | `images.py` | `GET /api/images/meta` | 批量读取图片元数据与 `media_paths` |
 | `images.py` | `PATCH /api/images/metadata` | 修改文件名、主分类、创建时间；必要时移动文件到新的月份目录 |
+| `images.py` | `POST /api/images/tags/sync-filename` | 把当前图片缺失的 `tag.name` 追加到扩展名前；多选时逐文件分别处理，并自动避开同名冲突 |
 | `images.py` | `POST /api/images/export` | 把所选图片或相册导出到用户指定目录；保留 `media` 下的相对层级并尽量保持文件与目录时间 |
 | `images.py` | `GET /api/images/{image_id}/open` | 打开图片；可用 `path` 精确指定某个 `media_path` 实例 |
 
@@ -66,6 +67,7 @@
 | `tags.py` | `POST /api/tags/import/json` | 导入 JSON，支持 `skip` / `overwrite` 冲突策略 |
 | `images.py` | `POST /api/images/tags/filename-match` | 按文件名匹配 Tag，可只预览或直接回写 |
 | `images.py` | `POST /api/images/tags/apply` | 对图片批量追加、替换或移除 Tag |
+| `images.py` | `POST /api/images/tags/sync-filename` | 把当前图片缺失的 `tag.name` 追加到扩展名前；多选时逐文件分别处理 |
 | `collections.py` | `GET /api/collections` | 返回全部顶层、且当前仍有可见图片的收藏夹 |
 | `collections.py` | `GET /api/collections/{collection_id}` | 按 `Collection.public_id` 返回收藏夹详情 |
 | `collections.py` | `POST /api/collections/search` | 为收藏菜单提供候选收藏夹与命中统计 |
@@ -110,7 +112,7 @@
 | `services/imports/maintenance.py` | `quick/full` 刷新、路径对账、缺失预览修复、未入库图片收编 |
 | `services/imports/hash_index.py` | `.hash_index.json` 的加载、查询和重建 |
 | `services/imports/helpers.py` | 路径归一化、文件时间回写、缩略图条目更新等辅助函数 |
-| `services/tag_seed_service.py` | 当数据库中还没有正式标签时，从 `backend/data/initial_tags_export.json` 导入初始 tag |
+| `services/tag_seed_service.py` | 提供从导出的 tags JSON 手动补种初始 Tag 的辅助逻辑，默认不在启动阶段自动执行 |
 | `services/image_frame_service.py` | 多帧图片首帧提取、动图识别、尺寸与帧数元数据归一化 |
 | `services/recent_import_service.py` | 维护“最近一批成功导入图片”的快照，支持按 replace/append 聚合同一前端导入会话 |
 | `services/parallel_processor.py` | 并行哈希、尺寸识别与月份封面生成 |
@@ -163,6 +165,7 @@
   - `orphan_albums_migrated`
   - `orphan_images_migrated`
   - `orphan_files_migrated`
+- 如果本次 full-refresh 实际收编了图片，后端还会以 `replace` 模式重写 `RecentImportOperation`，让 `/gallery` 的 recent 预览和 recent 二级页立即切到这批最新收编结果。
 
 ### 4.2 图库管理聚合协议
 
@@ -170,7 +173,7 @@
   - `scope`
   - `total`
   - `items`
-- 一级页 overview 只返回图片预览条目，不返回相册节点；recent overview 优先读取 `successful_image_ids`，而不是旧的 preview 兼容字段。
+- 一级页 overview 只返回图片预览条目，不返回相册节点；recent overview 优先读取 `successful_image_ids`，而不是旧的 preview 兼容字段，并按图片时间倒序优先展示最新图片。
 - `GET /api/gallery/recent/items` 与 `GET /api/gallery/all/items` 返回 `DateItem` 风格的混合列表，继续复用 `BrowsePage`：
   - 相册节点在前
   - 直图节点在后
@@ -198,6 +201,8 @@
   - `category_id`
   - `file_created_at`
 - 多选时不允许改文件名；这是 `PATCH /api/images/metadata` 的后端 `400` 硬校验，前端只是同步禁用对应 UI。
+- `POST /api/images/tags/sync-filename` 会读取当前图片已绑定的 Tag，找出文件名中尚未出现的 `tag.name`，并把这些名字以空格分隔追加到扩展名前；多选时会逐文件分别计算目标文件名，而不是共用一个公共名称。
+- 该接口复用与元数据编辑相同的磁盘改名链路：如果目标文件已存在，会自动让位到 `_1 / _2 ...` 唯一名；任一项失败时整批回滚，避免部分文件已改名、部分未改名。
 - 传入 `file_created_at` 后，如果月份变化，后端会把文件物理移动到新的 `media/YYYY-MM/...` 目录，并保留原有子目录链；如果目标目录已存在同名文件，会自动预留一个唯一文件名后再落盘。
 - 如果一张图片有多个 `media_path` 实例，前端应通过 `media_rel_path` 精确指定目标实例。
 

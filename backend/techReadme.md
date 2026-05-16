@@ -52,7 +52,7 @@
    - `/viewer-icons` -> `VIEWER_ICON_DIR`
 5. 注册 `app/api/routes.py` 聚合出的全部 API 路由
 
-`init_db()` 现在还会在数据库中还没有正式 Tag 时，尝试从 `backend/data/initial_tags_export.json` 自动导入初始标签；这个 seed 文件主要由便携打包流程带入。
+`init_db()` 不再自动导入初始 Tag；便携包只会在根目录附带 `tags_export.json` 供用户按需手动导入，是否导入由用户自己决定。
 
 ## 4. 路由结构
 
@@ -105,7 +105,7 @@
 - 图片只保留一个主分类，优先使用导入请求给出的 `category_id`
 - 同批次导入会在一个事务内完成写库、关联和自动打标
 - full-refresh 现在只把真正满足 `YYYY-MM` 的第二层目录视为标准月份目录；`media` 根目录下的孤立图片会按“直接图片导入”规则归档到对应月份，孤立相册会按“文件夹导入”规则整体归档到对应月份，并保留其相册目录链
-- 前端一次导入会被拆成多个上传批次；后端通过 `RecentImportOperation` 快照与 `recent_import_mode = replace/append` 把这些批次重新聚合成一次“最近导入操作”，并在 `successful_image_ids` 中保存整批成功导入图片全集；recent 一级页优先读取这一字段，旧的 `preview_image_ids` 仅保留兼容用途。
+- 前端一次导入会被拆成多个上传批次；后端通过 `RecentImportOperation` 快照与 `recent_import_mode = replace/append` 把这些批次重新聚合成一次“最近导入操作”，并在 `successful_image_ids` 中保存整批成功导入图片全集；full-refresh 如果实际收编了新图片，也会以 `replace` 模式写入同一快照，让 recent 立即切到这批结果。recent 一级页优先读取这一字段，旧的 `preview_image_ids` 仅保留兼容用途。
 - 多帧图片不会再把原始动图直接交给缩略图链路处理，而是统一提取首帧，写入 `ImageAsset.is_animated + animation_meta`；其中 `animation_meta` 只在动图时保存 `frame_count / format`，供 overview、BrowsePage 和详情浮层显示状态标记。
 
 ### 5.1.1 图库管理聚合
@@ -113,6 +113,7 @@
 - `gallery.py` 为 `/gallery` 父页提供两类聚合数据：
   - `recent/*`：最近一次导入操作的一级预览和二级混合列表
   - `all/*`：图库总览的一级预览和二级混合列表
+- `recent/overview` 的一级预览会按图片时间倒序返回，优先展示最新几张图片；`recent/items` 仍保持“相册在前、直图在后”的二级浏览协议。
 - 一级 overview 只返回图片条目，供父页渲染方形缩略图带。
 - 二级 items 继续复用日期视图的“相册优先 + 直图随后”约定，避免单独维护一套浏览语义。
 
@@ -142,7 +143,8 @@
 - 草稿 Tag 使用 `created_by = system:draft-reserve` 标记，并在查询与导出时过滤。
 - 删除正式 Tag 的实现已经统一到同一条事务路径：无论是总览页单删、设置页批删，还是取消草稿后的清理，后端都会在一次数据库事务里先扫描 `ImageAsset.tags` 并移除目标 id，再删除 Tag 记录；不会逐个 Tag 做多次提交，也不会删除图片本身。
 - 批量新增采用整批校验、整批写入：先校验 `name`、`type`、同批重复、数据库重复和颜色元数据，再统一 `flush -> public_id -> commit`；如果任一行失败则整批回滚，并把 `row_errors` 返回给前端高亮对应行。
-- `tag_match_service.py` 封装文件名分词、Tag 匹配、Tag 排序和计数更新；导入流程与图片页“自动标签”共用这一套逻辑。
+- `tag_match_service.py` 封装文件名分词、Tag 匹配、Tag 排序、缺失 Tag 文件名补全和计数更新；导入流程、图片页“自动标签”以及详情浮层里的“↺ 同步文件名”共用这一套逻辑。
+- `POST /api/images/tags/sync-filename` 复用了图片元数据编辑的底层改名/移动执行链，但把目标文件名改成“当前 Tag 集合减去文件名里已存在 Tag”的差集结果；多选时逐文件分别计算，并沿用同名冲突自动让位与整批回滚语义。
 - `search.py` 现在支持 `filename`、`tag`、`path`、`file`、`imported_at`、`file_created_at` 六类显式搜索，以及 `auto -> mixed/path` 解析；其中 `file` 通过 `quick_hash` 找到同图图片，时间模式通过 `start_at/end_at` 做区间过滤。
 - 搜索响应当前同时服务 `SearchPage.vue` 一级虚拟化预览和 `/search/results` 完整列表，返回体包含 `requested_mode`、`resolved_mode`、`included_tags`、`matched_by`、`matched_tags` 等前端渲染所需元数据；前端顶层页提供“按图搜索”和“时间范围”两个辅助入口来生成对应查询。
 - 搜索 UI 的主预览现在优先使用 temp/cache 缩略图，不再拿原图作为主卡片兜底；当搜索结果缺失缩略图时，前端会复用现有 `POST /api/admin/refresh?mode=quick` + `/api/images/meta` 的 targeted repair 链路，后台异步生成并回填预览元数据。
@@ -237,7 +239,7 @@ python -m venv ..\.venv
 
 - 前端默认直连 `http://127.0.0.1:8000`，后端端口变化时需要同步更新前端代码。
 - `backend/data/app.db` 是当前默认数据库文件，仓库运行期间会持续变化。
-- 便携包现在会把 `build/tags_export.json` 复制为 `backend/data/initial_tags_export.json`；如果你在源码环境也想复现首次启动 seed 行为，可以手工放置同名文件。
+- 便携包现在会把 `build/tags_export.json` 复制到便携包根目录，文件名保持为 `tags_export.json`；程序不会在首次启动时自动导入，用户如需使用这份标签数据，需要在界面里手动执行标签导入。
 - 图片元数据编辑里的“多选不能改文件名”不是只靠前端收敛交互，而是 `/api/images/metadata` 的后端硬校验；多选请求如果同时带 `name` 会直接返回 `400`。
 - 文件名自动打标配置 API 已存在，但前端设置页尚未接入对应 UI；设置页内部虽然保留了 `Tag过滤` 占位子面板结构，但入口按钮当前未开放。
 - 草稿 Tag 属于正常数据库记录，只是通过 `created_by` 被隐藏；调试数据库时要注意区分。

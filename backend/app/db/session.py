@@ -27,11 +27,9 @@ def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_db()
     from app.services.category_service import backfill_category_ids_from_legacy, ensure_default_category_exists
-    from app.services.tag_seed_service import seed_initial_tags_if_needed
 
     ensure_default_category_exists()
     backfill_category_ids_from_legacy()
-    seed_initial_tags_if_needed()
     _db_initialized = True
 
 

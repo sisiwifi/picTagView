@@ -59,6 +59,11 @@
   opacity: 0.5;
 }
 
+.tag-chip--extra-action {
+  min-width: 1.36rem;
+  padding: 0.14rem 0.44rem;
+}
+
 .tag-chip-list--compact .tag-chip {
   min-height: 1.36rem;
   padding: 0.14rem 0.5rem;

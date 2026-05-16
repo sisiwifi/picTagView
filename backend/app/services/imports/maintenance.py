@@ -17,6 +17,13 @@ from app.services.category_service import DEFAULT_CATEGORY_ID
 from app.services.cover_service import build_asset_cover_payload, cover_is_manual, extract_cover_photo_id
 from app.services.file_scanner import list_image_files
 from app.services.parallel_processor import process_from_paths, process_hash_only_from_paths
+from app.services.recent_import_service import record_recent_import_operation
+from app.services.tag_match_service import (
+    apply_usage_count_deltas,
+    load_tag_match_context,
+    now_tag_timestamp,
+    touch_tag_last_used,
+)
 
 from .hash_index import add_to_hash_index, load_hash_index, rebuild_hash_index, save_hash_index
 from .helpers import (
@@ -34,6 +41,7 @@ from .helpers import (
     to_project_relative,
     upsert_thumb,
 )
+from .pipeline import apply_import_filename_tags
 
 
 _REFRESH_DB_COMMIT_BATCH_SIZE = 50
@@ -429,6 +437,41 @@ def _normalize_positive_ids(values: list[int] | None) -> list[int]:
     return sorted(normalized)
 
 
+def _collect_recent_snapshot_payload(outcomes: list[dict[str, object]]) -> dict[str, list[int] | list[str]]:
+    successful_image_ids: list[int] = []
+    direct_image_ids: list[int] = []
+    top_album_public_ids: list[str] = []
+    seen_successful: set[int] = set()
+    seen_direct: set[int] = set()
+    seen_album_public_ids: set[str] = set()
+
+    for outcome in outcomes:
+        if outcome.get("status") not in {"created", "attached"}:
+            continue
+
+        image_id = outcome.get("image_id")
+        if isinstance(image_id, int) and image_id > 0 and image_id not in seen_successful:
+            successful_image_ids.append(image_id)
+            seen_successful.add(image_id)
+
+        if outcome.get("is_direct") is True and isinstance(image_id, int) and image_id > 0 and image_id not in seen_direct:
+            direct_image_ids.append(image_id)
+            seen_direct.add(image_id)
+
+        top_album_public_id = outcome.get("top_album_public_id")
+        if isinstance(top_album_public_id, str):
+            candidate = top_album_public_id.strip()
+            if candidate and candidate not in seen_album_public_ids:
+                top_album_public_ids.append(candidate)
+                seen_album_public_ids.add(candidate)
+
+    return {
+        "successful_image_ids": successful_image_ids,
+        "direct_image_ids": direct_image_ids,
+        "top_album_public_ids": top_album_public_ids,
+    }
+
+
 def _repair_targeted_cache_entries(
     image_ids: list[int] | None = None,
     trash_entry_ids: list[int] | None = None,
@@ -590,13 +633,13 @@ def _repair_targeted_cache_entries(
 def ingest_media_entries(
     entries: list[tuple[str, Path]],
     generate_thumbs: bool = True,
-) -> tuple[int, int, list[dict[str, str]]]:
+) -> tuple[int, int, list[dict[str, object]]]:
     if not entries:
         return 0, 0, []
 
     created = 0
     hash_conflicts = 0
-    outcomes: list[dict[str, str]] = []
+    outcomes: list[dict[str, object]] = []
     proc_entries = [(str(index), str(path)) for index, (_rel, path) in enumerate(entries)]
     proc = (
         process_from_paths(proc_entries, TEMP_DIR)
@@ -605,6 +648,10 @@ def ingest_media_entries(
     )
 
     with get_session() as session:
+        tag_match_context = load_tag_match_context(session, skip_tag_query_when_disabled=True)
+        tag_usage_deltas: dict[int, int] = {}
+        touched_tag_ids: set[int] = set()
+
         for index, (rel_path, path) in enumerate(entries):
             result = proc.get(str(index), (None, None, "no result", None, None, None, None, None, None))
             file_hash, thumb_path_str, _error = result[0], result[1], result[2]
@@ -685,8 +732,21 @@ def ingest_media_entries(
                     existing.category_id = DEFAULT_CATEGORY_ID
                 if not existing.date_group:
                     existing.date_group = date_group
+                apply_import_filename_tags(
+                    existing,
+                    path.name,
+                    tag_match_context,
+                    usage_deltas=tag_usage_deltas,
+                    touched_tag_ids=touched_tag_ids,
+                )
                 session.add(existing)
-                outcomes.append({"rel_path": rel_path, "status": "attached"})
+                outcomes.append({
+                    "rel_path": rel_path,
+                    "status": "attached",
+                    "image_id": int(existing.id) if isinstance(existing.id, int) else None,
+                    "is_direct": not subdir_chain,
+                    "top_album_public_id": public_ids[0] if subdir_chain and public_ids else None,
+                })
                 continue
 
             stat = path.stat()
@@ -725,6 +785,13 @@ def ingest_media_entries(
                 collection=[],
             )
             apply_animation_metadata(asset, is_animated, frame_count, animation_format)
+            apply_import_filename_tags(
+                asset,
+                path.name,
+                tag_match_context,
+                usage_deltas=tag_usage_deltas,
+                touched_tag_ids=touched_tag_ids,
+            )
             session.add(asset)
             session.flush()
             if album_public_ids and asset.id is not None:
@@ -733,14 +800,24 @@ def ingest_media_entries(
                 if leaf_album and leaf_album.id is not None:
                     session.add(AlbumImage(album_id=leaf_album.id, image_id=asset.id))
             created += 1
-            outcomes.append({"rel_path": rel_path, "status": "created"})
+            outcomes.append({
+                "rel_path": rel_path,
+                "status": "created",
+                "image_id": int(asset.id) if isinstance(asset.id, int) else None,
+                "is_direct": not subdir_chain,
+                "top_album_public_id": album_public_ids[0] if album_public_ids else None,
+            })
 
+        if touched_tag_ids:
+            touch_tag_last_used(tag_match_context.tags_by_id, touched_tag_ids, now_tag_timestamp())
+        if tag_usage_deltas:
+            apply_usage_count_deltas(tag_match_context.tags_by_id, tag_usage_deltas)
         session.commit()
 
     return created, hash_conflicts, outcomes
 
 
-def _ingest_new_media_files_full(active_album_paths: set[str]) -> tuple[int, int]:
+def _ingest_new_media_files_full(active_album_paths: set[str]) -> tuple[int, int, list[dict[str, object]]]:
     _ = active_album_paths
 
     all_files = [path for path in list_image_files(MEDIA_DIR) if path.is_file()]
@@ -756,10 +833,10 @@ def _ingest_new_media_files_full(active_album_paths: set[str]) -> tuple[int, int
 
     unknown = [(rel_path, path) for rel_path, path in all_entries if rel_path not in known_paths]
     if not unknown:
-        return 0, 0
+        return 0, 0, []
 
-    new_ingested, hash_conflicts, _outcomes = ingest_media_entries(unknown)
-    return new_ingested, hash_conflicts
+    new_ingested, hash_conflicts, outcomes = ingest_media_entries(unknown)
+    return new_ingested, hash_conflicts, outcomes
 
 
 def refresh_library(
@@ -805,6 +882,11 @@ def refresh_library(
     hash_conflicts = 0
     non_album_deduped = 0
     cleaned_paths = 0
+    recent_snapshot_payload: dict[str, list[int] | list[str]] = {
+        "successful_image_ids": [],
+        "direct_image_ids": [],
+        "top_album_public_ids": [],
+    }
     orphan_refresh_result = {
         "orphan_albums_migrated": 0,
         "orphan_images_migrated": 0,
@@ -817,7 +899,8 @@ def refresh_library(
     pruned, non_album_deduped, cleaned_paths, active_album_paths = reconcile_library_paths()
 
     if mode == "full":
-        new_ingested, hash_conflicts = _ingest_new_media_files_full(active_album_paths)
+        new_ingested, hash_conflicts, ingest_outcomes = _ingest_new_media_files_full(active_album_paths)
+        recent_snapshot_payload = _collect_recent_snapshot_payload(ingest_outcomes)
 
     with get_session() as session:
         live_hashes: set[str] = set()
@@ -971,6 +1054,18 @@ def refresh_library(
         image_ids=normalized_repair_image_ids,
         trash_entry_ids=normalized_repair_trash_entry_ids,
     )
+
+    successful_image_ids = recent_snapshot_payload["successful_image_ids"]
+    direct_image_ids = recent_snapshot_payload["direct_image_ids"]
+    top_album_public_ids = recent_snapshot_payload["top_album_public_ids"]
+    if mode == "full" and (successful_image_ids or direct_image_ids or top_album_public_ids):
+        record_recent_import_operation(
+            successful_image_ids=successful_image_ids,
+            preview_image_ids=successful_image_ids,
+            direct_image_ids=direct_image_ids,
+            top_album_public_ids=top_album_public_ids,
+            mode="replace",
+        )
 
     rebuild_hash_index()
     recalculate_album_counts()

@@ -52,6 +52,11 @@ def _asset_time_sort_key(asset: ImageAsset) -> tuple[int, str, int]:
     return ts, _item_sort_key(asset.full_filename), int(asset.id or 0)
 
 
+def _asset_latest_first_sort_key(asset: ImageAsset) -> tuple[int, str, int]:
+    ts = _to_unix_ts(asset.file_created_at or asset.imported_at or asset.created_at) or 0
+    return -ts, _item_sort_key(asset.full_filename), -int(asset.id or 0)
+
+
 def _build_image_item(
     asset: ImageAsset,
     preview_resolver: AssetPreviewResolver,
@@ -137,9 +142,11 @@ def _build_overview_items(
     preview_resolver: AssetPreviewResolver,
     *,
     limit: int,
+    latest_first: bool = False,
 ) -> list[DateItem]:
     items: list[DateItem] = []
-    for asset in sorted(assets, key=_asset_time_sort_key):
+    sort_key = _asset_latest_first_sort_key if latest_first else _asset_time_sort_key
+    for asset in sorted(assets, key=sort_key):
         item = _build_image_item(asset, preview_resolver)
         if item is not None:
             items.append(item)
@@ -173,7 +180,7 @@ def recent_overview(limit: int = Query(default=11, ge=1, le=60)) -> GalleryOverv
         return GalleryOverviewResponse(
             scope="recent",
             total=len(preview_assets),
-            items=_build_overview_items(preview_assets, preview_resolver, limit=limit),
+            items=_build_overview_items(preview_assets, preview_resolver, limit=limit, latest_first=True),
         )
 
 

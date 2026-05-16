@@ -137,7 +137,7 @@ def stage_package(staging_root: Path, runtime_source: Path | None) -> Path:
     log("Copying backend application...")
     copy_tree(BACKEND_DIR / "app", package_root / "backend" / "app")
     shutil.copy2(BACKEND_DIR / "requirements.txt", package_root / "backend" / "requirements.txt")
-    copy_file(INITIAL_TAG_EXPORT, package_root / "backend" / "data" / "initial_tags_export.json")
+    copy_file(INITIAL_TAG_EXPORT, package_root / "tags_export.json")
 
     frontend_dist = FRONTEND_DIR / "dist"
     if not frontend_dist.is_dir():
@@ -401,7 +401,7 @@ def stage_package(staging_root: Path, runtime_source: Path | None) -> Path:
         "5. 首次运行时，程序会自动创建 backend/data、backend/temp、backend/data/cache、media、trash 等运行目录。\r\n"
         "6. 如果关闭管理窗口，启动器会同步停止后端服务。\r\n"
         "7. 如果端口被占用，请关闭占用该端口的程序，或修改 config.json 后重新启动。\r\n"
-        "8. 便携包内已包含 backend/data/initial_tags_export.json；当数据库中还没有正式标签时，首次启动会自动将其作为初始 tag 导入。\r\n"
+        "8. 便携包根目录已附带 tags_export.json；如需导入初始标签，请按需通过程序里的标签导入功能手动导入。\r\n"
         "\r\n"
         "配置文件示例\r\n"
         "{\r\n"

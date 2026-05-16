@@ -16,6 +16,7 @@ from app.api.schemas import (
     ImageMetaResponse,
     ImageExportRequest,
     ImageExportResponse,
+    ImageTagFilenameSyncRequest,
     ImageMetadataUpdateItem,
     ImageMetadataUpdateRequest,
     ImageMetadataUpdateResponse,
@@ -41,6 +42,7 @@ from app.services.export_service import (
 from app.services.imports.helpers import apply_file_times, to_project_relative
 from app.services.imports.maintenance import _ensure_album_chain, recalculate_album_counts
 from app.services.tag_match_service import (
+    build_filename_with_missing_tags,
     DRAFT_CREATED_BY,
     load_tag_match_context,
     match_filename_tags,
@@ -227,6 +229,204 @@ def _sync_tag_usage_count(session, tags_by_id: dict[int, Tag], affected_tag_ids:
     return changed
 
 
+def _normalize_image_metadata_targets(raw_items) -> list[tuple[int, str | None]]:
+    targets: list[tuple[int, str | None]] = []
+    seen_targets: set[tuple[int, str | None]] = set()
+    for item in raw_items or []:
+        image_id = int(item.image_id)
+        normalized_path = normalize_stored_path(item.media_rel_path) if item.media_rel_path else None
+        key = (image_id, normalized_path)
+        if key in seen_targets:
+            continue
+        seen_targets.add(key)
+        targets.append(key)
+    return targets
+
+
+def _apply_image_metadata_updates(
+    session,
+    targets: list[tuple[int, str | None]],
+    *,
+    requested_time_ms: int | None = None,
+    selected_category_id: int | None = None,
+    requested_name_resolver=None,
+) -> ImageMetadataUpdateResponse:
+    wants_name_update = requested_name_resolver is not None
+
+    image_ids = sorted({image_id for image_id, _media_rel_path in targets})
+    assets = session.exec(
+        select(ImageAsset).where(ImageAsset.id.in_(image_ids))  # type: ignore[arg-type]
+    ).all()
+    assets_by_id = {
+        int(asset.id): asset
+        for asset in assets
+        if asset.id is not None
+    }
+
+    planned_operations: list[dict] = []
+    reserved_targets: set[str] = set()
+
+    for image_id, requested_media_rel_path in targets:
+        asset = assets_by_id.get(image_id)
+        if not asset:
+            raise HTTPException(status_code=404, detail=f"Image not found: {image_id}")
+
+        known_paths = [
+            normalize_stored_path(path)
+            for path in (asset.media_path or [])
+            if isinstance(path, str) and path
+        ]
+        source_media_rel_path = requested_media_rel_path or (known_paths[0] if known_paths else None)
+        if not source_media_rel_path:
+            raise HTTPException(status_code=404, detail=f"Image path not found: {image_id}")
+        if source_media_rel_path not in known_paths:
+            raise HTTPException(status_code=404, detail=f"Image path not found: {source_media_rel_path}")
+
+        parsed = _parse_media_rel_path(source_media_rel_path)
+        if not parsed:
+            raise HTTPException(status_code=400, detail=f"Unsupported media path: {source_media_rel_path}")
+        current_date_group, subdir_chain, current_filename = parsed
+
+        source_path = resolve_stored_path(source_media_rel_path)
+        if not source_path or not source_path.exists():
+            raise HTTPException(status_code=404, detail=f"File not found on disk: {source_media_rel_path}")
+
+        target_filename = current_filename
+        if wants_name_update:
+            requested_name = requested_name_resolver(asset, source_media_rel_path, current_filename)
+            if requested_name is None:
+                requested_name = current_filename
+            target_filename = _normalize_requested_filename(str(requested_name or ""), current_filename)
+
+        target_date_group = current_date_group
+        if requested_time_ms is not None:
+            target_date_group = datetime.fromtimestamp(requested_time_ms / 1000.0).strftime("%Y-%m")
+
+        target_dir = source_path.parent
+        if target_date_group != current_date_group:
+            target_dir = Path("media") / target_date_group
+            for segment in subdir_chain:
+                target_dir = target_dir / segment
+            target_dir = resolve_stored_path(str(target_dir)) or source_path.parent
+
+        final_target_path = source_path
+        if target_dir != source_path.parent or target_filename != current_filename:
+            final_target_path = _reserve_unique_target_path(target_dir, target_filename, reserved_targets)
+
+        planned_operations.append(
+            {
+                "asset": asset,
+                "source_media_rel_path": source_media_rel_path,
+                "source_path": source_path,
+                "current_filename": current_filename,
+                "target_filename": final_target_path.name,
+                "target_path": final_target_path,
+                "target_media_rel_path": normalize_stored_path(to_project_relative(final_target_path)),
+                "renamed": final_target_path.name != current_filename,
+                "moved": final_target_path.parent != source_path.parent,
+            }
+        )
+
+    applied_plans: list[dict] = []
+    response_items: list[ImageMetadataUpdateItem] = []
+    touched_asset_ids: set[int] = set()
+    requires_album_recalc = False
+
+    try:
+        for plan in planned_operations:
+            source_path = plan["source_path"]
+            target_path = plan["target_path"]
+            current_path = source_path
+
+            original_stat = current_path.stat()
+            original_time_ms = int(min(original_stat.st_ctime, original_stat.st_mtime) * 1000)
+
+            if target_path != source_path:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(source_path), str(target_path))
+                current_path = target_path
+                requires_album_recalc = True
+
+            if requested_time_ms is not None:
+                apply_file_times(current_path, requested_time_ms)
+
+            asset = plan["asset"]
+            normalized_paths = [
+                normalize_stored_path(path)
+                for path in (asset.media_path or [])
+                if isinstance(path, str) and path
+            ]
+            updated_paths: list[str] = []
+            replaced = False
+            for media_rel_path in normalized_paths:
+                if not replaced and media_rel_path == plan["source_media_rel_path"]:
+                    updated_paths.append(plan["target_media_rel_path"])
+                    replaced = True
+                else:
+                    updated_paths.append(media_rel_path)
+            if not replaced:
+                raise HTTPException(status_code=404, detail=f"Image path not found: {plan['source_media_rel_path']}")
+
+            asset.media_path = updated_paths
+            if wants_name_update:
+                asset.full_filename = plan["target_filename"]
+            if selected_category_id is not None:
+                asset.category_id = selected_category_id
+            if requested_time_ms is not None:
+                asset.file_created_at = datetime.fromtimestamp(requested_time_ms / 1000.0)
+            _rebuild_asset_path_metadata(session, asset)
+            session.add(asset)
+
+            if asset.id is not None:
+                touched_asset_ids.add(int(asset.id))
+
+            applied_plans.append(
+                {
+                    "current_path": current_path,
+                    "original_path": source_path,
+                    "original_time_ms": original_time_ms,
+                }
+            )
+
+            response_items.append(
+                ImageMetadataUpdateItem(
+                    image_id=int(asset.id or 0),
+                    source_media_rel_path=plan["source_media_rel_path"],
+                    media_rel_path=plan["target_media_rel_path"],
+                    name=asset.full_filename or plan["target_filename"],
+                    category_id=asset.category_id or DEFAULT_CATEGORY_ID,
+                    file_created_at=asset.file_created_at,
+                    renamed=bool(plan["renamed"]),
+                    moved=bool(plan["moved"]),
+                )
+            )
+
+        if touched_asset_ids and requires_album_recalc:
+            touched_album_asset_ids = sorted(touched_asset_ids)
+            session.connection().execute(
+                delete(AlbumImage).where(AlbumImage.image_id.in_(touched_album_asset_ids))  # type: ignore[arg-type]
+            )
+        session.commit()
+    except HTTPException:
+        session.rollback()
+        _rollback_metadata_operations(applied_plans)
+        raise
+    except Exception as exc:
+        session.rollback()
+        _rollback_metadata_operations(applied_plans)
+        raise HTTPException(status_code=500, detail=f"更新图片元数据失败: {exc}") from exc
+
+    if requires_album_recalc:
+        recalculate_album_counts()
+
+    return ImageMetadataUpdateResponse(
+        items=response_items,
+        updated_count=len({item.image_id for item in response_items}),
+        renamed_count=sum(1 for item in response_items if item.renamed),
+        moved_count=sum(1 for item in response_items if item.moved),
+    )
+
+
 @router.get("/api/images/meta", response_model=ImageMetaResponse)
 def image_meta(ids: str = Query(..., description="Comma-separated image ids")) -> ImageMetaResponse:
     raw_ids = [segment.strip() for segment in ids.split(",")]
@@ -288,16 +488,7 @@ def update_image_metadata(body: ImageMetadataUpdateRequest) -> ImageMetadataUpda
     if not any((wants_name_update, wants_category_update, wants_created_update)):
         raise HTTPException(status_code=400, detail="至少提供一个可更新字段")
 
-    targets: list[tuple[int, str | None]] = []
-    seen_targets: set[tuple[int, str | None]] = set()
-    for item in body.items:
-        image_id = int(item.image_id)
-        normalized_path = normalize_stored_path(item.media_rel_path) if item.media_rel_path else None
-        key = (image_id, normalized_path)
-        if key in seen_targets:
-            continue
-        seen_targets.add(key)
-        targets.append(key)
+    targets = _normalize_image_metadata_targets(body.items)
 
     if not targets:
         return ImageMetadataUpdateResponse(items=[], updated_count=0, renamed_count=0, moved_count=0)
@@ -314,175 +505,37 @@ def update_image_metadata(body: ImageMetadataUpdateRequest) -> ImageMetadataUpda
         if selected_category_id is not None:
             require_category(session, selected_category_id)
 
-        image_ids = sorted({image_id for image_id, _media_rel_path in targets})
-        assets = session.exec(
-            select(ImageAsset).where(ImageAsset.id.in_(image_ids))  # type: ignore[arg-type]
-        ).all()
-        assets_by_id = {
-            int(asset.id): asset
-            for asset in assets
-            if asset.id is not None
-        }
+        return _apply_image_metadata_updates(
+            session,
+            targets,
+            requested_time_ms=requested_time_ms,
+            selected_category_id=selected_category_id,
+            requested_name_resolver=(
+                (lambda _asset, _source_media_rel_path, _current_filename: str(body.name or ""))
+                if wants_name_update else None
+            ),
+        )
 
-        planned_operations: list[dict] = []
-        reserved_targets: set[str] = set()
 
-        for image_id, requested_media_rel_path in targets:
-            asset = assets_by_id.get(image_id)
-            if not asset:
-                raise HTTPException(status_code=404, detail=f"Image not found: {image_id}")
+@router.post("/api/images/tags/sync-filename", response_model=ImageMetadataUpdateResponse)
+def sync_image_tags_to_filename(body: ImageTagFilenameSyncRequest) -> ImageMetadataUpdateResponse:
+    targets = _normalize_image_metadata_targets(body.items)
+    if not targets:
+        return ImageMetadataUpdateResponse(items=[], updated_count=0, renamed_count=0, moved_count=0)
 
-            known_paths = [
-                normalize_stored_path(path)
-                for path in (asset.media_path or [])
-                if isinstance(path, str) and path
-            ]
-            source_media_rel_path = requested_media_rel_path or (known_paths[0] if known_paths else None)
-            if not source_media_rel_path:
-                raise HTTPException(status_code=404, detail=f"Image path not found: {image_id}")
-            if source_media_rel_path not in known_paths:
-                raise HTTPException(status_code=404, detail=f"Image path not found: {source_media_rel_path}")
-
-            parsed = _parse_media_rel_path(source_media_rel_path)
-            if not parsed:
-                raise HTTPException(status_code=400, detail=f"Unsupported media path: {source_media_rel_path}")
-            current_date_group, subdir_chain, current_filename = parsed
-
-            source_path = resolve_stored_path(source_media_rel_path)
-            if not source_path or not source_path.exists():
-                raise HTTPException(status_code=404, detail=f"File not found on disk: {source_media_rel_path}")
-
-            target_filename = current_filename
-            if wants_name_update:
-                target_filename = _normalize_requested_filename(body.name or "", current_filename)
-
-            target_date_group = current_date_group
-            if body.file_created_at is not None:
-                target_date_group = body.file_created_at.strftime("%Y-%m")
-
-            target_dir = source_path.parent
-            if target_date_group != current_date_group:
-                target_dir = Path("media") / target_date_group
-                for segment in subdir_chain:
-                    target_dir = target_dir / segment
-                target_dir = resolve_stored_path(str(target_dir)) or source_path.parent
-
-            final_target_path = source_path
-            if target_dir != source_path.parent or target_filename != current_filename:
-                final_target_path = _reserve_unique_target_path(target_dir, target_filename, reserved_targets)
-
-            planned_operations.append(
-                {
-                    "asset": asset,
-                    "source_media_rel_path": source_media_rel_path,
-                    "source_path": source_path,
-                    "current_filename": current_filename,
-                    "target_filename": final_target_path.name,
-                    "target_path": final_target_path,
-                    "target_media_rel_path": normalize_stored_path(to_project_relative(final_target_path)),
-                    "renamed": final_target_path.name != current_filename,
-                    "moved": final_target_path.parent != source_path.parent,
-                }
-            )
-
-        applied_plans: list[dict] = []
-        response_items: list[ImageMetadataUpdateItem] = []
-        touched_asset_ids: set[int] = set()
-        requires_album_recalc = False
-
-        try:
-            for plan in planned_operations:
-                source_path = plan["source_path"]
-                target_path = plan["target_path"]
-                current_path = source_path
-
-                original_stat = current_path.stat()
-                original_time_ms = int(min(original_stat.st_ctime, original_stat.st_mtime) * 1000)
-
-                if target_path != source_path:
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(source_path), str(target_path))
-                    current_path = target_path
-                    requires_album_recalc = True
-
-                if requested_time_ms is not None:
-                    apply_file_times(current_path, requested_time_ms)
-
-                asset = plan["asset"]
-                normalized_paths = [
-                    normalize_stored_path(path)
-                    for path in (asset.media_path or [])
-                    if isinstance(path, str) and path
-                ]
-                updated_paths: list[str] = []
-                replaced = False
-                for media_rel_path in normalized_paths:
-                    if not replaced and media_rel_path == plan["source_media_rel_path"]:
-                        updated_paths.append(plan["target_media_rel_path"])
-                        replaced = True
-                    else:
-                        updated_paths.append(media_rel_path)
-                if not replaced:
-                    raise HTTPException(status_code=404, detail=f"Image path not found: {plan['source_media_rel_path']}")
-
-                asset.media_path = updated_paths
-                if wants_name_update:
-                    asset.full_filename = plan["target_filename"]
-                if selected_category_id is not None:
-                    asset.category_id = selected_category_id
-                if body.file_created_at is not None:
-                    asset.file_created_at = body.file_created_at
-                _rebuild_asset_path_metadata(session, asset)
-                session.add(asset)
-
-                if asset.id is not None:
-                    touched_asset_ids.add(int(asset.id))
-
-                applied_plans.append(
-                    {
-                        "current_path": current_path,
-                        "original_path": source_path,
-                        "original_time_ms": original_time_ms,
-                    }
+    with get_session() as session:
+        tag_match_context = load_tag_match_context(session)
+        return _apply_image_metadata_updates(
+            session,
+            targets,
+            requested_name_resolver=(
+                lambda asset, _source_media_rel_path, current_filename: build_filename_with_missing_tags(
+                    current_filename,
+                    sanitize_tag_ids(asset.tags or []),
+                    tag_match_context,
                 )
-
-                response_items.append(
-                    ImageMetadataUpdateItem(
-                        image_id=int(asset.id or 0),
-                        source_media_rel_path=plan["source_media_rel_path"],
-                        media_rel_path=plan["target_media_rel_path"],
-                        name=asset.full_filename or plan["target_filename"],
-                        category_id=asset.category_id or DEFAULT_CATEGORY_ID,
-                        file_created_at=asset.file_created_at,
-                        renamed=bool(plan["renamed"]),
-                        moved=bool(plan["moved"]),
-                    )
-                )
-
-            if touched_asset_ids and requires_album_recalc:
-                touched_album_asset_ids = sorted(touched_asset_ids)
-                session.connection().execute(
-                    delete(AlbumImage).where(AlbumImage.image_id.in_(touched_album_asset_ids))  # type: ignore[arg-type]
-                )
-            session.commit()
-        except HTTPException:
-            session.rollback()
-            _rollback_metadata_operations(applied_plans)
-            raise
-        except Exception as exc:
-            session.rollback()
-            _rollback_metadata_operations(applied_plans)
-            raise HTTPException(status_code=500, detail=f"更新图片元数据失败: {exc}") from exc
-
-    if requires_album_recalc:
-        recalculate_album_counts()
-
-    return ImageMetadataUpdateResponse(
-        items=response_items,
-        updated_count=len({item.image_id for item in response_items}),
-        renamed_count=sum(1 for item in response_items if item.renamed),
-        moved_count=sum(1 for item in response_items if item.moved),
-    )
+            ),
+        )
 
 
 @router.post("/api/images/export", response_model=ImageExportResponse)
