@@ -12,44 +12,6 @@
       <TagManagerPanel :api-base="API_BASE" @back="closeTagManagerPanel" />
     </template>
 
-    <template v-else-if="activePanel === 'tag-filter'">
-      <BreadcrumbHeader
-        :show-back="true"
-        :crumbs="tagFilterCrumbs"
-        @back="closeTagFilterPlaceholder"
-      />
-
-      <div class="settings-card settings-card--subpage">
-        <div class="subpage-intro">
-          <div class="subpage-intro__copy">
-            <h3 class="card-title">Tag过滤</h3>
-            <p class="card-desc">这里预留给文件名匹配相关的规则配置，当前只保留二级页结构与返回入口。</p>
-          </div>
-          <span class="placeholder-badge">占位</span>
-        </div>
-
-        <div class="placeholder-panel">
-          <p class="placeholder-panel__title">计划纳入的配置</p>
-          <div class="placeholder-chip-list">
-            <span class="placeholder-chip">噪声词列表</span>
-            <span class="placeholder-chip">最小 token 长度</span>
-            <span class="placeholder-chip">纯数字过滤</span>
-            <span class="placeholder-chip">匹配预览</span>
-          </div>
-        </div>
-
-        <div class="setting-row setting-row--compact">
-          <div class="setting-info">
-            <span class="setting-label">当前状态</span>
-            <span class="setting-desc">后续再接入实际配置、保存与预览逻辑；现在仅用于占位和导航结构调整。</span>
-          </div>
-          <button class="btn btn--secondary" type="button" @click="closeTagFilterPlaceholder">
-            返回标签管理
-          </button>
-        </div>
-      </div>
-    </template>
-
     <template v-else>
       <TopLevelPageHeader
         title="设置"
@@ -239,7 +201,7 @@
 
       <div class="settings-card">
         <h3 class="card-title">标签管理</h3>
-        <p class="card-desc">统一处理标签字典导入导出，以及文件名匹配规则的后续配置入口。</p>
+        <p class="card-desc">统一处理标签字典导入导出，以及标签管理二级面板入口。</p>
 
         <div class="setting-row setting-row--compact">
           <div class="setting-info">
@@ -264,16 +226,6 @@
             </button>
           </div>
         </div>
-
-        <!-- <div class="setting-row setting-row--compact">
-          <div class="setting-info">
-            <span class="setting-label">Tag过滤</span>
-            <span class="setting-desc">进入二级页配置噪声词与文件名匹配规则，当前仅作占位。</span>
-          </div>
-          <button class="btn btn--secondary" type="button" @click="openTagFilterPlaceholder">
-            进入配置
-          </button>
-        </div> -->
 
         <p v-if="tagError" class="viewer-error">{{ tagError }}</p>
       </div>
@@ -390,7 +342,6 @@
 </template>
 
 <script>
-import BreadcrumbHeader from '../components/BreadcrumbHeader.vue'
 import TagManagerPanel from '../components/TagManagerPanel.vue'
 import TopLevelPageHeader from './TopLevelPageHeader.vue'
 import TagImportDialog from '../components/TagImportDialog.vue'
@@ -417,7 +368,6 @@ function toErrorMessage(err) {
 export default {
   name: 'SettingsPage',
   components: {
-    BreadcrumbHeader,
     TagManagerPanel,
     TopLevelPageHeader,
     TagImportDialog,
@@ -475,14 +425,6 @@ export default {
   },
 
   computed: {
-    tagFilterCrumbs() {
-      return [
-        { label: '设置', title: '设置' },
-        { label: '标签管理', title: '标签管理' },
-        { label: 'Tag过滤', title: 'Tag过滤', current: true },
-      ]
-    },
-
     currentViewer() {
       if (!this.selectedViewerId) return null
       return this.viewerOptions.find(v => v.id === this.selectedViewerId) || null
@@ -533,14 +475,6 @@ export default {
     },
 
     closeTagManagerPanel() {
-      this.activePanel = ''
-    },
-
-    openTagFilterPlaceholder() {
-      this.activePanel = 'tag-filter'
-    },
-
-    closeTagFilterPlaceholder() {
       this.activePanel = ''
     },
 
@@ -1072,26 +1006,6 @@ export default {
 
 .subpage-intro__copy {
   @apply flex flex-col gap-1 min-w-0;
-}
-
-.placeholder-badge {
-  @apply inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200;
-}
-
-.placeholder-panel {
-  @apply rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 flex flex-col gap-2;
-}
-
-.placeholder-panel__title {
-  @apply text-xs font-semibold text-slate-600 m-0;
-}
-
-.placeholder-chip-list {
-  @apply flex flex-wrap gap-2;
-}
-
-.placeholder-chip {
-  @apply inline-flex items-center rounded-full px-2.5 py-1 text-[11px] text-slate-500 bg-white border border-slate-200;
 }
 
 @media (max-width: 640px) {

@@ -167,9 +167,8 @@ python build\package_portable.py --runtime-python-dir D:\path\to\portable-python
   - 浏览缓存缩略图短边尺寸
   - 月份封面尺寸
   - 页面浏览模式与滚动窗口范围
-  - 文件名自动打标设置 `tag_match_setting`
 - 搜索当前采用两段式交互：`/search` 只负责输入、模式识别和一级预览，完整结果列表复用 `BrowsePage.vue` 挂在 `/search/results?q=...`。
-- 文件名自动打标已经接入导入流程和手动文件名匹配接口，但当前前端设置页还没有图形化配置入口；如需调整，只能通过后端 API 或 `app_settings.json`。
+- 文件名自动打标已经接入导入流程和手动文件名匹配接口，当前由后端固定默认规则处理，不再暴露单独的系统设置项。
 - 标签草稿通过 `POST /api/tags/draft` 预占，草稿标签会被列表、导出和打标接口过滤；保存时通过 `PATCH /api/tags/{id}` 转正。
 - 删除正式 Tag 时，后端会在同一数据库事务中同步清理 `ImageAsset.tags` 里的对应 id；设置页“管理标签”面板支持批量删除，删除前必须输入 8 位随机确认码。
 - 设置页标签管理除了导出标签 / 导入标签 / 管理标签三枚纵向按钮，还提供内部二级面板：默认全量加载全部 Tag，可切到分页模式；表格支持列级筛选、样式预览和行末编辑；批量新增使用固定尺寸的表格式弹窗，逐行填写 `name / display_name / description / type`，并按 7 组 chip 样式预设自动轮换默认值。

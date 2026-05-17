@@ -11,7 +11,8 @@ if str(BACKEND_DIR) not in sys.path:
 from app.api.common import album_media_predicate, date_group_media_predicate, pick_asset_media_path
 from app.models.image_asset import ImageAsset
 from app.models.trash_entry import TrashEntry
-from app.services.imports.helpers import unique_dir_dest
+from app.services.export_service import reserve_unique_target_path
+from app.services.imports.helpers import unique_dest, unique_dir_dest
 from app.services import trash_service
 
 
@@ -48,6 +49,16 @@ class MediaPathHelperTests(unittest.TestCase):
 
 
 class UniqueDirDestTests(unittest.TestCase):
+    def test_unique_dest_appends_incrementing_suffix(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parent = Path(tmpdir)
+            (parent / 'photo.jpg').write_bytes(b'a')
+            (parent / 'photo_1.jpg').write_bytes(b'b')
+
+            candidate = unique_dest(parent, 'photo.jpg')
+
+            self.assertEqual(candidate, parent / 'photo_2.jpg')
+
     def test_unique_dir_dest_appends_incrementing_suffix(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             parent = Path(tmpdir)
@@ -57,6 +68,17 @@ class UniqueDirDestTests(unittest.TestCase):
             candidate = unique_dir_dest(parent, 'album')
 
             self.assertEqual(candidate, parent / 'album_2')
+
+    def test_reserve_unique_target_path_skips_reserved_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parent = Path(tmpdir)
+            reserved: set[str] = set()
+
+            first = reserve_unique_target_path(parent, 'photo.jpg', reserved)
+            second = reserve_unique_target_path(parent, 'photo.jpg', reserved)
+
+            self.assertEqual(first, parent / 'photo.jpg')
+            self.assertEqual(second, parent / 'photo_1.jpg')
 
 
 class TrashStorageHelperTests(unittest.TestCase):

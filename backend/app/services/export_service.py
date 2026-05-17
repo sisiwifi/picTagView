@@ -7,7 +7,7 @@ from threading import Lock
 
 from app.api.common import normalize_stored_path
 from app.core.config import MEDIA_DIR
-from app.services.imports.helpers import apply_file_times, unique_dir_dest
+from app.services.imports.helpers import apply_file_times, reserve_unique_name, unique_dir_dest
 
 _DIRECTORY_DIALOG_LOCK = Lock()
 
@@ -55,18 +55,7 @@ def select_directory_path(*, initial_dir: str | None = None, title: str = 'é€‰æ‹
 
 
 def reserve_unique_target_path(dest_dir: Path, filename: str, reserved: set[str] | None = None) -> Path:
-    reserved_targets = reserved if reserved is not None else set()
-    base_name = Path(filename).stem
-    suffix = Path(filename).suffix
-    index = 0
-    while True:
-        candidate_name = filename if index == 0 else f'{base_name}_{index}{suffix}'
-        candidate = dest_dir / candidate_name
-        candidate_key = str(candidate.resolve()).casefold()
-        if candidate_key not in reserved_targets and not candidate.exists():
-            reserved_targets.add(candidate_key)
-            return candidate
-        index += 1
+    return reserve_unique_name(dest_dir, filename, reserved=reserved)
 
 
 def source_time_ms(path: Path) -> int | None:

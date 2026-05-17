@@ -91,7 +91,6 @@
 | `system.py` | `GET/POST /api/system/cache-thumb-setting` | 浏览缓存缩略图尺寸配置 |
 | `system.py` | `GET/POST /api/system/month-cover-setting` | 月份封面尺寸配置 |
 | `system.py` | `GET/POST /api/system/page-config` | 浏览模式与滚动窗口范围配置 |
-| `system.py` | `GET/POST /api/system/tag-match-setting` | 文件名自动打标配置 |
 | `system.py` | `POST /api/system/select-directory` | 打开系统文件夹选择对话框，返回用户所选目录 |
 | `system.py` | `GET /api/system/viewer-info` | 当前系统默认查看器与应用内偏好 |
 | `system.py` | `GET /api/system/image-viewers` | 枚举可用查看器并返回图标 |
@@ -112,7 +111,6 @@
 | `services/imports/maintenance.py` | `quick/full` 刷新、路径对账、缺失预览修复、未入库图片收编 |
 | `services/imports/hash_index.py` | `.hash_index.json` 的加载、查询和重建 |
 | `services/imports/helpers.py` | 路径归一化、文件时间回写、缩略图条目更新等辅助函数 |
-| `services/tag_seed_service.py` | 提供从导出的 tags JSON 手动补种初始 Tag 的辅助逻辑，默认不在启动阶段自动执行 |
 | `services/image_frame_service.py` | 多帧图片首帧提取、动图识别、尺寸与帧数元数据归一化 |
 | `services/recent_import_service.py` | 维护“最近一批成功导入图片”的快照，支持按 replace/append 聚合同一前端导入会话 |
 | `services/parallel_processor.py` | 并行哈希、尺寸识别与月份封面生成 |
@@ -126,7 +124,7 @@
 | `services/trash_service.py` | 回收站列表、移入、还原、硬删除、清空、对账 |
 | `services/export_service.py` | 系统目录选择、图片/相册导出、冲突补号与文件/目录时间同步 |
 | `services/viewer_service.py` | Windows 查看器枚举、图标提取、应用内默认查看器启动 |
-| `services/app_settings_service.py` | `app_settings.json` 读写，持久化页面、缩略图和自动打标配置 |
+| `services/app_settings_service.py` | `app_settings.json` 读写，持久化页面、缩略图、月份封面和查看器偏好 |
 
 ## 4. 当前协议细节
 
@@ -144,7 +142,7 @@
   - `replace`：开始一次新的“最近导入”会话，重置旧快照
   - `append`：把后续批次合并到当前快照，解决前端分块上传导致的 recent 只显示最后一批问题
 - `RecentImportOperation.successful_image_ids` 当前是 recent 一级页的主数据源，记录该前端导入流程里所有成功导入的图片 id；旧的 `preview_image_ids` 仅保留兼容用途。
-- 如果 `tag_match_setting.enabled=true`，导入批次会在同一数据库事务内按文件名自动匹配 Tag，并以 `append_unique` 方式追加到图片 `tags`。
+- 导入批次会在同一数据库事务内按文件名自动匹配 Tag，并以 `append_unique` 方式追加到图片 `tags`；当前规则由 `services/tag_match_service.py` 内置默认值控制，不再持久化到 `app_settings.json`。
 - 导入期只会为本批次真正新增关联的 Tag 刷新 `last_used_at` 并增量同步 `usage_count`。
 - GIF、动态 WEBP 等多帧图片会在导入阶段统一抽取首帧生成 temp 缩略图与尺寸元数据，同时写入 `ImageAsset.is_animated + animation_meta`；其中 `animation_meta` 只在动图时保存 `frame_count / format`。
 
@@ -294,18 +292,12 @@
   - 状态接口通过 `cursor` 返回新增完成项，而不是每次全量返回
 - 浏览缓存缩略图对多帧图片也统一使用首帧，不再依赖 OpenCV 直接解码整段 GIF/WEBP 原始文件。
 
-### 4.8 页面配置与自动打标设置
+### 4.8 页面配置
 
 - `page_config` 当前持久化在 `backend/data/app_settings.json`，包含：
   - `browse_mode`: `scroll | paged`
   - `scroll_window_size`: `40-200`，步长 20，默认 100
-- `tag_match_setting` 当前也持久化在 `app_settings.json`，包含：
-  - `enabled`
-  - `noise_tokens`
-  - `min_token_length`
-  - `drop_numeric_only`
-  - `sort_mode`，当前固定为 `name_asc`
-- 后端已经提供 `GET/POST /api/system/tag-match-setting`，但当前前端设置页还没有实际入口。
+- 文件名自动打标不再有单独的系统设置项；当前由 `services/tag_match_service.py` 的固定默认规则统一处理。
 
 ### 4.9 回收站协议
 

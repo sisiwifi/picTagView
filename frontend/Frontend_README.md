@@ -65,6 +65,22 @@ frontend/
 - `BrowsePage.vue` 在多个路由间通过 `meta.reuseKey = 'browse'` 复用实例。
 - `GalleryPage.vue` 通过 `meta.keepAlive = true` 保留导入中的本地状态和队列。
 
+### 3.1 `src/pages` 页面职责速查
+
+| 文件 | 类型 | 当前职责 |
+| --- | --- | --- |
+| `HomePage.vue` | 路由页 | 首页仪表板，展示可见图片数、全局 Tag 数和可滚动 Tag 墙 |
+| `SearchPage.vue` | 路由页 | 顶层搜索输入、模式识别、按图搜索、时间范围辅助和一级预览 |
+| `BrowsePage.vue` | 共享路由页 | 承载搜索结果、标签、图库、日期、收藏、回收站等二级浏览契约 |
+| `TagOverviewPage.vue` | 路由页 | Tag 总览、分组筛选、草稿预占和编辑入口 |
+| `GalleryPage.vue` | 路由页 | 图库导入、刷新、孤立媒体提示，以及 recent/all 一级预览 |
+| `CalendarOverview.vue` | 路由页 | 日期总览和月份封面缓存修复入口 |
+| `FavoritesPage.vue` | 路由页 | 收藏夹总览和封面缓存触发入口 |
+| `SettingsPage.vue` | 路由页 | 系统设置、标签 JSON 导入导出、标签管理、查看器偏好入口 |
+| `CategorySettingsPage.vue` | 路由页 | 主分类创建、编辑、删除和显示范围维护 |
+| `TopLevelPageHeader.vue` | 共享页头 | 顶层路由共用的标题、导航和搜索框宿主 |
+| `topLevelPageConvention.js` | 页面约定模块 | 统一导出顶层导航、`API_BASE`、搜索模式识别和缩略图尺寸约定 |
+
 ## 4. 主要页面与交互
 
 ### 4.0 `HomePage.vue`
@@ -154,10 +170,9 @@ frontend/
   - 夜间模式占位按钮
 - 当前仍是占位的入口：
   - 夜间模式
-- `SettingsPage.vue` 内部当前有两个二级面板状态：
+- `SettingsPage.vue` 当前只有一个内部二级面板状态：
   - `activePanel = 'tag-manager'`：标签管理面板，默认全量加载全部 Tag，也可切到分页模式；支持按列筛选、样式预览与行末编辑；批量删除需输入 8 位随机确认码；批量新增使用固定尺寸的三级弹窗表格，逐行填写 `name / display_name / description / type`，并按 7 组 chip 样式预设自动轮换默认值
-  - `activePanel = 'tag-filter'`：保留的占位子面板，入口按钮当前仍被注释，不会在用户界面里显示
-- 注意：后端已有 `/api/system/tag-match-setting`，但设置页目前没有实际 UI 去编辑它。
+- 文件名自动打标仍然存在，但规则已经收敛到后端固定默认行为；设置页不再承载单独的打标配置入口。
 
 ### 4.6 `BrowsePage.vue`
 
@@ -245,13 +260,13 @@ frontend/
 
 ### 7.1 API 地址
 
-当前前端并没有通过代理访问后端，而是多处直接写死：
+当前前端并没有通过代理访问后端，而是统一通过 `src/utils/runtimeConfig.js` 解析 API 基址，再由 `src/pages/topLevelPageConvention.js` 导出：
 
 ```js
-const API_BASE = 'http://127.0.0.1:8000'
+export const API_BASE = resolveApiBase()
 ```
 
-这类常量目前出现在：
+默认回落地址仍是 `http://127.0.0.1:8000`。当前主要消费点包括：
 
 - `src/pages/topLevelPageConvention.js`
 - `src/utils/commonBrowsePage.js`
@@ -323,4 +338,4 @@ npm run lint
 - 前端依赖后端先启动，否则大部分页面会直接请求失败。
 - 当前 `vue.config.js` 没有启用代理配置。
 - `GalleryPage` 的保活依赖 `App.vue` 保持 `KeepAlive` 容器常驻；如果后续调整路由渲染结构，需要特别注意这一点。
-- 设置页只有 Tag JSON 导入导出，没有图形化的文件名自动打标设置入口；内部 `Tag过滤` 子面板目前仍是未开放的占位结构。
+- 设置页当前只保留实际生效的系统设置与标签管理入口；文件名自动打标规则由后端固定默认值处理，不再暴露独立配置 UI。

@@ -39,7 +39,7 @@ from app.services.export_service import (
     normalize_export_album_path,
     normalize_export_media_rel_path,
 )
-from app.services.imports.helpers import apply_file_times, to_project_relative
+from app.services.imports.helpers import apply_file_times, reserve_unique_name, to_project_relative
 from app.services.imports.maintenance import _ensure_album_chain, recalculate_album_counts
 from app.services.tag_match_service import (
     build_filename_with_missing_tags,
@@ -94,17 +94,7 @@ def _normalize_requested_filename(requested_name: str, current_filename: str) ->
 
 
 def _reserve_unique_target_path(dest_dir: Path, filename: str, reserved: set[str]) -> Path:
-    base_name = Path(filename).stem
-    suffix = Path(filename).suffix
-    index = 0
-    while True:
-        candidate_name = filename if index == 0 else f"{base_name}_{index}{suffix}"
-        candidate = dest_dir / candidate_name
-        candidate_key = str(candidate.resolve()).casefold()
-        if candidate_key not in reserved and not candidate.exists():
-            reserved.add(candidate_key)
-            return candidate
-        index += 1
+    return reserve_unique_name(dest_dir, filename, reserved=reserved)
 
 
 def _rebuild_asset_path_metadata(session, asset: ImageAsset) -> None:

@@ -95,7 +95,6 @@
   - `maintenance.py`：`quick/full` 刷新、路径对账、缺失预览修复、未入库媒体收编，以及 `media` 根目录孤立图片/孤立相册的标准化归档
   - `hash_index.py`：哈希索引缓存
   - `helpers.py`：文件时间、路径与缩略图辅助工具
-- `services/tag_seed_service.py`：数据库为空时的初始 Tag seed 导入
 - `services/image_frame_service.py` 负责统一识别多帧图片，并把 GIF、动态 WEBP 等文件的首帧转换为后续 temp/cache 预览使用的 OpenCV 图像。
 
 当前导入规则的关键点：
@@ -143,7 +142,7 @@
 - 草稿 Tag 使用 `created_by = system:draft-reserve` 标记，并在查询与导出时过滤。
 - 删除正式 Tag 的实现已经统一到同一条事务路径：无论是总览页单删、设置页批删，还是取消草稿后的清理，后端都会在一次数据库事务里先扫描 `ImageAsset.tags` 并移除目标 id，再删除 Tag 记录；不会逐个 Tag 做多次提交，也不会删除图片本身。
 - 批量新增采用整批校验、整批写入：先校验 `name`、`type`、同批重复、数据库重复和颜色元数据，再统一 `flush -> public_id -> commit`；如果任一行失败则整批回滚，并把 `row_errors` 返回给前端高亮对应行。
-- `tag_match_service.py` 封装文件名分词、Tag 匹配、Tag 排序、缺失 Tag 文件名补全和计数更新；导入流程、图片页“自动标签”以及详情浮层里的“↺ 同步文件名”共用这一套逻辑。
+- `tag_match_service.py` 封装文件名分词、Tag 匹配、Tag 排序、缺失 Tag 文件名补全和计数更新；导入流程、图片页“自动标签”以及详情浮层里的“↺ 同步文件名”共用这一套逻辑。当前这套规则使用后端固定默认值，不再暴露单独的设置持久化或系统设置 API。
 - `POST /api/images/tags/sync-filename` 复用了图片元数据编辑的底层改名/移动执行链，但把目标文件名改成“当前 Tag 集合减去文件名里已存在 Tag”的差集结果；多选时逐文件分别计算，并沿用同名冲突自动让位与整批回滚语义。
 - `search.py` 现在支持 `filename`、`tag`、`path`、`file`、`imported_at`、`file_created_at` 六类显式搜索，以及 `auto -> mixed/path` 解析；其中 `file` 通过 `quick_hash` 找到同图图片，时间模式通过 `start_at/end_at` 做区间过滤。
 - 搜索响应当前同时服务 `SearchPage.vue` 一级虚拟化预览和 `/search/results` 完整列表，返回体包含 `requested_mode`、`resolved_mode`、`included_tags`、`matched_by`、`matched_tags` 等前端渲染所需元数据；前端顶层页提供“按图搜索”和“时间范围”两个辅助入口来生成对应查询。
@@ -195,21 +194,85 @@
   - 浏览缓存缩略图短边尺寸
   - 月份封面尺寸
   - 页面浏览模式与滚动窗口范围（`40-200`，步长 `20`）
-  - 文件名自动打标设置（`enabled`、`noise_tokens`、`min_token_length`、`drop_numeric_only`，返回体额外带固定 `sort_mode = name_asc`）
+  - 查看器偏好及相关系统级设置
 
-## 6. 数据模型摘要
+## 6. 数据结构与定义位置
 
-| 模型 | 当前角色 |
-| --- | --- |
-| `ImageAsset` | 图片主表，保存哈希、宽高、`media_path`、`tags`、`category_id`、时间、缩略图信息与 `is_animated + animation_meta`；`animation_meta` 只在动图时保存 `frame_count / format` |
-| `Album` | 相册树节点，保存路径、标题、封面和统计 |
-| `AlbumImage` | 相册与图片关系表 |
-| `RecentImportOperation` | 最近一次导入操作快照，记录整批成功导入图片全集，以及 recent 二级页需要的图片 / 顶层相册集合 |
-| `Tag` | Tag 元数据、颜色、描述、`usage_count`、`last_used_at` |
-| `Category` | 图片主分类 |
-| `Collection` | 收藏夹 |
-| `CollectionImage` | 收藏夹与图片关系表 |
-| `TrashEntry` | 回收站条目与恢复所需 payload |
+所有 SQLModel 定义都位于 `backend/app/models/`。下面按维护时最常修改的模型列出定义文件、JSON 字段结构，以及主要写入或归一化位置。
+
+### 6.1 `ImageAsset`
+
+- 定义位置：`app/models/image_asset.py`
+- 角色：图片主表，保存路径、哈希、尺寸、时间、主分类、Tag 关联与预览元数据。
+- 关键 JSON 字段：
+  - `thumbs: list[dict]`：缩略图列表。单项结构由 `app/services/imports/helpers.py` 的 `required_thumb_entry()` 统一生成，当前字段为 `type / path / width / height / mime_type / generated_at`。
+  - `media_path: list[str]`：物理文件路径历史；当前主流程通常只保留当前有效路径。
+  - `animation_meta: {"frame_count": int, "format": str | null} | null`：动图元数据；规范化逻辑在模型自身的 `normalize_animation_meta()` 和 `app/services/imports/helpers.py` 的同名辅助函数。
+  - `tags: list[int]`：Tag.id 整数列表。
+  - `album: list[list[str]]`：每一项都是从根到叶的 `Album.public_id` 路径。
+  - `collection: list`：兼容旧字段；当前真实收藏关系以 `CollectionImage` 表为准。
+- 主要写入/归一化位置：`app/services/imports/pipeline.py`、`app/services/imports/maintenance.py`、`app/services/imports/helpers.py`、`app/api/routers/images.py`。
+
+### 6.2 `Album` / `AlbumImage`
+
+- 定义位置：`app/models/album.py`、`app/models/album_image.py`
+- 角色：`Album` 保存相册树节点；`AlbumImage` 是相册与图片的显式多对多关系表。
+- 关键 JSON 字段：
+  - `cover: {"photo_id": int, "thumb_path": str, "filename": str, "manual": bool, "updated_at": str} | null`：由 `app/services/cover_service.py` 的 `build_asset_cover_payload()` 生成。
+  - `settings: dict`：相册预留配置容器，当前没有独立 schema。
+  - `stats: dict`：相册预留统计容器；日期/相册页实际使用的可见统计主要由 `app/services/visible_album_service.py` 运行时生成。
+- 主要写入位置：`app/services/imports/pipeline.py` 负责创建相册链与默认封面，`app/services/imports/maintenance.py` 负责 full-refresh 下的封面修复，`app/api/routers/albums.py` 与 `app/services/visible_album_service.py` 负责手动封面和可见封面刷新。
+
+### 6.3 `Collection` / `CollectionImage`
+
+- 定义位置：`app/models/collection.py`、`app/models/collection_image.py`
+- 角色：`Collection` 保存收藏夹树；`CollectionImage` 是收藏夹与图片的显式多对多关系表。
+- 关键 JSON 字段：
+  - `cover` 结构与 `Album.cover` 相同，同样由 `app/services/cover_service.py` 生成。
+  - `settings: dict`、`stats: dict`：当前都作为预留字段保留，没有独立 schema。
+- 主要写入位置：`app/services/collection_service.py` 负责创建、增删成员、刷新统计和更新封面。
+
+### 6.4 `RecentImportOperation`
+
+- 定义位置：`app/models/recent_import_operation.py`
+- 角色：最近一次导入操作快照，服务 `/gallery` 的 recent 一级预览和二级浏览。
+- JSON 字段：
+  - `successful_image_ids: list[int]`：一次前端导入会话内全部成功导入图片 id。
+  - `preview_image_ids: list[int]`：旧 overview 兼容字段。
+  - `direct_image_ids: list[int]`：recent 一级预览中的直图集合。
+  - `top_album_public_ids: list[str]`：recent 一级预览中的顶层相册集合。
+- 主要写入/归一化位置：`app/services/recent_import_service.py`，通过 `_normalize_*_list()`、`record_recent_import_operation()` 负责 replace/append 聚合与去重。
+
+### 6.5 `Tag`
+
+- 定义位置：`app/models/tag.py`
+- 角色：Tag 主表，包含规范名、展示名、类型、描述、颜色与使用统计。
+- 关键 JSON 字段：
+  - `metadata_` 的数据库列名是 `metadata`，当前约定结构为：
+    - `schema_version: 1`
+    - `color / border_color / background_color: HEX8 字符串`
+    - `created_via: manual | auto:filename | import | merge | split | sync | migration`
+    - `ui_hint: {"badge": string, "promote": bool}`
+    - `notes: string`
+- 非 JSON 但常一起维护的字段：`usage_count`、`last_used_at`。
+- 主要写入/归一化位置：`app/api/routers/tags.py` 负责 `_normalize_tag_metadata()`、CRUD、导入导出和批量新增；`app/services/tag_match_service.py` 与 `app/api/routers/images.py` 负责自动打标和图片编辑时的 `usage_count / last_used_at` 同步。
+
+### 6.6 `Category`
+
+- 定义位置：`app/models/category.py`
+- 角色：图片主分类。
+- 关键 JSON 字段：
+  - `usage_count: {"image": int}`：默认结构由 `default_usage_count()` 提供。
+- 主要写入/归一化位置：`app/services/category_service.py` 的 `clean_usage_count()`、`sync_category_usage_counts()` 和分类 CRUD 路径。
+
+### 6.7 `TrashEntry`
+
+- 定义位置：`app/models/trash_entry.py`
+- 角色：回收站条目，保存恢复所需的最小元数据和 payload 路径。
+- 关键 JSON 字段：
+  - `tags: list[int]`：被删除图片的 Tag.id 列表。
+  - `metadata_json: dict`：按实体类型保存恢复锚点；当前图片条目常见结构为 `{"image_id": int}`，相册条目常见结构为 `{"album_public_id": str}`。
+- 主要写入位置：`app/services/trash_service.py` 负责移入、还原、彻底删除和对账；创建条目时会同时写入 `tags` 与 `metadata_json`。
 
 ## 7. 开发与运行
 
@@ -241,5 +304,5 @@ python -m venv ..\.venv
 - `backend/data/app.db` 是当前默认数据库文件，仓库运行期间会持续变化。
 - 便携包现在会把 `build/tags_export.json` 复制到便携包根目录，文件名保持为 `tags_export.json`；程序不会在首次启动时自动导入，用户如需使用这份标签数据，需要在界面里手动执行标签导入。
 - 图片元数据编辑里的“多选不能改文件名”不是只靠前端收敛交互，而是 `/api/images/metadata` 的后端硬校验；多选请求如果同时带 `name` 会直接返回 `400`。
-- 文件名自动打标配置 API 已存在，但前端设置页尚未接入对应 UI；设置页内部虽然保留了 `Tag过滤` 占位子面板结构，但入口按钮当前未开放。
+- 文件名自动打标仍参与导入流程、图片页自动标签和“同步文件名”，但规则已经固定在 `tag_match_service.py` 的默认值中，不再暴露独立配置 API。
 - 草稿 Tag 属于正常数据库记录，只是通过 `created_by` 被隐藏；调试数据库时要注意区分。

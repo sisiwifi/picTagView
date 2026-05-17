@@ -9,8 +9,6 @@ from app.api.schemas import (
     PageConfigResponse,
     SelectDirectoryRequest,
     SelectDirectoryResponse,
-    TagMatchSettingRequest,
-    TagMatchSettingResponse,
     ViewerPreferenceRequest,
 )
 from app.services.export_service import select_directory_path
@@ -26,11 +24,9 @@ from app.services.app_settings_service import (
     get_cache_thumb_short_side_px,
     get_month_cover_size_px,
     get_page_config,
-    get_tag_match_setting,
     set_cache_thumb_short_side_px,
     set_month_cover_size_px,
     set_page_config,
-    set_tag_match_setting,
 )
 from app.services.viewer_service import (
     IMAGE_EXTENSIONS,
@@ -129,30 +125,6 @@ def set_page_config_api(body: PageConfigRequest) -> PageConfigResponse:
         scroll_window_size=next_setting.get("scroll_window_size", DEFAULT_PAGE_SCROLL_WINDOW_SIZE),
         default_browse_mode=DEFAULT_PAGE_BROWSE_MODE,
         default_scroll_window_size=DEFAULT_PAGE_SCROLL_WINDOW_SIZE,
-    )
-
-
-@router.get("/api/system/tag-match-setting", response_model=TagMatchSettingResponse)
-def get_tag_match_setting_api() -> TagMatchSettingResponse:
-    data = get_tag_match_setting()
-    return TagMatchSettingResponse(
-        enabled=data.get("enabled", True),
-        noise_tokens=data.get("noise_tokens", []),
-        min_token_length=data.get("min_token_length", 2),
-        drop_numeric_only=data.get("drop_numeric_only", True),
-        sort_mode=data.get("sort_mode", "name_asc"),
-    )
-
-
-@router.post("/api/system/tag-match-setting", response_model=TagMatchSettingResponse)
-def set_tag_match_setting_api(body: TagMatchSettingRequest) -> TagMatchSettingResponse:
-    next_setting = set_tag_match_setting(body.model_dump())
-    return TagMatchSettingResponse(
-        enabled=next_setting.get("enabled", True),
-        noise_tokens=next_setting.get("noise_tokens", []),
-        min_token_length=next_setting.get("min_token_length", 2),
-        drop_numeric_only=next_setting.get("drop_numeric_only", True),
-        sort_mode=next_setting.get("sort_mode", "name_asc"),
     )
 
 

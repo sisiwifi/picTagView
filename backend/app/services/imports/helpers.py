@@ -218,30 +218,39 @@ def parse_relative_path(relative_path: str) -> tuple[list[str], str]:
     return list(parts[1:-1]), parts[-1]
 
 
-def unique_dest(dest_dir: Path, filename: str) -> Path:
-    dest = dest_dir / filename
-    if not dest.exists():
-        return dest
-    base, ext = os.path.splitext(filename)
-    index = 1
+def reserve_unique_name(
+    parent_dir: Path,
+    name: str,
+    *,
+    reserved: set[str] | None = None,
+    treat_as_directory: bool = False,
+) -> Path:
+    if treat_as_directory:
+        base_name = name
+        suffix = ""
+    else:
+        base_name, suffix = os.path.splitext(name)
+
+    reserved_targets = reserved if reserved is not None else set()
+    index = 0
     while True:
-        candidate = dest_dir / f"{base}_{index}{ext}"
-        if not candidate.exists():
-            return candidate
-        index += 1
+        candidate_name = name if index == 0 else f"{base_name}_{index}{suffix}"
+        candidate = parent_dir / candidate_name
+        candidate_key = str(candidate.resolve()).casefold()
+        if candidate_key in reserved_targets or candidate.exists():
+            index += 1
+            continue
+        if reserved is not None:
+            reserved.add(candidate_key)
+        return candidate
+
+
+def unique_dest(dest_dir: Path, filename: str) -> Path:
+    return reserve_unique_name(dest_dir, filename)
 
 
 def unique_dir_dest(parent_dir: Path, dirname: str) -> Path:
-    dest = parent_dir / dirname
-    if not dest.exists():
-        return dest
-
-    index = 1
-    while True:
-        candidate = parent_dir / f"{dirname}_{index}"
-        if not candidate.exists():
-            return candidate
-        index += 1
+    return reserve_unique_name(parent_dir, dirname, treat_as_directory=True)
 
 
 def min_source_ts_ms(created_ts_ms: Optional[int], modified_ts_ms: Optional[int]) -> Optional[int]:

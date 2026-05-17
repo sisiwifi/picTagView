@@ -8,9 +8,11 @@ import re
 from sqlmodel import select
 
 from app.models.tag import Tag
-from app.services.app_settings_service import get_tag_match_setting
 
 DRAFT_CREATED_BY = "system:draft-reserve"
+DEFAULT_TAG_MATCH_NOISE_TOKENS: tuple[str, ...] = ()
+DEFAULT_TAG_MATCH_MIN_TOKEN_LENGTH = 2
+DEFAULT_TAG_MATCH_DROP_NUMERIC_ONLY = True
 
 
 @dataclass
@@ -164,22 +166,11 @@ def sort_tag_ids_by_name(tag_ids: list[int], tags_by_id: dict[int, Tag]) -> list
 
 
 def load_tag_match_context(session, *, skip_tag_query_when_disabled: bool = False) -> TagMatchContext:
-    setting = get_tag_match_setting()
-    enabled = bool(setting.get("enabled", True))
-    if not enabled and skip_tag_query_when_disabled:
-        return TagMatchContext(
-            enabled=False,
-            noise_tokens=set(),
-            min_token_length=1,
-            drop_numeric_only=False,
-            tags_by_name={},
-            tags_by_id={},
-            tags_by_first_atom={},
-        )
-
-    noise_tokens = set(setting.get("noise_tokens", [])) if enabled else set()
-    min_token_length = int(setting.get("min_token_length", 2)) if enabled else 1
-    drop_numeric_only = bool(setting.get("drop_numeric_only", True)) if enabled else False
+    _ = skip_tag_query_when_disabled
+    enabled = True
+    noise_tokens = set(DEFAULT_TAG_MATCH_NOISE_TOKENS)
+    min_token_length = DEFAULT_TAG_MATCH_MIN_TOKEN_LENGTH
+    drop_numeric_only = DEFAULT_TAG_MATCH_DROP_NUMERIC_ONLY
 
     tags = session.exec(
         select(Tag).where(Tag.created_by != DRAFT_CREATED_BY)  # type: ignore[attr-defined]

@@ -208,21 +208,6 @@ class AdminRefreshRequest(BaseModel):
     repair_cache: bool = False
 
 
-class TagMatchSettingRequest(BaseModel):
-    enabled: bool = True
-    noise_tokens: List[str] = Field(default_factory=list)
-    min_token_length: int = 2
-    drop_numeric_only: bool = True
-
-
-class TagMatchSettingResponse(BaseModel):
-    enabled: bool
-    noise_tokens: List[str] = Field(default_factory=list)
-    min_token_length: int
-    drop_numeric_only: bool
-    sort_mode: str = "name_asc"
-
-
 class ImageTagMatchRequest(BaseModel):
     image_ids: List[int] = Field(default_factory=list)
     apply: bool = True
