@@ -18,6 +18,12 @@ if exist "%SCRIPT_DIR%..\.venv\Scripts\python.exe" (
   set "PYTHON_EXE=python"
 )
 
+if defined PORTABLE_BACKEND_PROTECTION (
+  set "BACKEND_PROTECTION=%PORTABLE_BACKEND_PROTECTION%"
+) else (
+  set "BACKEND_PROTECTION=pyc"
+)
+
 echo.
 echo Portable ZIP packaging is ready.
 echo Make sure the project files are ready before continuing.
@@ -29,9 +35,9 @@ echo Packaging in progress. Please keep this window open...
 echo.
 
 if defined RUNTIME_DIR (
-  "%PYTHON_EXE%" "%SCRIPT_DIR%package_portable.py" --runtime-python-dir "%RUNTIME_DIR%"
+  "%PYTHON_EXE%" "%SCRIPT_DIR%package_portable.py" --backend-protection "%BACKEND_PROTECTION%" --runtime-python-dir "%RUNTIME_DIR%"
 ) else (
-  "%PYTHON_EXE%" "%SCRIPT_DIR%package_portable.py"
+  "%PYTHON_EXE%" "%SCRIPT_DIR%package_portable.py" --backend-protection "%BACKEND_PROTECTION%"
 )
 
 set "PACK_EXIT=%ERRORLEVEL%"

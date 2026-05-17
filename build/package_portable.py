@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import compileall
 import json
 import os
 import shutil
@@ -33,6 +34,7 @@ RUNTIME_IMPORT_PROBE = (
     "print('runtime-ready')"
 )
 DEFAULT_BACKEND_PORT = 8000
+BACKEND_PROTECTION_CHOICES = ("plain", "pyc", "pyarmor")
 
 
 def run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> None:
@@ -76,6 +78,127 @@ def build_frontend() -> None:
         raise RuntimeError("npm was not found. Install Node.js and ensure npm is available in PATH.")
     log("Building frontend dist...")
     run([npm_command, "run", "build"], cwd=FRONTEND_DIR)
+
+
+def prune_source_maps(root: Path) -> None:
+    removed = 0
+    for source_map in root.rglob("*.map"):
+        if source_map.is_file():
+            source_map.unlink()
+            removed += 1
+
+    if removed:
+        log(f"Removed {removed} frontend source map file(s) from {root}.")
+
+
+def prune_named_dirs(root: Path, dir_name: str) -> None:
+    removed = 0
+    for path in root.rglob(dir_name):
+        if path.is_dir():
+            shutil.rmtree(path)
+            removed += 1
+
+    if removed:
+        log(f"Removed {removed} '{dir_name}' directorie(s) from {root}.")
+
+
+def prune_python_sources(root: Path) -> None:
+    removed = 0
+    for source_file in root.rglob("*.py"):
+        if source_file.is_file():
+            source_file.unlink()
+            removed += 1
+
+    if removed:
+        log(f"Removed {removed} backend source file(s) from {root}.")
+
+
+def stage_pyc_backend(source_dir: Path, target_dir: Path) -> None:
+    log("Copying backend application sources for bytecode packaging...")
+    copy_tree(source_dir, target_dir)
+    prune_named_dirs(target_dir, "__pycache__")
+
+    log("Compiling backend application to sourceless .pyc files...")
+    compiled = compileall.compile_dir(
+        str(target_dir),
+        force=True,
+        legacy=True,
+        optimize=0,
+        quiet=1,
+    )
+    if not compiled:
+        raise RuntimeError("Failed to compile backend application to bytecode.")
+
+    prune_python_sources(target_dir)
+    prune_named_dirs(target_dir, "__pycache__")
+
+
+def resolve_pyarmor_executable(pyarmor_exe: Path | None) -> Path:
+    if pyarmor_exe is not None:
+        if pyarmor_exe.is_file():
+            return pyarmor_exe
+        raise FileNotFoundError(f"PyArmor executable not found: {pyarmor_exe}")
+
+    scripts_dir = CURRENT_ENV_DIR / ("Scripts" if os.name == "nt" else "bin")
+    candidate_names = ["pyarmor.exe", "pyarmor"] if os.name == "nt" else ["pyarmor"]
+
+    for candidate_name in candidate_names:
+        candidate_path = scripts_dir / candidate_name
+        if candidate_path.is_file():
+            return candidate_path
+
+        resolved = shutil.which(candidate_name)
+        if resolved:
+            return Path(resolved)
+
+    raise FileNotFoundError(
+        "PyArmor executable not found. Install pyarmor in the active environment "
+        "or pass --pyarmor-exe explicitly."
+    )
+
+
+def stage_pyarmor_backend(source_dir: Path, target_root: Path, pyarmor_exe: Path | None) -> None:
+    resolved_pyarmor = resolve_pyarmor_executable(pyarmor_exe)
+    target_root.mkdir(parents=True, exist_ok=True)
+
+    log(f"Protecting backend application with PyArmor via {resolved_pyarmor}...")
+    run(
+        [
+            str(resolved_pyarmor),
+            "gen",
+            "-r",
+            "-i",
+            "-O",
+            str(target_root),
+            str(source_dir),
+        ],
+        cwd=REPO_ROOT,
+    )
+
+    backend_entry = target_root / "app" / "main.py"
+    if not backend_entry.is_file():
+        raise RuntimeError(f"PyArmor backend output is incomplete: {backend_entry} was not generated.")
+
+
+def stage_backend_application(package_backend_dir: Path, backend_protection: str, pyarmor_exe: Path | None) -> None:
+    ensure_empty_dir(package_backend_dir)
+    source_dir = BACKEND_DIR / "app"
+    target_dir = package_backend_dir / "app"
+
+    if backend_protection == "plain":
+        log("Copying backend application sources...")
+        copy_tree(source_dir, target_dir)
+        return
+
+    if backend_protection == "pyc":
+        stage_pyc_backend(source_dir, target_dir)
+        return
+
+    if backend_protection == "pyarmor":
+        stage_pyarmor_backend(source_dir, package_backend_dir, pyarmor_exe)
+        return
+
+    raise ValueError(f"Unsupported backend protection mode: {backend_protection}")
 
 
 def build_portable_runtime_from_current_environment(runtime_target: Path) -> None:
@@ -127,23 +250,30 @@ def copy_runtime_python(runtime_source: Path, runtime_target: Path) -> None:
     copy_tree(runtime_source, runtime_target)
 
 
-def stage_package(staging_root: Path, runtime_source: Path | None) -> Path:
+def stage_package(
+    staging_root: Path,
+    runtime_source: Path | None,
+    backend_protection: str,
+    pyarmor_exe: Path | None,
+) -> Path:
     package_root = staging_root / "picTagView-portable"
     ensure_empty_dir(package_root)
 
     if not INITIAL_TAG_EXPORT.is_file():
         raise FileNotFoundError(f"Initial tag export not found: {INITIAL_TAG_EXPORT}")
 
-    log("Copying backend application...")
-    copy_tree(BACKEND_DIR / "app", package_root / "backend" / "app")
+    log(f"Staging backend application with protection mode '{backend_protection}'...")
+    stage_backend_application(package_root / "backend", backend_protection, pyarmor_exe)
     shutil.copy2(BACKEND_DIR / "requirements.txt", package_root / "backend" / "requirements.txt")
     copy_file(INITIAL_TAG_EXPORT, package_root / "tags_export.json")
 
     frontend_dist = FRONTEND_DIR / "dist"
     if not frontend_dist.is_dir():
         raise FileNotFoundError(f"Frontend build output not found: {frontend_dist}")
+    prune_source_maps(frontend_dist)
     log("Copying frontend dist...")
     copy_tree(frontend_dist, package_root / "frontend" / "dist")
+    prune_source_maps(package_root / "frontend" / "dist")
 
     runtime_target = package_root / "runtime" / "python"
     if runtime_source is not None:
@@ -296,14 +426,15 @@ def stage_package(staging_root: Path, runtime_source: Path | None) -> Path:
             "    python_exe = python_home / 'python.exe'\r\n"
             "    backend_dir = ROOT / 'backend'\r\n"
             "    backend_entry = backend_dir / 'app' / 'main.py'\r\n"
+            "    backend_entry_pyc = backend_dir / 'app' / 'main.pyc'\r\n"
             "    host = '127.0.0.1'\r\n"
             "    port = load_backend_port()\r\n"
             "    url = f'http://{host}:{port}/'\r\n"
             "\r\n"
             "    if not python_exe.is_file():\r\n"
             "        return fail(f'Portable Python runtime not found: {python_exe}')\r\n"
-            "    if not backend_entry.is_file():\r\n"
-            "        return fail(f'Backend entry not found: {backend_entry}')\r\n"
+            "    if not backend_entry.is_file() and not backend_entry_pyc.is_file():\r\n"
+            "        return fail(f'Backend entry not found: {backend_entry} or {backend_entry_pyc}')\r\n"
             "    if is_port_listening(host, port):\r\n"
             "        return fail(f'Configured backend port {port} is already in use. Change config.json or stop the existing service first.')\r\n"
             "\r\n"
@@ -427,6 +558,17 @@ def zip_package(package_root: Path, output_zip: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build a portable ZIP package for picTagView.")
     parser.add_argument(
+        "--backend-protection",
+        choices=BACKEND_PROTECTION_CHOICES,
+        default="pyc",
+        help="How to stage backend application code in the portable package.",
+    )
+    parser.add_argument(
+        "--pyarmor-exe",
+        type=Path,
+        help="Optional path to the PyArmor executable used when --backend-protection=pyarmor.",
+    )
+    parser.add_argument(
         "--runtime-python-dir",
         type=Path,
         help="Path to a portable Python runtime directory that contains python.exe.",
@@ -448,7 +590,12 @@ def main() -> int:
     try:
         build_frontend()
         staging_run_dir = create_staging_run_dir(args.staging_dir)
-        package_root = stage_package(staging_run_dir, args.runtime_python_dir)
+        package_root = stage_package(
+            staging_run_dir,
+            args.runtime_python_dir,
+            args.backend_protection,
+            args.pyarmor_exe,
+        )
         zip_package(package_root, args.output_zip)
     except subprocess.CalledProcessError as exc:
         print(f"Packaging error: command failed with exit code {exc.returncode}")
